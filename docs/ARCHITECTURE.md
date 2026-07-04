@@ -33,6 +33,11 @@ AlphaMintX/
   isolated `backtest.db`; `backtestctl fetch` materializes canonical
   datasets from Binance REST klines (`docs/specs/backtest-engine.md`).
 - Billing hooks: meters LLM cost (from `model_costs`) per strategy/tenant.
+- Billing + reconciliation (`docs/specs/billing-and-metering.md`): append-only
+  invoices generated at period close from `model_costs` (rowid-watermark
+  exactly-once window); imported mintrouter spend-log exports are the check,
+  joined per-attempt by `X-Request-Id`; reconciliation runs pin an exact
+  decimal identity and classify every divergence (Phase 2).
 
 ### agent-plane/ (Python 3.12+, LangGraph, pydantic)
 - Tier 1: Market / News / Fundamental analysts (parallel fan-out, cheap models).

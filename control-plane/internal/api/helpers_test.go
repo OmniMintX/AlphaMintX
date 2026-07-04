@@ -290,7 +290,7 @@ func testTraceEnvelope(t *testing.T, strategyID, runID string, proposalID *strin
 		}},
 		DebateSummary: "no edge either way",
 		ProposalID:    proposalID,
-		ModelCosts: []contract.ModelCost{
+		ModelCosts: []store.TraceModelCost{
 			{Node: "trader", Model: "stub", InputTokens: 100, OutputTokens: 20, CostUSD: mustDec(t, "0.001")},
 		},
 		BudgetState: store.BudgetState{UTCDate: "2026-07-04", TokensUsed: 120, CostUSDUsed: mustDec(t, "0.001")},

@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
-from alphamintx_agent_plane.contract.models import ModelCost
+from alphamintx_agent_plane.contract.models import TraceModelCost
 
 
 class LLMConfigError(Exception):
@@ -28,7 +28,7 @@ class LLMError(Exception):
         self,
         message: str,
         *,
-        attempt_costs: Iterable[ModelCost] = (),
+        attempt_costs: Iterable[TraceModelCost] = (),
         estimated_cost_nodes: Iterable[str] = (),
     ) -> None:
         super().__init__(message)
@@ -64,7 +64,7 @@ class LLMRequestError(LLMError):
         status_code: int,
         message: str,
         *,
-        attempt_costs: Iterable[ModelCost] = (),
+        attempt_costs: Iterable[TraceModelCost] = (),
         estimated_cost_nodes: Iterable[str] = (),
     ) -> None:
         super().__init__(

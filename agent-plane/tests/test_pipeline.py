@@ -3,6 +3,7 @@ debate, determinism, and the DryRunTransport client round-trip."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -12,7 +13,7 @@ from alphamintx_agent_plane.client.controlplane import (
     DryRunTransport,
     StrategyAuth,
 )
-from alphamintx_agent_plane.contract.models import Action, Decision, EntryType
+from alphamintx_agent_plane.contract.models import Action, Decision, EntryType, ModelCost
 from alphamintx_agent_plane.llm.stub import (
     ROLE_BEAR_RESEARCHER,
     ROLE_BULL_RESEARCHER,
@@ -21,6 +22,7 @@ from alphamintx_agent_plane.llm.stub import (
     ROLE_MARKET_ANALYST,
     ROLE_NEWS_ANALYST,
     ROLE_TRADER,
+    LLMResponse,
     bullish_scenario,
     low_confidence_scenario,
 )
@@ -92,6 +94,38 @@ def test_two_runs_identical_except_ids_and_timestamps() -> None:
         dumped_first.pop(volatile)
         dumped_second.pop(volatile)
     assert dumped_first == dumped_second
+
+
+def test_proposal_model_costs_never_carry_trace_only_fields(
+    proposal_schema: dict[str, Any],
+) -> None:
+    """The proposal contract is untouched by billing-and-metering.md: even when
+    every LLM response carries a request_id (live mode), the proposal's
+    model_costs are plain ModelCost and serialize the pre-upgrade shape."""
+
+    class JoinKeyLLM:
+        def __init__(self) -> None:
+            self._inner = bullish_scenario()
+            self._count = 0
+
+        def complete(self, *, role: str, symbol: str, prompt: str) -> LLMResponse:
+            response = self._inner.complete(role=role, symbol=symbol, prompt=prompt)
+            self._count += 1
+            return replace(
+                response, request_id=f"00000000-0000-4000-8000-{self._count:012d}"
+            )
+
+    state = run_pipeline(JoinKeyLLM(), _inputs())
+    assert state["model_costs"] and all(
+        cost.request_id is not None for cost in state["model_costs"]
+    )
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert all(type(cost) is ModelCost for cost in proposal.model_costs)
+    dumped = proposal.to_json_dict()
+    Draft202012Validator(proposal_schema).validate(dumped)
+    for entry in dumped["model_costs"]:
+        assert set(entry) == {"node", "model", "input_tokens", "output_tokens", "cost_usd"}
 
 
 def test_dry_run_client_round_trip(verdict_schema: dict[str, Any]) -> None:

@@ -35,7 +35,8 @@ func rbacEnv(t *testing.T) (*testEnv, rbacPrincipals) {
 // pattern so allowed principals clear the authorization tier.
 func matrixPath(pattern string) string {
 	r := strings.NewReplacer("{id}", strat1, "{run_id}", uid(99),
-		"{tenant_id}", "tenant-1", "{token_id}", uid(98))
+		"{tenant_id}", "tenant-1", "{token_id}", uid(98),
+		"{invoice_id}", "inv-tenant-1-2026-06", "{recon_id}", uid(97))
 	return r.Replace(pattern)
 }
 

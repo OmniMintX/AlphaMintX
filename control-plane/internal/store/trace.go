@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,23 @@ type BudgetState struct {
 	CostUSDUsed contract.Decimal `json:"cost_usd_used"`
 }
 
+// TraceModelCost mirrors agent_trace.schema.json $defs/trace_model_cost:
+// the proposal model_cost fields plus the OPTIONAL per-attempt billing join
+// key and estimated flag (docs/specs/billing-and-metering.md §Join key).
+// The shared contract.ModelCost stays proposal-shaped and NEVER carries the
+// new fields. Both additions are pointers with omitempty so a pre-upgrade
+// envelope re-marshals byte-identical (hash stability: no spurious
+// IDEMPOTENCY_CONFLICT on checkpoint re-drives of old runs).
+type TraceModelCost struct {
+	Node         string           `json:"node"`
+	Model        string           `json:"model"`
+	InputTokens  int              `json:"input_tokens"`
+	OutputTokens int              `json:"output_tokens"`
+	CostUSD      contract.Decimal `json:"cost_usd"`
+	RequestID    *string          `json:"request_id,omitempty"`
+	Estimated    *bool            `json:"estimated,omitempty"`
+}
+
 // TraceEnvelope mirrors contracts/agent_trace.schema.json (AgentTrace v1).
 type TraceEnvelope struct {
 	SchemaVersion      string                    `json:"schema_version"`
@@ -41,7 +59,7 @@ type TraceEnvelope struct {
 	DebateSummary      string                    `json:"debate_summary"`
 	Transcripts        map[string]string         `json:"transcripts,omitempty"`
 	ProposalID         *string                   `json:"proposal_id"` // null ONLY when the proposal POST failed
-	ModelCosts         []contract.ModelCost      `json:"model_costs"`
+	ModelCosts         []TraceModelCost          `json:"model_costs"`
 	EstimatedCostNodes []string                  `json:"estimated_cost_nodes,omitempty"`
 	BudgetState        BudgetState               `json:"budget_state"`
 }
@@ -100,11 +118,7 @@ func (s *Store) InsertTrace(env *TraceEnvelope, now time.Time) (bool, error) {
 	tokens := 0
 	cost := decimal.Zero
 	for _, mc := range env.ModelCosts {
-		if _, err := tx.Exec(`INSERT INTO model_costs
-			(cost_id, run_id, strategy_id, node, model, input_tokens, output_tokens, cost_usd, recorded_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uuid.NewString(), env.RunID, env.StrategyID, mc.Node, mc.Model,
-			mc.InputTokens, mc.OutputTokens, mc.CostUSD.String(), recordedAt); err != nil {
+		if err := insertModelCost(tx, env, mc, recordedAt); err != nil {
 			return false, err
 		}
 		tokens += mc.InputTokens + mc.OutputTokens
@@ -144,4 +158,30 @@ func (s *Store) InsertTrace(env *TraceEnvelope, now time.Time) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// insertModelCost fans one trace entry out to model_costs, copying the
+// entry's request_id and estimated flag (an ABSENT estimated field means
+// is_estimated = 0 — never inferred from estimated_cost_nodes[]). On a
+// request_id UNIQUE-index conflict (agent defect, UUID collision, or a
+// squatted id) the row is stored with request_id NULL: a join-key defect
+// MUST NOT drop cost or fail the trace (billing-and-metering.md §Ingest
+// fan-out) — the resulting gateway orphan surfaces at reconciliation.
+func insertModelCost(tx *sql.Tx, env *TraceEnvelope, mc TraceModelCost, recordedAt string) error {
+	isEstimated := mc.Estimated != nil && *mc.Estimated
+	const insertSQL = `INSERT INTO model_costs
+		(cost_id, run_id, strategy_id, node, model, input_tokens, output_tokens,
+		 cost_usd, recorded_at, request_id, is_estimated)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := tx.Exec(insertSQL, uuid.NewString(), env.RunID, env.StrategyID, mc.Node, mc.Model,
+		mc.InputTokens, mc.OutputTokens, mc.CostUSD.String(), recordedAt, mc.RequestID, isEstimated)
+	// Null-and-retry ONLY on the request_id partial index (the driver
+	// message names the failing column set); any other unique violation
+	// (e.g. cost_id) returns as-is.
+	if err != nil && mc.RequestID != nil && isUniqueConstraint(err) &&
+		strings.Contains(err.Error(), "model_costs.request_id") {
+		_, err = tx.Exec(insertSQL, uuid.NewString(), env.RunID, env.StrategyID, mc.Node, mc.Model,
+			mc.InputTokens, mc.OutputTokens, mc.CostUSD.String(), recordedAt, nil, isEstimated)
+	}
+	return err
 }

@@ -305,6 +305,12 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		"InsertOwnerRecoveryToken": true,
 		"AppendTenantKill":         true, "AppendRiskLimitChanges": true, "RiskLimitChanges": true,
 		"GetStrategyInTenant": true, "ListStrategiesByTenant": true,
+		// Billing and metering surface (billing-and-metering.md): all six
+		// tables are INSERT-only — imports, closes, and reconciliation
+		// runs append; invoices and runs are read back, never mutated.
+		"InsertMeteringRecords": true, "ClosePeriod": true, "Reconcile": true,
+		"ListInvoices": true, "GetInvoice": true,
+		"ListReconciliations": true, "GetReconciliation": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

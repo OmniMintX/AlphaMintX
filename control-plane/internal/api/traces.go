@@ -124,6 +124,9 @@ func validateTrace(env *store.TraceEnvelope) string {
 		if c.InputTokens < 0 || c.OutputTokens < 0 {
 			return fmt.Sprintf("model_costs[%d] negative token count", i)
 		}
+		if c.RequestID != nil && !uuidPattern.MatchString(*c.RequestID) {
+			return fmt.Sprintf("model_costs[%d].request_id is not a lowercase UUID", i)
+		}
 	}
 	if len(env.EstimatedCostNodes) > 32 {
 		return "estimated_cost_nodes exceeds 32 items"

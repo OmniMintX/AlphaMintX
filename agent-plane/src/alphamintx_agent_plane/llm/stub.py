@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 
-from alphamintx_agent_plane.contract.models import ModelCost
+from alphamintx_agent_plane.contract.models import TraceModelCost
 
 ROLE_MARKET_ANALYST = "market_analyst"
 ROLE_NEWS_ANALYST = "news_analyst"
@@ -44,10 +44,13 @@ class LLMResponse:
     input_tokens: int
     output_tokens: int
     cost_usd: Decimal
+    # The SUCCESSFUL attempt's per-attempt billing join key (X-Request-Id,
+    # billing-and-metering.md); None in stub mode (no network, nothing to join).
+    request_id: str | None = None
     # Cost entries spent by failed attempts within the same call (e.g. estimated
     # entries for timed-out attempts before a successful retry), and the nodes
     # whose entries are estimates (llm-routing-and-budget.md §3).
-    extra_costs: tuple[ModelCost, ...] = field(default=())
+    extra_costs: tuple[TraceModelCost, ...] = field(default=())
     estimated_cost_nodes: tuple[str, ...] = field(default=())
 
 

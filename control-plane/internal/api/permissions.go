@@ -62,5 +62,17 @@ func Permissions() []RoutePermission {
 		{Method: "POST", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tokens/{token_id}/revoke", Roles: admins, Classes: []string{classEnvAdmin}},
+		// Billing (billing-and-metering.md §Permission matrix additions):
+		// the three POSTs are deployer acts (env-admin ONLY); invoice and
+		// reconciliation reads are financial records — admin/owner own
+		// tenant plus the platform read and env-admin classes, never
+		// viewer/trader, never agents.
+		{Method: "POST", Path: "/api/v1/billing/metering", Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/billing/periods/close", Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/billing/reconcile", Classes: []string{classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/billing/invoices", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/billing/invoices/{invoice_id}", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/billing/reconciliations", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/billing/reconciliations/{recon_id}", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
 	}
 }

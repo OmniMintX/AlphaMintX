@@ -3,14 +3,30 @@ and their JSON output must validate against the actual JSON Schemas (belt and br
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from alphamintx_agent_plane.contract.models import Decision, RiskVerdict, TradeProposal
+from alphamintx_agent_plane.contract.models import (
+    Decision,
+    ModelCost,
+    RiskVerdict,
+    TraceModelCost,
+    TradeProposal,
+)
 from conftest import FIXTURES_DIR, load_json
+
+_COST_FIELDS: dict[str, Any] = {
+    "node": "trader",
+    "model": "gpt-4o-mini",
+    "input_tokens": 100,
+    "output_tokens": 50,
+    "cost_usd": "0.000045",
+}
+_REQUEST_ID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
 
 def test_open_long_fixture_round_trips(proposal_schema: dict[str, Any]) -> None:
@@ -104,3 +120,42 @@ def test_unknown_fields_are_rejected() -> None:
     raw["surprise"] = "extension"
     with pytest.raises(ValidationError, match="surprise"):
         TradeProposal.model_validate(raw)
+
+
+def test_trace_model_cost_defaults_serialize_byte_identical_to_model_cost() -> None:
+    """Hash stability (billing-and-metering.md): an entry WITHOUT the new fields
+    must serialize byte-identical to the pre-upgrade ModelCost shape."""
+    plain = ModelCost.model_validate(_COST_FIELDS)
+    trace = TraceModelCost.model_validate(_COST_FIELDS)
+    assert json.dumps(trace.to_json_dict(), sort_keys=True) == json.dumps(
+        plain.to_json_dict(), sort_keys=True
+    )
+    assert set(trace.to_json_dict()) == set(_COST_FIELDS)
+
+
+def test_trace_model_cost_serializes_request_id_and_estimated_when_set() -> None:
+    dumped = TraceModelCost.model_validate(
+        {**_COST_FIELDS, "request_id": _REQUEST_ID, "estimated": True}
+    ).to_json_dict()
+    assert dumped["request_id"] == _REQUEST_ID
+    assert dumped["estimated"] is True
+    # estimated=False is the default: omitted, not serialized as false.
+    dumped = TraceModelCost.model_validate(
+        {**_COST_FIELDS, "request_id": _REQUEST_ID, "estimated": False}
+    ).to_json_dict()
+    assert dumped["request_id"] == _REQUEST_ID
+    assert "estimated" not in dumped
+
+
+def test_trace_model_cost_to_model_cost_strips_trace_only_fields() -> None:
+    trace = TraceModelCost.model_validate(
+        {**_COST_FIELDS, "request_id": _REQUEST_ID, "estimated": True}
+    )
+    plain = trace.to_model_cost()
+    assert type(plain) is ModelCost
+    assert plain.to_json_dict() == ModelCost.model_validate(_COST_FIELDS).to_json_dict()
+
+
+def test_trace_model_cost_rejects_non_uuid_request_id() -> None:
+    with pytest.raises(ValidationError, match="request_id"):
+        TraceModelCost.model_validate({**_COST_FIELDS, "request_id": "not-a-uuid"})

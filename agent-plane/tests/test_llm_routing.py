@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
@@ -17,7 +18,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from alphamintx_agent_plane.contract.models import ModelCost
+from alphamintx_agent_plane.contract.models import TraceModelCost
 from alphamintx_agent_plane.llm.budget import DailyTokenBudget
 from alphamintx_agent_plane.llm.costs import (
     MODEL_COSTS_CAP,
@@ -40,6 +41,7 @@ from alphamintx_agent_plane.llm.stub import ROLE_MARKET_ANALYST, StubLLM
 TEST_API_KEY = "sk-test-key-that-must-never-leak"
 BASE_URL = "https://mintrouter.test"
 STRATEGY_ID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -91,9 +93,33 @@ def test_success_cost_math_is_decimal_exact(tmp_path: Path) -> None:
     # gpt-4o-mini: (100 * 0.15 + 50 * 0.60) / 1e6, computed in Decimal, never float.
     assert response.cost_usd == Decimal("0.000045")
     assert response.model == "gpt-4o-mini"
+    assert response.request_id is not None and UUID_RE.fullmatch(response.request_id)
     assert response.extra_costs == ()
     assert response.estimated_cost_nodes == ()
     assert budget.tokens_used() == 150
+
+
+def test_x_request_id_header_present_and_unique_per_attempt() -> None:
+    """Every attempt sends a FRESH X-Request-Id (the billing join key,
+    billing-and-metering.md): the failed attempt's estimated entry carries the
+    first id, the successful response carries the second."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["X-Request-Id"])
+        if len(seen) == 1:
+            return httpx.Response(500)
+        return _ok_response()
+
+    llm = _make_llm(handler)
+    response = llm.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+    assert len(seen) == 2
+    assert all(UUID_RE.fullmatch(request_id) for request_id in seen)
+    assert seen[0] != seen[1]
+    assert len(response.extra_costs) == 1
+    assert response.extra_costs[0].request_id == seen[0]
+    assert response.extra_costs[0].estimated is True
+    assert response.request_id == seen[1]
 
 
 def test_retry_on_429_honors_reset_after_header() -> None:
@@ -216,6 +242,8 @@ def test_timeout_yields_estimated_cost_entry_then_success(tmp_path: Path) -> Non
     assert entry.input_tokens == estimated_input
     assert entry.output_tokens == 0
     assert entry.cost_usd == Decimal(estimated_input) * Decimal("0.15") / Decimal(1_000_000)
+    assert entry.estimated is True
+    assert entry.request_id is not None and entry.request_id != response.request_id
     assert response.estimated_cost_nodes == (ROLE_MARKET_ANALYST,)
     # The timed-out attempt's estimated tokens count against the daily budget too.
     assert budget.tokens_used() == estimated_input + 150
@@ -232,6 +260,10 @@ def test_all_timeouts_raise_unavailable_with_estimated_costs() -> None:
     assert len(excinfo.value.attempt_costs) == 3
     assert excinfo.value.estimated_cost_nodes == [ROLE_MARKET_ANALYST]
     assert all(cost.output_tokens == 0 for cost in excinfo.value.attempt_costs)
+    assert all(cost.estimated is True for cost in excinfo.value.attempt_costs)
+    request_ids = [cost.request_id for cost in excinfo.value.attempt_costs]
+    assert all(rid is not None and UUID_RE.fullmatch(rid) for rid in request_ids)
+    assert len(set(request_ids)) == 3
 
 
 def test_connect_error_retries_then_unavailable_without_cost_entries() -> None:
@@ -278,6 +310,8 @@ def test_5xx_attempt_appends_estimated_cost_entry(tmp_path: Path) -> None:
     assert entry.node == ROLE_MARKET_ANALYST
     assert entry.input_tokens == estimated_input
     assert entry.output_tokens == 0
+    assert entry.estimated is True
+    assert entry.request_id is not None and entry.request_id != response.request_id
     assert response.estimated_cost_nodes == (ROLE_MARKET_ANALYST,)
     # The aborted attempt's estimated tokens hit the advisory budget too.
     assert budget.tokens_used() == estimated_input + 150
@@ -408,13 +442,15 @@ def test_price_table_staleness_warning(caplog: pytest.LogCaptureFixture) -> None
     assert "stale" in caplog.text
 
 
-def _cost_entry(index: int) -> ModelCost:
-    return ModelCost(
+def _cost_entry(index: int) -> TraceModelCost:
+    return TraceModelCost(
         node=f"node_{index}",
         model="m",
         input_tokens=index,
         output_tokens=index * 2,
         cost_usd=Decimal("0.000001") * index,
+        request_id=f"00000000-0000-4000-8000-{index:012d}",
+        estimated=index % 2 == 0,
     )
 
 
@@ -431,6 +467,9 @@ def test_aggregate_overflow_keeps_31_and_sums_the_rest_exactly() -> None:
     aggregate = capped[-1]
     tail = costs[MODEL_COSTS_CAP - 1 :]
     assert aggregate.node == OVERFLOW_NODE
+    # The aggregate merges >= 2 gateway calls: no join key, never estimated.
+    assert aggregate.request_id is None
+    assert aggregate.estimated is False
     assert aggregate.input_tokens == sum(entry.input_tokens for entry in tail)
     assert aggregate.output_tokens == sum(entry.output_tokens for entry in tail)
     assert aggregate.cost_usd == sum((entry.cost_usd for entry in tail), Decimal("0"))

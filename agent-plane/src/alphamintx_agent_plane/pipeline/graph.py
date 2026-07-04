@@ -37,6 +37,7 @@ from alphamintx_agent_plane.contract.models import (
     ModelCost,
     Signal,
     TimeInForce,
+    TraceModelCost,
     TradeProposal,
     rfc3339_utc,
 )
@@ -109,7 +110,7 @@ class PipelineState(TypedDict):
     debate_rounds: Annotated[list[DebateRound], operator.add]
     debate_summary: str
     debate_degraded: bool
-    model_costs: Annotated[list[ModelCost], operator.add]
+    model_costs: Annotated[list[TraceModelCost], operator.add]
     forced_hold_reasons: Annotated[list[str], operator.add]
     estimated_cost_nodes: Annotated[list[str], operator.add]
     proposal: TradeProposal | None
@@ -123,14 +124,23 @@ def wrap_untrusted(name: str, text: str) -> str:
     )
 
 
-def _cost(role: str, response: LLMResponse) -> ModelCost:
-    return ModelCost(
+def _cost(role: str, response: LLMResponse) -> TraceModelCost:
+    """Trace entry for a SUCCESSFUL call: measured usage joined to the gateway
+    row via the attempt's request_id (billing-and-metering.md §Join key)."""
+    return TraceModelCost(
         node=role,
         model=response.model,
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
         cost_usd=response.cost_usd,
+        request_id=response.request_id,
     )
+
+
+def _proposal_costs(costs: list[TraceModelCost]) -> list[ModelCost]:
+    """The proposal-shaped copies: TradeProposal.model_costs NEVER carry the
+    trace-only request_id/estimated fields (proposal.schema.json is untouched)."""
+    return [cost.to_model_cost() for cost in costs]
 
 
 def _merge_unique(left: list[str], right: list[str]) -> list[str]:
@@ -151,11 +161,11 @@ def _forced_hold_reason(exc: LLMError, strategy_id: str, clock: Clock) -> str:
 
 def _parse_or_reprompt[T](
     llm: LLMClient, role: str, symbol: str, prompt: str, parse: Callable[[str], T]
-) -> tuple[T, list[ModelCost], list[str]]:
+) -> tuple[T, list[TraceModelCost], list[str]]:
     """Call the LLM and parse its output with exactly ONE reprompt on malformed
     output (spec §5). Transport errors propagate carrying every cost entry spent
     so far; a second parse failure raises ``MalformedLLMOutputError``."""
-    costs: list[ModelCost] = []
+    costs: list[TraceModelCost] = []
     estimated: list[str] = []
 
     def call(current_prompt: str) -> str:
@@ -297,7 +307,7 @@ def build_pipeline(
     """
 
     def forced_hold_update(
-        state: PipelineState, reason: str, extra_costs: list[ModelCost], estimated: list[str]
+        state: PipelineState, reason: str, extra_costs: list[TraceModelCost], estimated: list[str]
     ) -> dict[str, Any]:
         """Deterministic forced-hold proposal (spec §4-5): never a crash, never a
         skipped record; carries the ``model_costs`` accumulated up to the cutoff
@@ -318,7 +328,9 @@ def build_pipeline(
             reasoning=reason[:8000],
             analyst_summaries=_filled_summaries(state),
             debate_summary=state["debate_summary"] or "unavailable: debate skipped (forced hold)",
-            model_costs=aggregate_overflow([*state["model_costs"], *extra_costs]),
+            model_costs=_proposal_costs(
+                aggregate_overflow([*state["model_costs"], *extra_costs])
+            ),
         )
         return {
             "proposal": proposal,
@@ -398,7 +410,7 @@ def build_pipeline(
             return {}
         round_index = len(state["debate_rounds"])
         context = _debate_context(state)
-        costs: list[ModelCost] = []
+        costs: list[TraceModelCost] = []
         estimated: list[str] = []
 
         def cut_short(role: str, exc: LLMUnavailableError) -> dict[str, Any]:
@@ -530,7 +542,11 @@ def build_pipeline(
                 exc.estimated_cost_nodes,
             )
         proposal = proposal.model_copy(
-            update={"model_costs": aggregate_overflow([*state["model_costs"], *costs])}
+            update={
+                "model_costs": _proposal_costs(
+                    aggregate_overflow([*state["model_costs"], *costs])
+                )
+            }
         )
         return {
             "proposal": proposal,

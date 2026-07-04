@@ -11,20 +11,25 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
-from alphamintx_agent_plane.contract.models import ModelCost
+from alphamintx_agent_plane.contract.models import TraceModelCost
 
 MODEL_COSTS_CAP = 32
 OVERFLOW_NODE = "overflow_aggregate"
 OVERFLOW_MODEL = "aggregate"
 
 
-def aggregate_overflow(costs: Sequence[ModelCost]) -> list[ModelCost]:
-    """Cap a cost list at 32 entries: 31 verbatim + one exact-sum aggregate."""
+def aggregate_overflow(costs: Sequence[TraceModelCost]) -> list[TraceModelCost]:
+    """Cap a cost list at 32 entries: 31 verbatim + one exact-sum aggregate.
+
+    The aggregate merges >= 2 calls, so it carries NO ``request_id`` and no
+    ``estimated`` flag (billing-and-metering.md §Overflow aggregation); the
+    kept head entries keep theirs verbatim.
+    """
     if len(costs) <= MODEL_COSTS_CAP:
         return list(costs)
     head = list(costs[: MODEL_COSTS_CAP - 1])
     tail = costs[MODEL_COSTS_CAP - 1 :]
-    aggregate = ModelCost(
+    aggregate = TraceModelCost(
         node=OVERFLOW_NODE,
         model=OVERFLOW_MODEL,
         input_tokens=sum(entry.input_tokens for entry in tail),

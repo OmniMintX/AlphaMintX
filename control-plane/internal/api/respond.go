@@ -36,6 +36,15 @@ const (
 	// failed: surfaced in the approval response and persisted to the
 	// rejected_submissions audit surface.
 	codeSubmitFailed = "SUBMIT_FAILED"
+	// Billing and metering codes (billing-and-metering.md §Permission
+	// matrix additions).
+	codeInvalidMeteringRecord = "INVALID_METERING_RECORD"
+	codeMeteringConflict      = "METERING_CONFLICT"
+	codeInvalidPeriod         = "INVALID_PERIOD"
+	codePeriodClosed          = "PERIOD_CLOSED"
+	codePeriodOpen            = "PERIOD_OPEN"
+	codeUnknownInvoice        = "UNKNOWN_INVOICE"
+	codeUnknownReconciliation = "UNKNOWN_RECONCILIATION"
 )
 
 // Preflight reason codes (persistence-and-api.md §Approval preflight).

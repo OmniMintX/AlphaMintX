@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from jsonschema import Draft202012Validator
 
-from alphamintx_agent_plane.contract.models import Action, ModelCost
+from alphamintx_agent_plane.contract.models import Action, TraceModelCost
 from alphamintx_agent_plane.llm.costs import MODEL_COSTS_CAP, OVERFLOW_NODE
 from alphamintx_agent_plane.llm.errors import (
     BudgetExhaustedError,
@@ -226,12 +226,12 @@ class PaddedCostsLLM:
     def __init__(self, pad: int) -> None:
         self._inner = bullish_scenario()
         self._pad = pad
-        self.emitted: list[ModelCost] = []
+        self.emitted: list[TraceModelCost] = []
 
     def complete(self, *, role: str, symbol: str, prompt: str) -> LLMResponse:
         response = self._inner.complete(role=role, symbol=symbol, prompt=prompt)
         extras = tuple(
-            ModelCost(
+            TraceModelCost(
                 node=f"{role}_retry_{i}",
                 model=response.model,
                 input_tokens=10,
@@ -240,7 +240,7 @@ class PaddedCostsLLM:
             )
             for i in range(self._pad)
         )
-        real = ModelCost(
+        real = TraceModelCost(
             node=role,
             model=response.model,
             input_tokens=response.input_tokens,

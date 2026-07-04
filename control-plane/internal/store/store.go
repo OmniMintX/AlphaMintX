@@ -51,6 +51,20 @@ var ErrDuplicateTokenHash = errors.New("DUPLICATE_TOKEN_HASH")
 // owner tokens; checked in the SAME transaction as the insert).
 var ErrOwnerExists = errors.New("OWNER_TOKEN_EXISTS")
 
+// ErrMeteringConflict: a metering re-import disagrees with the stored
+// record for the same request_id (billing-and-metering.md §Metering
+// ingest, 409 METERING_CONFLICT — the whole batch is rejected).
+var ErrMeteringConflict = errors.New("METERING_CONFLICT")
+
+// ErrPeriodClosed: the (tenant, period) billing period already has a
+// billing_periods row (billing-and-metering.md §Billing, 409 PERIOD_CLOSED).
+var ErrPeriodClosed = errors.New("PERIOD_CLOSED")
+
+// ErrPeriodOpen: reconciliation requires a closed period — the invoice is
+// the comparison target (billing-and-metering.md §Reconciliation, 409
+// PERIOD_OPEN).
+var ErrPeriodOpen = errors.New("PERIOD_OPEN")
+
 // Store wraps the single control-plane SQLite file.
 type Store struct {
 	db *sql.DB
@@ -77,6 +91,10 @@ func Open(path string) (*Store, error) {
 	if err := migrateTenancy(db, time.Now()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("tenancy migration %s: %w", path, err)
+	}
+	if err := migrateBilling(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("billing migration %s: %w", path, err)
 	}
 	return &Store{db: db}, nil
 }
@@ -106,6 +124,33 @@ func migrateTenancy(db *sql.DB, now time.Time) error {
 	}
 	_, err := db.Exec(`INSERT OR IGNORE INTO tenants (tenant_id, name, created_at)
 		SELECT DISTINCT tenant_id, tenant_id, ? FROM strategies`, seededAt)
+	return err
+}
+
+// migrateBilling is the additive billing migration (billing-and-metering.md
+// §Migration note): model_costs pre-exists, so its request_id and
+// is_estimated columns are added iff absent, then the partial UNIQUE index
+// enforces request_id uniqueness while leaving NULLs unconstrained. NO data
+// backfill: existing rows read request_id NULL / is_estimated 0 (the
+// "unattributed" reconciliation class).
+func migrateBilling(db *sql.DB) error {
+	for _, col := range []struct{ name, ddl string }{
+		{"request_id", `ALTER TABLE model_costs ADD COLUMN request_id TEXT`},
+		{"is_estimated", `ALTER TABLE model_costs ADD COLUMN is_estimated INTEGER NOT NULL DEFAULT 0`},
+	} {
+		var have int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('model_costs')
+			WHERE name = ?`, col.name).Scan(&have); err != nil {
+			return err
+		}
+		if have == 0 {
+			if _, err := db.Exec(col.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_costs_request_id
+		ON model_costs (request_id) WHERE request_id IS NOT NULL`)
 	return err
 }
 

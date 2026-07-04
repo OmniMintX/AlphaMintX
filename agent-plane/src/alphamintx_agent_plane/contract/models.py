@@ -160,6 +160,40 @@ class ModelCost(ContractModel):
     cost_usd: DecimalStr
 
 
+class TraceModelCost(ContractModel):
+    """Trace-only cost entry (agent_trace.schema.json ``$defs/trace_model_cost``):
+    the proposal ``model_cost`` fields plus the OPTIONAL per-attempt billing join
+    key and estimated flag (docs/specs/billing-and-metering.md). The proposal's
+    ``ModelCost`` stays a separate type and NEVER carries these fields."""
+
+    node: str = Field(max_length=64)
+    model: str = Field(max_length=64)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    cost_usd: DecimalStr
+    request_id: UuidStr | None = None
+    estimated: bool = False
+
+    def to_json_dict(self) -> dict[str, Any]:
+        """Hash stability (billing-and-metering.md): ``request_id`` is omitted when
+        None (exclude_none) and ``estimated`` when false, so an entry without the
+        new fields serializes byte-identical to the pre-upgrade shape."""
+        data = super().to_json_dict()
+        if not self.estimated:
+            del data["estimated"]
+        return data
+
+    def to_model_cost(self) -> ModelCost:
+        """The proposal-shaped copy: the shared fields WITHOUT the trace-only ones."""
+        return ModelCost(
+            node=self.node,
+            model=self.model,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            cost_usd=self.cost_usd,
+        )
+
+
 class TradeProposal(ContractModel):
     """TradeProposal v1 — the single agent-plane -> control-plane interface."""
 

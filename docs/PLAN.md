@@ -135,7 +135,22 @@ Exit criteria:
       `_AgentCrossStrategy403`, `_ListsExcludeForeignRows`. Env tokens are
       platform-scoped deployer credentials by spec; tenant principals are
       DB tokens only.)
-- [ ] Billing invoices reconcile with mintrouter metering.
+- [x] Billing invoices reconcile with mintrouter metering.
+      (2026-07-04: `docs/specs/billing-and-metering.md` implemented —
+      model_costs is the billable source, the imported mintrouter
+      spend-log export is the check, joined per-attempt by `X-Request-Id`.
+      Reconciliation PASS is the pinned exact-decimal identity
+      matched + orphan_client + estimated_client + unattributed ==
+      invoice total, with every divergence enumerated and classified
+      (golden test: full-match PASS + one injected discrepancy per
+      class). Non-vacuous live evidence: real `MintRouterLLM` against a
+      local stub gateway → trace with request_ids ingested → export
+      imported (idempotent re-import skips) → period closed
+      (`inv-tenant-smoke-2026-06`, exact total) → reconcile `pass`,
+      matched_count 3, matched 0.00084 + unattributed 0.816129 ==
+      0.816969 exact, over a copy of the live soak control.db (2988
+      legacy rows = the unattributed class; migration additive).
+      v1 meters raw LLM cost; plan pricing/payment deferred.)
 
 ## Phase 3 — Live trading beta
 

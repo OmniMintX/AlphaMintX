@@ -113,7 +113,7 @@ func testTrace(t *testing.T, strategyID, runID string, proposalID *string) *Trac
 		}},
 		DebateSummary: "no edge either way",
 		ProposalID:    proposalID,
-		ModelCosts: []contract.ModelCost{
+		ModelCosts: []TraceModelCost{
 			{Node: "trader", Model: "stub", InputTokens: 100, OutputTokens: 20, CostUSD: mustDec(t, "0.001")},
 			{Node: "market_analyst", Model: "stub", InputTokens: 50, OutputTokens: 10, CostUSD: mustDec(t, "0.0005")},
 		},

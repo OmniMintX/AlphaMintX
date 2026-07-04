@@ -17,12 +17,13 @@ import math
 import random
 import re
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
 
-from alphamintx_agent_plane.contract.models import ModelCost
+from alphamintx_agent_plane.contract.models import TraceModelCost
 from alphamintx_agent_plane.llm.budget import DailyTokenBudget
 from alphamintx_agent_plane.llm.errors import (
     BudgetExhaustedError,
@@ -119,13 +120,17 @@ class MintRouterLLM:
         if self._budget is not None:
             self._budget.record(tokens)
 
-    def _estimated_cost(self, role: str, model: str, estimated_input: int) -> ModelCost:
-        return ModelCost(
+    def _estimated_cost(
+        self, role: str, model: str, estimated_input: int, request_id: str
+    ) -> TraceModelCost:
+        return TraceModelCost(
             node=role,
             model=model,
             input_tokens=estimated_input,
             output_tokens=0,
             cost_usd=self._price_table.cost_usd(model, estimated_input, 0),
+            request_id=request_id,
+            estimated=True,
         )
 
     def _backoff(self, retry_index: int, deadline: float, reset_after: float | None) -> None:
@@ -152,7 +157,7 @@ class MintRouterLLM:
         # input as ceil(request characters / 4), output 0 (spec §3).
         estimated_input = math.ceil(len(body) / 4)
         deadline = self._monotonic() + OVERALL_DEADLINE_FACTOR * self._timeout_seconds
-        attempt_costs: list[ModelCost] = []
+        attempt_costs: list[TraceModelCost] = []
         estimated_nodes: list[str] = []
         last_failure = "no attempt was made"
         rate_limited = False
@@ -161,15 +166,21 @@ class MintRouterLLM:
             if remaining <= 0:
                 last_failure = "overall per-call deadline exceeded"
                 break
+            # Fresh per ATTEMPT, never per call: every retried attempt is
+            # separately metered at the gateway, and the id is the billing
+            # join key (billing-and-metering.md §Join key).
+            request_id = str(uuid.uuid4())
             try:
                 response = self._client.post(
                     CHAT_COMPLETIONS_PATH,
                     content=body,
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "X-Request-Id": request_id},
                     timeout=min(self._timeout_seconds, remaining),
                 )
             except httpx.TimeoutException:
-                attempt_costs.append(self._estimated_cost(role, model, estimated_input))
+                attempt_costs.append(
+                    self._estimated_cost(role, model, estimated_input, request_id)
+                )
                 if role not in estimated_nodes:
                     estimated_nodes.append(role)
                 self._record_tokens(estimated_input)
@@ -191,7 +202,9 @@ class MintRouterLLM:
                 continue
             status = response.status_code
             if status == 200:
-                return self._parse_success(role, model, response, attempt_costs, estimated_nodes)
+                return self._parse_success(
+                    role, model, response, attempt_costs, estimated_nodes, request_id
+                )
             if status == 402:
                 raise BudgetExhaustedError(
                     self._budget_exhausted_detail(),
@@ -206,7 +219,9 @@ class MintRouterLLM:
                     # it appends an estimated cost entry exactly like a
                     # timeout (spec §3: never silently uncounted). A 429 was
                     # rejected pre-generation — zero spend is correct there.
-                    attempt_costs.append(self._estimated_cost(role, model, estimated_input))
+                    attempt_costs.append(
+                        self._estimated_cost(role, model, estimated_input, request_id)
+                    )
                     if role not in estimated_nodes:
                         estimated_nodes.append(role)
                     self._record_tokens(estimated_input)
@@ -246,8 +261,9 @@ class MintRouterLLM:
         role: str,
         model: str,
         response: httpx.Response,
-        attempt_costs: list[ModelCost],
+        attempt_costs: list[TraceModelCost],
         estimated_nodes: list[str],
+        request_id: str,
     ) -> LLMResponse:
         try:
             data: Any = response.json()
@@ -268,6 +284,7 @@ class MintRouterLLM:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_usd=self._price_table.cost_usd(model, input_tokens, output_tokens),
+            request_id=request_id,
             extra_costs=tuple(attempt_costs),
             estimated_cost_nodes=tuple(estimated_nodes),
         )

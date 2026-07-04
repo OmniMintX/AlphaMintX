@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -81,7 +80,11 @@ func TestTraceValidation(t *testing.T) {
 		{"debate summary", func(env *store.TraceEnvelope) { env.DebateSummary = strings.Repeat("x", 4001) }},
 		{"proposal id", func(env *store.TraceEnvelope) { env.ProposalID = &badProposal }},
 		{"model costs", func(env *store.TraceEnvelope) {
-			env.ModelCosts = make([]contract.ModelCost, 33)
+			env.ModelCosts = make([]store.TraceModelCost, 33)
+		}},
+		{"model cost request id", func(env *store.TraceEnvelope) {
+			bad := "NOT-A-UUID"
+			env.ModelCosts[0].RequestID = &bad
 		}},
 		{"budget date", func(env *store.TraceEnvelope) { env.BudgetState.UTCDate = "20260704" }},
 		{"transcripts size", func(env *store.TraceEnvelope) {
