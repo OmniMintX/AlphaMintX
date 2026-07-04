@@ -3,7 +3,11 @@ permitted by docs/ARCHITECTURE.md §Plane boundary rules; no credentials, no
 trading endpoints, never an exchange SDK).
 
 ``BinanceSnapshotProvider`` GETs public 1h klines and formats a compact,
-deterministic ``market_data`` string (``Decimal``, never float — ADR-0003).
+deterministic ``market_data`` string (``Decimal``, never float — ADR-0003) on a
+CLOSED-candle basis: one extra kline is fetched and the last (forming) row is
+dropped before formatting (backtest-engine.md §Lookahead migration note), so
+live snapshots and backtest snapshots share the same basis. ``format_market_data``
+is the shared formatter reused by the backtest emitter.
 News/fundamentals are static placeholders in Phase 1. A fetch failure raises
 the typed ``SnapshotError``: the tick records the failure and moves on — the
 scheduler loop never crashes on market data.
@@ -27,6 +31,9 @@ ENV_BINANCE_BASE_URL = "ALPHAMINTX_BINANCE_BASE_URL"
 KLINES_PATH = "/api/v3/klines"
 KLINES_INTERVAL = "1h"
 KLINES_LIMIT = 24
+# Binance returns the FORMING candle as the last row; fetch one extra so the
+# snapshot window still holds KLINES_LIMIT closed candles after dropping it.
+KLINES_FETCH_LIMIT = KLINES_LIMIT + 1
 DEFAULT_TIMEOUT_SECONDS = 10.0
 
 NO_NEWS_PLACEHOLDER = "no news feed in phase 1"
@@ -75,7 +82,7 @@ class BinanceSnapshotProvider:
         params = {
             "symbol": binance_symbol(symbol),
             "interval": KLINES_INTERVAL,
-            "limit": str(KLINES_LIMIT),
+            "limit": str(KLINES_FETCH_LIMIT),
         }
         try:
             response = self._client.get(
@@ -93,19 +100,28 @@ class BinanceSnapshotProvider:
             klines: Any = response.json()
         except ValueError as exc:
             raise SnapshotError(f"klines response for {symbol} is not JSON") from exc
+        if not isinstance(klines, list):
+            raise SnapshotError(f"klines response for {symbol} is empty or malformed")
+        if len(klines) < 2:
+            raise SnapshotError(
+                f"klines response for {symbol} has too few rows for a closed-candle snapshot"
+            )
+        # Drop the last (forming) row: the snapshot is closed-candle only.
         return MarketSnapshot(
-            market_data=_format_market_data(symbol, klines),
+            market_data=format_market_data(symbol, klines[:-1]),
             news=NO_NEWS_PLACEHOLDER,
             fundamentals=NO_FUNDAMENTALS_PLACEHOLDER,
         )
 
 
-def _format_market_data(symbol: str, klines: Any) -> str:
-    """``close=... high_24h=... low_24h=... volume_ratio=...`` from 1h klines.
+def format_market_data(symbol: str, klines: Any) -> str:
+    """``close=... high_24h=... low_24h=... volume_ratio=...`` from CLOSED klines.
 
     Kline fields (Binance): [open_time, open, high, low, close, volume, ...].
-    ``volume_ratio`` is the last hour's volume over the 24h hourly average,
+    ``volume_ratio`` is the last candle's volume over the window's average,
     quantized to 2 decimal places — deterministic Decimal formatting throughout.
+    Shared by the live provider and the backtest emitter (identical behavior on
+    both, so M1/M2 lookahead comparisons are meaningful).
     """
     if not isinstance(klines, list) or not klines:
         raise SnapshotError(f"klines response for {symbol} is empty or malformed")

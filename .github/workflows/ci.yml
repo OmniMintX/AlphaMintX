@@ -17,6 +17,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       contracts: ${{ steps.filter.outputs.contracts }}
       e2e: ${{ steps.filter.outputs.e2e }}
+      backtest: ${{ steps.filter.outputs.backtest }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -37,6 +38,13 @@ jobs:
               - 'contracts/**'
             e2e:
               - 'e2e/**'
+              - 'control-plane/**'
+              - 'agent-plane/**'
+              - 'contracts/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+            backtest:
+              - 'backtest/**'
               - 'control-plane/**'
               - 'agent-plane/**'
               - 'contracts/**'
@@ -125,3 +133,18 @@ jobs:
       - run: uv sync
         working-directory: agent-plane
       - run: make e2e-check
+
+  backtest:
+    needs: changes
+    if: needs.changes.outputs.backtest == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: control-plane/go.sum
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+        working-directory: agent-plane
+      - run: make backtest-check

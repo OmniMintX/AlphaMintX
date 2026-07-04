@@ -1,0 +1,22 @@
+{
+  "strategy_id": "b7e57000-0000-4000-8000-000000000001",
+  "symbol": "BTC/USDT",
+  "interval": "1h",
+  "mask_level": "M0",
+  "seed": 42,
+  "quote_currency": "USDT",
+  "fill_model": {
+    "market_slippage_bps": "5",
+    "taker_fee_bps": "5",
+    "maker_fee_bps": "2"
+  },
+  "max_age_seconds": 3600,
+  "limits": {
+    "symbol_whitelist": ["BTC/USDT"],
+    "per_position_notional_cap_quote": "2000",
+    "daily_loss_limit_quote": "500",
+    "max_loss_at_stop_quote": "100",
+    "allocated_capital_quote": "10000",
+    "accounting_quote": "USDT"
+  }
+}

@@ -101,8 +101,22 @@ Scope:
 - Billing on metered LLM cost + subscription plans (mintrouter patterns).
 
 Exit criteria:
-- [ ] Backtest vs paper parity test: same code, same data window ⇒ same trades.
-- [ ] Lookahead check passes on all shipped strategy templates.
+- [x] Backtest vs paper parity test: same code, same data window ⇒ same trades.
+      (2026-07-04: parity is defined against candle-driven replay-paper,
+      backtest-engine.md §Goals. The replay runs the IDENTICAL
+      `riskgate.Evaluate` + paper-OMS fill-model-v2 code as the e2e
+      replay-paper harness; `make backtest-check` pins byte-identical
+      proposals and records across double runs and against committed
+      goldens, incl. intra-candle stop fills, TP fills, a grid gap, and a
+      boundary no-lookahead regression — decision-t mark is close(t),
+      never open(t+1).)
+- [x] Lookahead check passes on all shipped strategy templates.
+      (2026-07-04: M1 physical-truncation vs M0 masking byte-agreement and
+      M2 independent-slice snapshot-hash recheck pass for both shipped
+      templates — bullish and low_confidence — on the golden dataset, and
+      for bullish on a 72-candle live-fetched BTC/USDT 1h dataset; M1+M2
+      run in CI via `make backtest-check`. Scope: deterministic tier only,
+      backtest-engine.md §Lookahead NORMATIVE LIMITATION.)
 - [ ] RBAC matrix tests: Trader cannot change limits; no role reads back API keys.
 - [ ] Tenant A cannot read or affect tenant B data (isolation tests).
 - [ ] Billing invoices reconcile with mintrouter metering.

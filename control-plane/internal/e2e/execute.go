@@ -144,7 +144,7 @@ func (p *tickPump) processTick(ts time.Time, marks map[string]decimal.Decimal) e
 			}
 		}
 		name := fmt.Sprintf("order/tick/%s/%d", ts.UTC().Format(time.RFC3339), i)
-		if err := writeRecord(p.out, orderToRecord(&ord, DeterministicID(name), "")); err != nil {
+		if err := writeRecord(p.out, OrderToRecord(&ord, DeterministicID(name), "")); err != nil {
 			return err
 		}
 	}
@@ -177,10 +177,10 @@ func evaluateOne(gate *riskgate.Service, oms *paper.OMS, limits riskgate.RiskLim
 	}
 	got[p.StrategyID] = detail
 
-	if err := writeRecord(out, proposalRecord{Kind: "proposal", Proposal: p}); err != nil {
+	if err := writeRecord(out, ProposalRecord{Kind: "proposal", Proposal: p}); err != nil {
 		return err
 	}
-	if err := writeRecord(out, verdictRecord{Kind: "verdict", Verdict: &verdict}); err != nil {
+	if err := writeRecord(out, VerdictRecord{Kind: "verdict", Verdict: &verdict}); err != nil {
 		return err
 	}
 
@@ -232,11 +232,11 @@ func executeOpen(oms *paper.OMS, st *strategyState, p *contract.Proposal, v *con
 	if ord.Status == paper.StatusFilled {
 		st.openPositions++
 	}
-	if err := writeRecord(out, orderToRecord(&ord, DeterministicID("order/"+p.ProposalID+"/entry"), p.ProposalID)); err != nil {
+	if err := writeRecord(out, OrderToRecord(&ord, DeterministicID("order/"+p.ProposalID+"/entry"), p.ProposalID)); err != nil {
 		return err
 	}
 	if pos, ok := oms.Position(p.StrategyID, p.Symbol); ok {
-		return writeRecord(out, positionRecord{
+		return writeRecord(out, PositionRecord{
 			Kind:       "position",
 			StrategyID: p.StrategyID,
 			Symbol:     pos.Symbol,
@@ -257,7 +257,7 @@ func executeClose(oms *paper.OMS, st *strategyState, p *contract.Proposal, mark 
 	if err != nil {
 		return fmt.Errorf("flatten %s: %w", p.ProposalID, err)
 	}
-	if err := writeRecord(out, orderToRecord(&ord, DeterministicID("order/"+p.ProposalID+"/close"), p.ProposalID)); err != nil {
+	if err := writeRecord(out, OrderToRecord(&ord, DeterministicID("order/"+p.ProposalID+"/close"), p.ProposalID)); err != nil {
 		return err
 	}
 	if ord.Status != paper.StatusFilled {
@@ -270,7 +270,7 @@ func executeClose(oms *paper.OMS, st *strategyState, p *contract.Proposal, mark 
 	if ok {
 		return fmt.Errorf("close %s left a residual position: qty_base %s", p.ProposalID, pos.QtyBase)
 	}
-	return writeRecord(out, positionRecord{
+	return writeRecord(out, PositionRecord{
 		Kind:       "position",
 		StrategyID: p.StrategyID,
 		Symbol:     p.Symbol,
@@ -279,12 +279,12 @@ func executeClose(oms *paper.OMS, st *strategyState, p *contract.Proposal, mark 
 	})
 }
 
-// orderToRecord maps a paper order to its record line, substituting the
+// OrderToRecord maps a paper order to its record line, substituting the
 // deterministic order id for the OMS-internal random id. Filled orders
 // carry the fill price and the separately-recorded fee (fee-EXCLUSIVE:
 // fees are never baked into the fill price, market-data.md).
-func orderToRecord(ord *paper.Order, orderID, proposalID string) orderRecord {
-	rec := orderRecord{
+func OrderToRecord(ord *paper.Order, orderID, proposalID string) OrderRecord {
+	rec := OrderRecord{
 		Kind:       "order",
 		OrderID:    orderID,
 		ProposalID: proposalID,

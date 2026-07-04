@@ -167,7 +167,7 @@ func Run(spec *RunSpec, proposals io.Reader, out io.Writer) ([]Outcome, error) {
 		// proposal.strategy_id. Mismatch or unknown strategy is rejected
 		// WITHOUT a verdict (auth failures never produce verdicts).
 		if expected, ok := tokens[p.StrategyID]; !ok || env.Token != expected {
-			if err := writeRecord(out, rejectedSubmissionRecord{
+			if err := writeRecord(out, RejectedSubmissionRecord{
 				Kind:       "rejected_submission",
 				StrategyID: p.StrategyID,
 				ProposalID: p.ProposalID,

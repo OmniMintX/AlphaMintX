@@ -36,11 +36,22 @@ and the agent-plane offline backtest emitter. Companion to
 - **Stage 1** runs the REAL pipeline (StubLLM or recorded transcripts,
   §Determinism) once per candle close over the dataset window, emitting one
   proposal line per decision tick.
-- **`proposals.jsonl` line shape (normative).** Each line carries an explicit
-  `tick_number` (the alignment key for every comparison in §Lookahead — no
-  line-index alignment) plus the per-tick snapshot string the pipeline
-  actually consumed (or its sha256): M2's pass condition compares against
-  this recorded value, so stage 1 MUST persist it.
+- **`proposals.jsonl` shape (normative, as implemented).** Line 1 is a meta
+  line — `{"kind":"backtest_meta","strategy_id","symbol","interval",
+  "dataset_sha256","seed","mask_level","window","scenario"}` — so the
+  artifact alone identifies and reproduces its stage-1 run; the replay
+  fails closed on any mismatch with the runspec or the dataset actually
+  read. Every following line is `{"tick_number","snapshot_sha256",
+  "proposal"}`: an explicit `tick_number` (the alignment key for every
+  comparison in §Lookahead — no line-index alignment) plus the sha256 of
+  the exact snapshot string the pipeline consumed — M2's pass condition
+  compares against this recorded value, so stage 1 MUST persist it.
+- **Tick range.** Grid tick `t` of a candle = `(open_time −
+  first_open_time) / d`; gapped indices own ticks with no candle. The
+  emitter writes exactly one line per grid tick `t ∈ [0, N−1]`, ascending,
+  gaps included; the snapshot at tick t covers the trailing
+  `min(window, closed-candles-at-t)` rows. The replay enforces the exact
+  sequence and `created_at = T(t) + 1s` per line.
 - **Open-loop assumption (normative).** The pipeline input is exactly the
   snapshot fields (`market_data`/`news`/`fundamentals`) derived from the
   dataset. The emitter MUST NOT read control-plane state — positions, equity,
@@ -60,6 +71,18 @@ and the agent-plane offline backtest emitter. Companion to
   granting agent-plane DB access. The plane boundary is preserved: read-only
   market-data REST is already permitted by the boundary gate
   (`scripts/check_plane_boundary.py`).
+- **Canonical dataset form (normative, as implemented).** One kline per
+  line, compact JSON, pinned key order `symbol, interval, open_time, open,
+  high, low, close, volume`; canonical symbol (`BTC/USDT` — the venue form
+  exists only inside the HTTP query); OHLCV decimal strings VERBATIM from
+  the venue; single symbol+interval per file; strictly ascending,
+  grid-aligned `open_time` (gaps legal). `close_time` is NEVER stored —
+  both planes derive `close_time = open_time + d` (not Binance's
+  `open+d−1ms`), one rule, two implementations. Legal intervals are a
+  closed 1m…1d whitelist duplicated verbatim on both planes (Go
+  `time.ParseDuration` cannot parse `1d`; an open-ended parser would
+  diverge cross-plane). `dataset_sha256` = sha256 of the entire file bytes,
+  recomputed independently by the emitter and the replay.
 - **Persistence isolation (normative).** The klines cache, `backtest_runs`,
   and `backtest_records` live in a SEPARATE SQLite DB file (`backtest.db`),
   NOT in `control.db`: backtests never pollute live/paper state, paper-gate
@@ -88,12 +111,29 @@ and the agent-plane offline backtest emitter. Companion to
   (d = candle duration). The existing per-sweep pessimism rule — the stop
   wins over the TP when both trigger in the same sub-tick — is inherited
   unchanged.
+- **Candle-grouped pumping (normative).** `close_time(t) == open_time(t+1)`
+  — the boundary timestamps COLLIDE, and the Store keeps only the latest
+  tick per symbol. A time-threshold drain (`advance(T+1s)`, the e2e
+  tickPump shape) would therefore overwrite candle t's close with candle
+  t+1's open BEFORE the tick-t decision — literal lookahead. The replay
+  MUST pump candle t's four sub-ticks, take decision t, and only then
+  touch candle t+1 (regression-tested: the decision-t mark equals
+  close(t), never open(t+1)).
+- **`max_age_seconds` bound (normative).** The runspec MUST satisfy
+  `1 ≤ max_age_seconds ≤ interval`: the healthy mark age at decision time
+  is 1s by construction and a gapped candle leaves the last mark
+  `interval + 1s` old, so any larger bound would silently disable gap
+  staleness detection.
 - **Sub-ticks are mark writes within a tick, NOT separate `tick_number`s**:
   tick-number alignment is one per candle by definition.
 - **Staleness.** Mark age at decision time is ~1 s by construction, so
   `max_age_seconds` is satisfied identically to a healthy live feed. A test
   case with a deliberately gapped dataset is REQUIRED, proving the
-  fail-closed `MARK_PRICE_UNAVAILABLE` rejects still occur.
+  fail-closed `MARK_PRICE_UNAVAILABLE` rejects still occur. Scope note
+  (same gate code as live): the zero-mark guard binds MARKET entries;
+  a LIMIT entry at a gapped tick is approved and rests unfilled in the
+  OMS — placing a limit order needs no current mark, and no sub-ticks
+  arrive to fill it until the next present candle.
 - **UTC daily rollover.** Daily-loss / circuit-breaker day boundaries derive
   from virtual `T` crossing 00:00 UTC (the same `utcDate` convention as
   runstate); replay never reads the wall clock.
@@ -102,17 +142,16 @@ and the agent-plane offline backtest emitter. Companion to
 
 | Level | Meaning | Pass condition |
 |---|---|---|
-| M0 | Control: full dataset run. | Baseline for comparison. |
-| M1 | Forming-candle mask: the snapshot builder consumes ONLY closed candles. | Per-tick comparison keys identical to M0. |
-| M2 | Dataset-slice masking with snapshot-string equality. | For each decision tick t, the snapshot string built from the dataset sliced at t is byte-identical to the snapshot string the emitter actually used at t in the M0 run. |
+| M0 | Control: index-masked slicing (rows with grid index ≤ t, trailing window). | Baseline for comparison. |
+| M1 | PHYSICAL truncation: the emitter windows a literally truncated row list (`rows[:last_present_index_at_t + 1]`) — a structurally different mechanism from M0's masking, so a masking bug in M0's path cannot hide in both. | Emitted files identical to M0 (proposal lines byte-equal; metas differ only in `mask_level`). `check --mode m1`. |
+| M2 | Independent recheck: for each proposal line, rebuild the snapshot string from the dataset sliced at that tick using a SEPARATE slicing implementation (deliberately duplicated inline in the checker — it MUST NOT share the emitter's slicing code, or a common lookahead bug would recompute the same wrong hash and pass blindly). | Recomputed sha256 equals the recorded `snapshot_sha256` at every tick. `check --mode m2`. |
 
-- Detection target: the deterministic snapshot/dataset-slicing code. M2
-  detects any deterministic-tier code path reading past the mask at O(n),
+- Detection target: the deterministic snapshot/dataset-slicing code, at O(n)
   WITHOUT re-running the pipeline (a naive per-tick full-pipeline re-run is
   O(n²) and vacuous under StubLLM — explicitly rejected).
-- **Comparison keys (per tick):** `(tick_number, decision, ordered reason
-  codes, clipped_size_quote, fill price/qty as decimal strings)`. Pass =
-  identical across M0/M1; M2 pass = snapshot-string equality at every tick.
+- `mask_level ∈ {M0, M1}` is the EMITTER mode recorded in the meta line and
+  `backtest_runs`; M2 is a checker mode over an existing emit, never an
+  emitter mode — an `M2` run row cannot exist.
 - **NORMATIVE LIMITATION.** The LLM tier is out of scope for automated
   lookahead detection: StubLLM ignores prompts (canned per role/symbol) and
   recorded transcripts replay recorded outputs, so masking cannot alter LLM
@@ -121,16 +160,16 @@ and the agent-plane offline backtest emitter. Companion to
   This qualifies README invariant 7 ("backtests free of lookahead bias"):
   the guarantee covers everything the platform feeds the pipeline — the
   deterministic snapshot/dataset path — not the model's own priors.
-- **Migration note (normative, all three parts):**
-  1. Today's live provider (`scheduler/snapshot.py`) includes the FORMING
-     candle — `closes[-1]` is effectively a mid-candle last price. Phase 2
-     mandates a closed-candle basis for BOTH backtest snapshots and the live
-     provider, so M1 parity is achievable.
-  2. `tests/test_scheduler_snapshot.py` pins the current semantics and MUST
-     be updated with that change.
-  3. This changes only the PIPELINE INPUT basis — the gate/OMS mark basis
-     (per-trade live marks) is unchanged, so this mandate does not by itself
-     close the intra-candle fidelity gap (§Goals).
+- **Migration note (normative — DONE 2026-07-04, all three parts):**
+  1. The live provider (`scheduler/snapshot.py`) previously included the
+     FORMING candle — `closes[-1]` was a mid-candle last price. It now
+     fetches one extra kline and DROPS the forming row, so both live and
+     backtest snapshots share the closed-candle basis M1 needs.
+  2. `tests/test_scheduler_snapshot.py` was updated to pin the new
+     closed-candle semantics.
+  3. This changed only the PIPELINE INPUT basis — the gate/OMS mark basis
+     (per-trade live marks) is unchanged, so it does not by itself close
+     the intra-candle fidelity gap (§Goals).
 
 ## Persistence and lifecycle
 
@@ -159,11 +198,16 @@ CREATE TABLE backtest_records (backtest_id TEXT NOT NULL REFERENCES backtest_run
 
 ## Determinism (normative)
 
-- All backtest ids are uuid5 in a NEW `NAMESPACE_BACKTEST`, derived the same
-  way as the e2e `NAMESPACE_E2E` (uuid5 of `uuid.NAMESPACE_URL` + a pinned
-  URL).
+- All backtest ids are uuid5 in a NEW `NAMESPACE_BACKTEST` (uuid5 of
+  `uuid.NAMESPACE_URL` + the pinned URL `https://alphamintx.dev/backtest`),
+  derived the same way as the e2e `NAMESPACE_E2E`. `backtest_id =
+  uuid5(NAMESPACE_BACKTEST, "backtest/<dataset_sha256>/<config_hash>/<seed>/
+  <mask_level>")` with `config_hash` = sha256 of the runspec file bytes.
 - The `seed` is recorded in `backtest_runs`; same dataset (`dataset_sha256`)
-  + same seed ⇒ byte-identical output.
+  + same seed ⇒ byte-identical output. The seed is an id-salt only: StubLLM
+  is canned and nothing in the pipeline is stochastic.
+- `code_version` is the VCS revision from Go build info, or `"unknown"`
+  (test binaries and `go run` builds do not stamp VCS metadata).
 - Decimal-as-string end to end (ADR-0003; `docs/specs/proposal-contract.md`
   §Decimal-as-string regex); never float64.
 - LLM tier: StubLLM or recorded transcripts ONLY — a backtest makes no live
@@ -186,7 +230,9 @@ CREATE TABLE backtest_records (backtest_id TEXT NOT NULL REFERENCES backtest_run
 - Recorded-LLM-transcript replay format: keying, storage, cap (≤ 256 KiB per
   trace envelope).
 - `max_orders_per_minute`'s sliding 60 s window under a virtual candle
-  clock: with 1 h candles it can never bind (one decision per hour). The
-  check is KEPT, noted as inert at coarse intervals.
+  clock: the replay leaves `EntryOrdersInLastMinute` (and the pending-entry
+  counters) at 0 — exactly like the e2e harness — so the check is inert in
+  backtest v1 at ANY interval; wiring it from OMS order timestamps is
+  deferred.
 - Closed-loop mode, if strategies ever condition on portfolio state
   (§Two-stage recorded-proposal architecture).

@@ -99,18 +99,23 @@ type Envelope struct {
 
 // Record kinds written to records.jsonl. Field order of the structs below is
 // the wire order (encoding/json marshals struct fields in declaration order).
+// They are exported for reuse by the backtest engine (internal/backtest),
+// which shares this record contract byte-for-byte.
 
-type proposalRecord struct {
+// ProposalRecord is the "proposal" record line.
+type ProposalRecord struct {
 	Kind     string             `json:"kind"`
 	Proposal *contract.Proposal `json:"proposal"`
 }
 
-type verdictRecord struct {
+// VerdictRecord is the "verdict" record line.
+type VerdictRecord struct {
 	Kind    string            `json:"kind"`
 	Verdict *contract.Verdict `json:"verdict"`
 }
 
-type orderRecord struct {
+// OrderRecord is the "order" record line.
+type OrderRecord struct {
 	Kind       string `json:"kind"`
 	OrderID    string `json:"order_id"`
 	ProposalID string `json:"proposal_id"`
@@ -127,7 +132,8 @@ type orderRecord struct {
 	Status     string `json:"status"`
 }
 
-type positionRecord struct {
+// PositionRecord is the "position" record line.
+type PositionRecord struct {
 	Kind       string `json:"kind"`
 	StrategyID string `json:"strategy_id"`
 	Symbol     string `json:"symbol"`
@@ -135,7 +141,8 @@ type positionRecord struct {
 	EntryPrice string `json:"entry_price"`
 }
 
-type rejectedSubmissionRecord struct {
+// RejectedSubmissionRecord is the "rejected_submission" record line.
+type RejectedSubmissionRecord struct {
 	Kind       string `json:"kind"`
 	StrategyID string `json:"strategy_id"`
 	ProposalID string `json:"proposal_id"`

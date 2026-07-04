@@ -24,8 +24,10 @@ AlphaMintX/
   clientOrderId, fill reconciliation (ws primary, REST audit), orphan recovery.
 - Exchange credential storage: field-level encrypted, write-only (invariant 6).
 - Kill-switch endpoints (strategy / tenant / platform) and watchdog.
-- Backtest engine (Phase 2): historical kline replay through the identical
-  Risk Gate + paper OMS path (`docs/specs/backtest-engine.md`).
+- Backtest engine (`internal/backtest` + `cmd/backtestctl`): historical
+  kline replay through the identical Risk Gate + paper OMS path into an
+  isolated `backtest.db`; `backtestctl fetch` materializes canonical
+  datasets from Binance REST klines (`docs/specs/backtest-engine.md`).
 - Billing hooks: meters LLM cost (from `model_costs`) per strategy/tenant.
 
 ### agent-plane/ (Python 3.12+, LangGraph, pydantic)
