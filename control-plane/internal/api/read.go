@@ -42,9 +42,31 @@ func pageParams(r *http.Request) (int, int) {
 	return pageNum, limit
 }
 
+// rootStrategy is the tenant-scoped root resolution of multi-tenant-rbac.md
+// §Tenancy rules: tenant principals resolve within their own tenant — a
+// foreign-tenant strategy is indistinguishable from absence — while
+// platform env classes resolve every tenant. tenantID is threaded from the
+// authenticated principal, never from request input.
+func (s *Server) rootStrategy(pr principal, strategyID string) (store.Strategy, error) {
+	if pr.tenantBound() {
+		return s.cfg.Store.GetStrategyInTenant(strategyID, pr.tenantID)
+	}
+	return s.cfg.Store.GetStrategy(strategyID)
+}
+
 func (s *Server) handleListStrategies(w http.ResponseWriter, r *http.Request) {
+	pr := principalFrom(r)
 	pageNum, limit := pageParams(r)
-	items, total, err := s.cfg.Store.ListStrategies(pageNum, limit)
+	var (
+		items []store.Strategy
+		total int
+		err   error
+	)
+	if pr.tenantBound() {
+		items, total, err = s.cfg.Store.ListStrategiesByTenant(pr.tenantID, pageNum, limit)
+	} else {
+		items, total, err = s.cfg.Store.ListStrategies(pageNum, limit)
+	}
 	if err != nil {
 		s.writeInternal(w, r, err)
 		return
@@ -53,7 +75,7 @@ func (s *Server) handleListStrategies(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetStrategy(w http.ResponseWriter, r *http.Request) {
-	st, err := s.cfg.Store.GetStrategy(r.PathValue("id"))
+	st, err := s.rootStrategy(principalFrom(r), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, codeUnknownStrategy, "unknown strategy")
 		return
@@ -67,7 +89,7 @@ func (s *Server) handleGetStrategy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	strategyID := r.PathValue("id")
-	if _, err := s.cfg.Store.GetStrategy(strategyID); err != nil {
+	if _, err := s.rootStrategy(principalFrom(r), strategyID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, codeUnknownStrategy, "unknown strategy")
 			return
@@ -99,6 +121,19 @@ type runDetailResponse struct {
 }
 
 func (s *Server) handleGetRunDetail(w http.ResponseWriter, r *http.Request) {
+	// Tenant root check first: a foreign-tenant strategy answers exactly
+	// like a nonexistent run (the same 404 the missing pair below yields).
+	// The sub-reads inside GetRunDetail key on the checked (strategy, run).
+	if pr := principalFrom(r); pr.tenantBound() {
+		if _, err := s.cfg.Store.GetStrategyInTenant(r.PathValue("id"), pr.tenantID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, codeUnknownRun, "unknown run")
+				return
+			}
+			s.writeInternal(w, r, err)
+			return
+		}
+	}
 	d, err := s.cfg.Store.GetRunDetail(r.PathValue("id"), r.PathValue("run_id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, codeUnknownRun, "unknown run")

@@ -156,5 +156,39 @@ func TestStateRateCountPendingAndKill(t *testing.T) {
 	}
 }
 
+// TestStateTenantKillScoped: a tenant kill keeps the gate shut for every
+// strategy of the killed tenant and leaves other tenants untouched
+// (multi-tenant-rbac.md §Tenant kill-switch, hydrator predicate).
+func TestStateTenantKillScoped(t *testing.T) {
+	s := openStore(t)
+	createStrategy(t, s, uid(1)) // tenant-1 (helper default)
+	if err := s.CreateStrategy(store.Strategy{
+		StrategyID: uid(2), TenantID: "tenant-2", Name: "strategy-" + uid(2),
+		LifecycleState: "live_l3", CreatedAt: formatTime(testNow), UpdatedAt: formatTime(testNow),
+	}); err != nil {
+		t.Fatalf("CreateStrategy: %v", err)
+	}
+	epoch, err := s.AppendTenantKill(uid(70), "tenant-1", "admin-1", formatTime(testNow))
+	if err != nil {
+		t.Fatalf("AppendTenantKill: %v", err)
+	}
+	h, _ := newHydrator(t, s)
+
+	killed, err := h.State(uid(1), "live_l3", "BTC/USDT", testNow)
+	if err != nil {
+		t.Fatalf("State(killed tenant): %v", err)
+	}
+	if !killed.KillActive || killed.KillEpoch != epoch {
+		t.Errorf("killed tenant = %v/%d, want active epoch %d", killed.KillActive, killed.KillEpoch, epoch)
+	}
+	alive, err := h.State(uid(2), "live_l3", "BTC/USDT", testNow)
+	if err != nil {
+		t.Fatalf("State(other tenant): %v", err)
+	}
+	if alive.KillActive || alive.KillEpoch != 0 {
+		t.Errorf("other tenant = %v/%d, want inactive epoch 0", alive.KillActive, alive.KillEpoch)
+	}
+}
+
 func strptr(s string) *string { return &s }
 func int64ptr(i int64) *int64 { return &i }

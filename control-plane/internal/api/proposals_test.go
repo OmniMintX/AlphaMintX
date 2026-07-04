@@ -16,27 +16,32 @@ import (
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
+// testRiskLimits is the base RiskLimits of the gated test envs.
+func testRiskLimits() riskgate.RiskLimits {
+	return riskgate.RiskLimits{
+		SymbolWhitelist:             []string{"BTC/USDT", "ETH/USDT"},
+		MaxOpenPositions:            3,
+		PerPositionNotionalCapQuote: decimal.NewFromInt(2000),
+		DailyLossLimitQuote:         decimal.NewFromInt(500),
+		MaxDrawdownPct:              decimal.NewFromInt(10),
+		MaxLossAtStopQuote:          decimal.NewFromInt(450),
+		MinStopDistancePct:          decimal.RequireFromString("0.1"),
+		MaxStopDistancePct:          decimal.NewFromInt(25),
+		MaxOrdersPerMinute:          60,
+		RequireStopLoss:             true,
+		AllocatedCapitalQuote:       decimal.NewFromInt(10000),
+		AccountingQuote:             "USDT",
+		StalenessThresholdSeconds:   riskgate.DefaultStalenessThresholdSeconds,
+		L1ApprovalTimeoutSeconds:    riskgate.DefaultL1ApprovalTimeoutSeconds,
+	}
+}
+
 // gatedEnv is newEnv plus the serve-mode ingestion wiring: RiskLimits and a
 // runstate hydrator over the same store and mark cache.
 func gatedEnv(t *testing.T) *testEnv {
 	t.Helper()
 	return newEnv(t, func(cfg *Config) {
-		limits := riskgate.RiskLimits{
-			SymbolWhitelist:             []string{"BTC/USDT", "ETH/USDT"},
-			MaxOpenPositions:            3,
-			PerPositionNotionalCapQuote: decimal.NewFromInt(2000),
-			DailyLossLimitQuote:         decimal.NewFromInt(500),
-			MaxDrawdownPct:              decimal.NewFromInt(10),
-			MaxLossAtStopQuote:          decimal.NewFromInt(450),
-			MinStopDistancePct:          decimal.RequireFromString("0.1"),
-			MaxStopDistancePct:          decimal.NewFromInt(25),
-			MaxOrdersPerMinute:          60,
-			RequireStopLoss:             true,
-			AllocatedCapitalQuote:       decimal.NewFromInt(10000),
-			AccountingQuote:             "USDT",
-			StalenessThresholdSeconds:   riskgate.DefaultStalenessThresholdSeconds,
-			L1ApprovalTimeoutSeconds:    riskgate.DefaultL1ApprovalTimeoutSeconds,
-		}
+		limits := testRiskLimits()
 		cfg.Limits = &limits
 		cfg.RuntimeState = &runstate.Hydrator{
 			Store: cfg.Store, Marks: cfg.Marks,

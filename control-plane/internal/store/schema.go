@@ -70,4 +70,19 @@ CREATE TABLE IF NOT EXISTS strategy_state (             -- mutable realized-equi
   daily_realized_pnl_quote TEXT NOT NULL,               -- realized PnL of utc_date (fees included)
   utc_date TEXT NOT NULL,                               -- YYYY-MM-DD day the daily figure belongs to
   updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tenants (tenant_id TEXT PRIMARY KEY,        -- multi-tenant-rbac.md §Tables
+  name TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS api_tokens (token_id TEXT PRIMARY KEY,      -- mutable snapshot; ONLY legal
+  tenant_id TEXT NOT NULL REFERENCES tenants,                          -- mutation sets revoked_at once
+  principal TEXT NOT NULL CHECK (principal IN ('user','agent')),
+  role TEXT CHECK (role IN ('owner','admin','trader','viewer')),
+  strategy_id TEXT REFERENCES strategies,
+  token_hash TEXT NOT NULL UNIQUE,                                     -- hex(SHA-256(plaintext))
+  label TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT,
+  CHECK ((principal = 'user' AND role IS NOT NULL AND strategy_id IS NULL)
+      OR (principal = 'agent' AND role IS NULL AND strategy_id IS NOT NULL)));
+CREATE TABLE IF NOT EXISTS token_events (event_id TEXT PRIMARY KEY,    -- append-only token audit
+  token_id TEXT NOT NULL REFERENCES api_tokens,
+  event TEXT NOT NULL CHECK (event IN ('created','revoked')),
+  actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL);
 `

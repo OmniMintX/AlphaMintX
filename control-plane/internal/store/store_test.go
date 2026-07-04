@@ -293,6 +293,18 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// and StrategySnapshot is its consistent read twin — neither adds
 		// an UPDATE/DELETE surface.
 		"IsDuplicateProposal": true, "ApplySweep": true, "StrategySnapshot": true,
+		// Multi-tenant RBAC surface (multi-tenant-rbac.md): tenants, DB
+		// tokens (RevokeAPIToken is the api_tokens snapshot's single legal
+		// mutation — revoked_at once), the tenant kill appender, the limit
+		// audit appender/replayer, and tenant-scoped root reads.
+		"CreateTenant": true, "GetTenant": true, "CreateTenantWithOwnerToken": true,
+		"InsertAPIToken": true, "GetAPIToken": true, "TokenByHash": true,
+		"ListAPITokens": true, "RevokeAPIToken": true, "CountUnrevokedOwnerTokens": true,
+		// InsertOwnerRecoveryToken is the transactional zero-owner gate +
+		// insert (no UPDATE/DELETE surface).
+		"InsertOwnerRecoveryToken": true,
+		"AppendTenantKill":         true, "AppendRiskLimitChanges": true, "RiskLimitChanges": true,
+		"GetStrategyInTenant": true, "ListStrategiesByTenant": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

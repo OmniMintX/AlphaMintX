@@ -142,16 +142,56 @@ type RejectedSubmission struct {
 
 // KillBreakerEvent mirrors the append-only kill_breaker_events table: the
 // persisted kill/breaker intent, written BEFORE any side effect executes.
+// TenantID is set on tenant-scope kills only (multi-tenant-rbac.md); Phase 1
+// rows read it NULL (global or strategy scope, exactly as before).
 type KillBreakerEvent struct {
 	EventID    string  `json:"event_id"`
 	Kind       string  `json:"kind"` // "kill" or "breaker"
 	Scope      string  `json:"scope"`
 	StrategyID *string `json:"strategy_id"`
+	TenantID   *string `json:"tenant_id"`
 	KillEpoch  *int64  `json:"kill_epoch"`
 	Flatten    *bool   `json:"flatten"`
 	TriggerRef *string `json:"trigger_ref"`
 	ActorID    string  `json:"actor_id"`
 	RecordedAt string  `json:"recorded_at"`
+}
+
+// Tenant mirrors the tenants table (multi-tenant-rbac.md §Tables).
+type Tenant struct {
+	TenantID  string `json:"tenant_id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+}
+
+// APIToken mirrors the api_tokens table MINUS token_hash: the hash is
+// write-only after mint (no-read-back invariant) and never crosses the
+// store boundary on reads. Role is set iff Principal == "user"; StrategyID
+// iff Principal == "agent" (table CHECK).
+type APIToken struct {
+	TokenID    string  `json:"token_id"`
+	TenantID   string  `json:"tenant_id"`
+	Principal  string  `json:"principal"` // "user" or "agent"
+	Role       *string `json:"role"`
+	StrategyID *string `json:"strategy_id"`
+	Label      string  `json:"label"`
+	CreatedBy  string  `json:"created_by"`
+	CreatedAt  string  `json:"created_at"`
+	RevokedAt  *string `json:"revoked_at"`
+}
+
+// RiskLimitChange mirrors the append-only risk_limit_changes table: one row
+// per changed field (old -> new, actor, timestamp), replayed rowid-ascending
+// into the effective-limits overlay (multi-tenant-rbac.md §Runtime limit
+// changes).
+type RiskLimitChange struct {
+	ChangeID   string  `json:"change_id"`
+	StrategyID string  `json:"strategy_id"`
+	Field      string  `json:"field"`
+	OldValue   *string `json:"old_value"`
+	NewValue   string  `json:"new_value"`
+	ActorID    string  `json:"actor_id"`
+	ChangedAt  string  `json:"changed_at"`
 }
 
 // RunDetail embeds everything the run-detail endpoint returns; contract

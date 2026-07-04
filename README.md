@@ -47,6 +47,7 @@ only components that ever touch an exchange.
 - [`docs/specs/proposal-contract.md`](docs/specs/proposal-contract.md) — TradeProposal / RiskVerdict semantics
 - [`docs/specs/risk-limits.md`](docs/specs/risk-limits.md) — RiskLimits v1, gate order, circuit breaker, kill-switch
 - [`docs/specs/strategy-lifecycle.md`](docs/specs/strategy-lifecycle.md) — lifecycle states + autonomy ladder
+- [`docs/specs/multi-tenant-rbac.md`](docs/specs/multi-tenant-rbac.md) — tenants, roles, DB tokens, isolation, tenant kill-switch
 - [`docs/adr/`](docs/adr/) — ADR-0001 tech stack · ADR-0002 proposals-only · ADR-0003 decimal money · ADR-0004 mintrouter gateway
 - Contracts: [`contracts/proposal.schema.json`](contracts/proposal.schema.json) · [`contracts/riskverdict.schema.json`](contracts/riskverdict.schema.json) · [`contracts/fixtures/`](contracts/fixtures/)
 

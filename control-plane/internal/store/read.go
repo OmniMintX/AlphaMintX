@@ -62,6 +62,48 @@ func (s *Store) GetStrategy(strategyID string) (Strategy, error) {
 	return st, err
 }
 
+// GetStrategyInTenant is the tenant-scoped root resolution
+// (multi-tenant-rbac.md §Tenancy rules): tenantID is threaded from the
+// authenticated principal, never from request input, and a foreign-tenant
+// strategy is indistinguishable from absence (ErrNotFound).
+func (s *Store) GetStrategyInTenant(strategyID, tenantID string) (Strategy, error) {
+	var st Strategy
+	err := s.db.QueryRow(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at
+		FROM strategies WHERE strategy_id = ? AND tenant_id = ?`, strategyID, tenantID).
+		Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState, &st.CreatedAt, &st.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Strategy{}, fmt.Errorf("strategy %s: %w", strategyID, ErrNotFound)
+	}
+	return st, err
+}
+
+// ListStrategiesByTenant is the tenant-scoped ListStrategies: items and
+// total never contain foreign rows (multi-tenant-rbac.md §Lists).
+func (s *Store) ListStrategiesByTenant(tenantID string, page, limit int) ([]Strategy, int, error) {
+	page, limit = normalizePage(page, limit)
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM strategies WHERE tenant_id = ?`, tenantID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at
+		FROM strategies WHERE tenant_id = ? ORDER BY created_at, strategy_id LIMIT ? OFFSET ?`,
+		tenantID, limit, (page-1)*limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []Strategy
+	for rows.Next() {
+		var st Strategy
+		if err := rows.Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState,
+			&st.CreatedAt, &st.UpdatedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, st)
+	}
+	return out, total, rows.Err()
+}
+
 // ListRuns returns one page of a strategy's runs, tick_number DESC, plus the
 // total count.
 func (s *Store) ListRuns(strategyID string, page, limit int) ([]Run, int, error) {

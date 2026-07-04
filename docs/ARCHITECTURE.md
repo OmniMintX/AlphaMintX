@@ -24,6 +24,10 @@ AlphaMintX/
   clientOrderId, fill reconciliation (ws primary, REST audit), orphan recovery.
 - Exchange credential storage: field-level encrypted, write-only (invariant 6).
 - Kill-switch endpoints (strategy / tenant / platform) and watchdog.
+- Multi-tenant RBAC (`docs/specs/multi-tenant-rbac.md`): fixed roles
+  viewer/trader/admin/owner on DB-issued hashed tokens, tenant isolation
+  (foreign = 404, no existence oracle), runtime limit changes behind a
+  single `LimitsProvider`, tenant-tier kill-switch (Phase 2).
 - Backtest engine (`internal/backtest` + `cmd/backtestctl`): historical
   kline replay through the identical Risk Gate + paper OMS path into an
   isolated `backtest.db`; `backtestctl fetch` materializes canonical

@@ -1,9 +1,11 @@
-// Package api implements the Phase-1 control-plane HTTP API
-// (docs/specs/persistence-and-api.md §HTTP API): read endpoints for the web
-// dashboard, the L1 approval endpoint, and the agent-plane trace-ingestion
-// boundary. Contract payloads are returned verbatim from the store; auth is
-// static bearer tokens (read / operator / per-strategy agent) and tokens are
-// never logged.
+// Package api implements the control-plane HTTP API
+// (docs/specs/persistence-and-api.md §HTTP API and
+// docs/specs/multi-tenant-rbac.md): read endpoints for the web dashboard,
+// the L1 approval endpoint, the agent-plane ingestion boundary, and the
+// Phase 2 tenancy/RBAC surfaces (tenants, DB tokens, runtime limit changes,
+// tenant kill). Contract payloads are returned verbatim from the store;
+// auth is bearer tokens — platform env classes plus tenant-scoped DB tokens
+// — and tokens are never logged.
 package api
 
 import (
@@ -51,26 +53,37 @@ type Config struct {
 	// SUBMITTER_UNAVAILABLE (approved_but_blocked, never a false
 	// "submitted to OMS").
 	Submitter Submitter
-	// Limits are the RiskLimits every ingested proposal is evaluated
+	// Limits are the base RiskLimits every ingested proposal is evaluated
 	// against; with RuntimeState it enables the proposal ingestion
 	// endpoint (nil disables it: proposals cannot be gated without limits).
 	Limits *riskgate.RiskLimits
 	// RuntimeState hydrates the gate's runtime inputs at ingestion.
 	RuntimeState RuntimeStateSource
+	// LimitsProvider is the single read path for effective limits
+	// (multi-tenant-rbac.md §Runtime limit changes); build it with
+	// NewLimitsProvider so persisted overlay rows survive restarts. nil
+	// with Limits set falls back to a provider over the bare base (no
+	// persisted overlay — test/replay wiring).
+	LimitsProvider *LimitsProvider
 
-	// ReadToken authorizes GETs ONLY (web dashboard).
+	// ReadToken authorizes GETs ONLY (web dashboard), every tenant.
 	ReadToken string
 	// OperatorToken authorizes POST .../approvals ONLY (Trader role).
 	OperatorToken string
 	// OperatorPrincipal is recorded as approvals.decided_by.
 	OperatorPrincipal string
 	// AgentTokens maps strategy_id -> bearer token; each token is valid only
-	// for its strategy's trace-ingestion endpoint.
+	// for its strategy's two ingestion endpoints.
 	AgentTokens map[string]string
+	// AdminToken is the env-admin class (multi-tenant-rbac.md): tenant
+	// management, token management, limits changes, tenant kill — any
+	// tenant, no reads.
+	AdminToken string
 
 	// DailyLossBreached reports whether the strategy's daily-loss limit is
 	// breached at now (derived at read time, Row rules); nil means the check
-	// always passes (not wired in this deployment).
+	// always passes (not wired in this deployment). The limit MUST come
+	// from the LimitsProvider per strategy, never a startup capture.
 	DailyLossBreached func(strategyID string, now time.Time) (bool, error)
 
 	// Now defaults to time.Now; tests inject a fixed clock.
@@ -79,12 +92,14 @@ type Config struct {
 	Logf func(format string, args ...any)
 }
 
-// Server is the http.Handler for the Phase-1 API.
+// Server is the http.Handler for the control-plane API.
 type Server struct {
-	cfg Config
-	mux *http.ServeMux
-	rl  *rateLimiter // per-token 60/min, every POST
-	prl *rateLimiter // per-strategy 30/min, proposal ingestion only
+	cfg    Config
+	mux    *http.ServeMux
+	limits *LimitsProvider   // effective-limits read path (nil: no gating)
+	routes []RoutePermission // the registered subset of Permissions()
+	rl     *rateLimiter      // per-token 60/min, every POST
+	prl    *rateLimiter      // per-strategy 30/min, proposal ingestion only
 
 	// gateMu serializes gate evaluations per strategy_id (risk-limits.md
 	// "Gate evaluation order").
@@ -92,7 +107,9 @@ type Server struct {
 	strategyMu map[string]*sync.Mutex
 }
 
-// New builds the server and its routes.
+// New builds the server; every route is registered FROM the permission
+// matrix (multi-tenant-rbac.md §Test requirements) so no route can exist
+// without a matrix entry.
 func New(cfg Config) *Server {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -103,20 +120,49 @@ func New(cfg Config) *Server {
 	s := &Server{
 		cfg:        cfg,
 		mux:        http.NewServeMux(),
+		limits:     cfg.LimitsProvider,
 		rl:         newRateLimiter(cfg.Now, rateLimitBurst, rateLimitPerSec),
 		prl:        newRateLimiter(cfg.Now, proposalRateBurst, proposalRatePerSec),
 		strategyMu: make(map[string]*sync.Mutex),
 	}
+	if s.limits == nil && cfg.Limits != nil {
+		s.limits = newBaseLimitsProvider(*cfg.Limits)
+	}
 
-	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("GET /api/v1/strategies", s.readOnly(s.handleListStrategies))
-	s.mux.HandleFunc("GET /api/v1/strategies/{id}", s.readOnly(s.handleGetStrategy))
-	s.mux.HandleFunc("GET /api/v1/strategies/{id}/runs", s.readOnly(s.handleListRuns))
-	s.mux.HandleFunc("GET /api/v1/strategies/{id}/runs/{run_id}", s.readOnly(s.handleGetRunDetail))
-	s.mux.HandleFunc("POST /api/v1/strategies/{id}/approvals", s.operatorOnly(s.handlePostApproval))
-	s.mux.HandleFunc("POST /api/v1/strategies/{id}/traces", s.agentOnly(s.handlePostTrace))
-	if cfg.Limits != nil && cfg.RuntimeState != nil {
-		s.mux.HandleFunc("POST /api/v1/strategies/{id}/proposals", s.agentOnly(s.handlePostProposal))
+	handlers := map[string]http.HandlerFunc{
+		"GET /health":                               s.handleHealth,
+		"GET /api/v1/strategies":                    s.handleListStrategies,
+		"GET /api/v1/strategies/{id}":               s.handleGetStrategy,
+		"GET /api/v1/strategies/{id}/runs":          s.handleListRuns,
+		"GET /api/v1/strategies/{id}/runs/{run_id}": s.handleGetRunDetail,
+		"POST /api/v1/strategies/{id}/approvals":    s.handlePostApproval,
+		"POST /api/v1/strategies/{id}/traces":       s.handlePostTrace,
+		"POST /api/v1/strategies/{id}/proposals":    s.handlePostProposal,
+		"POST /api/v1/strategies/{id}/limits":       s.handlePostLimits,
+		"POST /api/v1/tenants":                      s.handleCreateTenant,
+		"POST /api/v1/tenants/{tenant_id}/kill":     s.handleTenantKill,
+		"POST /api/v1/tokens":                       s.handleMintToken,
+		"GET /api/v1/tokens":                        s.handleListTokens,
+		"POST /api/v1/tokens/{token_id}/revoke":     s.handleRevokeToken,
+	}
+	for _, perm := range Permissions() {
+		switch perm.Requires {
+		case requiresIngestion:
+			if s.limits == nil || cfg.RuntimeState == nil {
+				continue
+			}
+		case requiresLimits:
+			if s.limits == nil {
+				continue
+			}
+		}
+		key := perm.Method + " " + perm.Path
+		h, ok := handlers[key]
+		if !ok {
+			panic("api: permission matrix names an unknown route " + key)
+		}
+		s.routes = append(s.routes, perm)
+		s.mux.HandleFunc(key, s.guard(perm, h))
 	}
 	return s
 }

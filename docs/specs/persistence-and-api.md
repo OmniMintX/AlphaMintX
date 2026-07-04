@@ -187,14 +187,18 @@ proposal receives a reject VERDICT (risk-limits.md step 0a); only
 unparseable bodies, missing IDs, or a missing `tick_number` land in
 `rejected_submissions` with HTTP 400.
 
-- **Auth: two static bearer tokens** — read and approve are never the same
-  credential, even single-user:
+- **Auth: static bearer tokens** — read and approve are never the same
+  credential, even single-user. Phase 2 extends this surface with DB-issued
+  per-tenant tokens and tenancy rules: on any auth/tenancy conflict,
+  `docs/specs/multi-tenant-rbac.md` wins. The env tokens below are
+  platform-scoped legacy classes (deployer credentials), kept verbatim:
   - `READ_TOKEN` (web dashboard) is valid for GETs ONLY and MUST NOT
     authorize any POST: a leaked or XSS'd dashboard credential cannot
     approve trades.
   - `OPERATOR_TOKEN` (Trader role) is REQUIRED for `POST .../approvals`;
     `approvals.decided_by` = its principal id, so every decision is
-    attributed. Phase-2 RBAC maps this to Trader+ (strategy-lifecycle.md).
+    attributed. Phase-2 DB tokens open this route to trader+ roles
+    (multi-tenant-rbac.md §Permission matrix).
   - Agent-plane strategy tokens are valid only for their ingestion endpoints.
 - **Web deployment (same-origin):** the control-plane serves **no CORS
   headers** by design; the dashboard is served by the Next.js server on the
@@ -206,12 +210,15 @@ unparseable bodies, missing IDs, or a missing `tick_number` land in
   - READ-token exposure, owned explicitly: `NEXT_PUBLIC_READ_TOKEN` is
     inlined into the public client bundle at build time; anyone who can
     fetch the Next server's JS can extract it and read every strategy, run,
-    and trace. Accepted for Phase 1 because the READ token authorizes GETs
-    only (never POSTs — pinned above) and the dashboard is deployed to
-    operators only. Moving reads behind a server-side proxy that attaches
-    the READ token (mirroring the operator proxy) is the recorded Phase 2
-    hardening path — the rewrites infrastructure here is the mechanism it
-    would use.
+    and trace (the env READ token is platform-scoped). Accepted for Phase 1
+    because the READ token authorizes GETs only (never POSTs — pinned above)
+    and the dashboard is deployed to operators only. Tenant-facing
+    deployments MUST bake a per-tenant `viewer` DB token instead
+    (multi-tenant-rbac.md §Web viewer): a leaked credential then reads one
+    tenant, never the platform. Moving reads behind a server-side proxy that
+    attaches the READ token (mirroring the operator proxy) remains the
+    recorded hardening path — the rewrites infrastructure here is the
+    mechanism it would use.
   - `NEXT_PUBLIC_API_BASE_URL` stays the explicit cross-origin escape hatch.
 - **Limits (every POST):** body > 1 MiB ⇒ 413; per-token 60 req/min ⇒ 429.
 - Pagination: `{items, total, page, limit}` (`page` 1-based, `limit` default

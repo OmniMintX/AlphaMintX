@@ -94,6 +94,7 @@ func serve(dbPath string) error {
 		OperatorToken:     os.Getenv("CONTROLPLANE_OPERATOR_TOKEN"),
 		OperatorPrincipal: operatorPrincipal,
 		AgentTokens:       agentTokens,
+		AdminToken:        os.Getenv("CONTROLPLANE_ADMIN_TOKEN"),
 	}
 
 	limits, err := parseRiskLimits(os.Getenv("CONTROLPLANE_RISK_LIMITS"))
@@ -102,15 +103,25 @@ func serve(dbPath string) error {
 	}
 	var hydrator *runstate.Hydrator
 	if limits != nil {
+		// The provider hydrates the persisted risk_limit_changes overlay
+		// here, in the server layer after store.Open (multi-tenant-rbac.md
+		// §Runtime limit changes): the overlay always beats the env base.
+		provider, err := api.NewLimitsProvider(st, *limits)
+		if err != nil {
+			return err
+		}
 		hydrator = &runstate.Hydrator{Store: st, Marks: marks, AllocatedCapitalQuote: limits.AllocatedCapitalQuote}
 		cfg.Limits = limits
+		cfg.LimitsProvider = provider
 		cfg.RuntimeState = hydrator
 		cfg.DailyLossBreached = func(strategyID string, now time.Time) (bool, error) {
 			daily, err := hydrator.DailyPnL(strategyID, now)
 			if err != nil {
 				return false, err
 			}
-			return daily.LessThanOrEqual(limits.DailyLossLimitQuote.Neg()), nil
+			// The limit comes from the provider per strategy, never a
+			// startup capture.
+			return daily.LessThanOrEqual(provider.Limits(strategyID).DailyLossLimitQuote.Neg()), nil
 		}
 	}
 

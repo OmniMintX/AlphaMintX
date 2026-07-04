@@ -62,14 +62,22 @@ func (s *Store) GetVerdictMeta(verdictID string) (VerdictMeta, error) {
 }
 
 // MaxKillEpoch returns the highest persisted kill epoch affecting a strategy
-// (global scope or the strategy's own) recorded strictly after the RFC 3339
-// UTC cutoff; 0 when none. The approval preflight uses it to detect a
-// kill-epoch change since the verdict was evaluated.
+// (Phase 1 global scope, the strategy's own, or its tenant's) recorded at
+// or after the RFC 3339 UTC cutoff; 0 when none. The approval preflight
+// uses it to detect a kill-epoch change since the verdict was evaluated;
+// >= errs closed on the second-precision timestamps (a kill in the same
+// second as the verdict blocks the approval). The predicate is the
+// normative multi-tenant-rbac.md SQL: tenant rows bind ONLY their tenant
+// (resolved from strategies.tenant_id), while both-NULL rows keep binding
+// every strategy.
 func (s *Store) MaxKillEpoch(strategyID, afterRFC3339 string) (int64, error) {
 	var epoch int64
 	err := s.db.QueryRow(`SELECT COALESCE(MAX(kill_epoch), 0) FROM kill_breaker_events
-		WHERE kind = 'kill' AND (strategy_id IS NULL OR strategy_id = ?) AND recorded_at > ?`,
-		strategyID, afterRFC3339).Scan(&epoch)
+		WHERE kind = 'kill' AND ((strategy_id IS NULL AND tenant_id IS NULL)
+			OR strategy_id = ?
+			OR (tenant_id = (SELECT tenant_id FROM strategies WHERE strategy_id = ?) AND strategy_id IS NULL))
+		AND recorded_at >= ?`,
+		strategyID, strategyID, afterRFC3339).Scan(&epoch)
 	return epoch, err
 }
 

@@ -117,8 +117,24 @@ Exit criteria:
       for bullish on a 72-candle live-fetched BTC/USDT 1h dataset; M1+M2
       run in CI via `make backtest-check`. Scope: deterministic tier only,
       backtest-engine.md §Lookahead NORMATIVE LIMITATION.)
-- [ ] RBAC matrix tests: Trader cannot change limits; no role reads back API keys.
-- [ ] Tenant A cannot read or affect tenant B data (isolation tests).
+- [x] RBAC matrix tests: Trader cannot change limits; no role reads back API keys.
+      (2026-07-04: `docs/specs/multi-tenant-rbac.md` implemented —
+      `TestRBACMatrix` iterates the exported permissions table (routes are
+      REGISTERED from it; registered-route enumeration equality enforced)
+      over every principal: 4 DB roles, agent, 4 env classes, no-token.
+      trader × `POST .../limits` ⇒ 403 pinned; `TestTokenNeverReadBack`
+      pins that mint returns the plaintext exactly once and no list/detail/
+      error surface ever returns plaintext or `token_hash` — the same
+      invariant wording binds Phase 3 venue keys.)
+- [x] Tenant A cannot read or affect tenant B data (isolation tests).
+      (2026-07-04: `TestTenantIsolation_CrossRead404` (404 identical to
+      absence, no existence oracle), `_CrossApproval404` (both shapes:
+      foreign path AND own path + foreign verdict_id), `_CrossKill404`,
+      `_KillDoesNotBleedAcrossTenants` (tenant B gate AND approval
+      preflight unaffected by tenant A kill — normative 3-clause SQL),
+      `_AgentCrossStrategy403`, `_ListsExcludeForeignRows`. Env tokens are
+      platform-scoped deployer credentials by spec; tenant principals are
+      DB tokens only.)
 - [ ] Billing invoices reconcile with mintrouter metering.
 
 ## Phase 3 — Live trading beta

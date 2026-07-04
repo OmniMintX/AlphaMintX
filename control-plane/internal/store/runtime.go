@@ -158,14 +158,18 @@ func (s *Store) CountRateVerdictsSince(strategyID, afterRFC3339 string) (int, er
 }
 
 // GlobalMaxKillEpoch returns the highest persisted kill epoch affecting a
-// strategy (global scope or the strategy's own) over ALL time; 0 when none.
-// It is the epoch the OMS bridge stamps on submissions (kill re-check) and
-// the hydrator's standing-kill signal.
+// strategy (Phase 1 global scope, the strategy's own, or its tenant's —
+// multi-tenant-rbac.md normative predicate, tenant resolved from
+// strategies.tenant_id) over ALL time; 0 when none. It is the epoch the OMS
+// bridge stamps on submissions (kill re-check) and the hydrator's
+// standing-kill signal.
 func (s *Store) GlobalMaxKillEpoch(strategyID string) (int64, error) {
 	var epoch int64
 	err := s.db.QueryRow(`SELECT COALESCE(MAX(kill_epoch), 0) FROM kill_breaker_events
-		WHERE kind = 'kill' AND (strategy_id IS NULL OR strategy_id = ?)`,
-		strategyID).Scan(&epoch)
+		WHERE kind = 'kill' AND ((strategy_id IS NULL AND tenant_id IS NULL)
+			OR strategy_id = ?
+			OR (tenant_id = (SELECT tenant_id FROM strategies WHERE strategy_id = ?) AND strategy_id IS NULL))`,
+		strategyID, strategyID).Scan(&epoch)
 	return epoch, err
 }
 

@@ -32,6 +32,22 @@ type approvalResponse struct {
 // the recorded outcome on any second decision; approved:true runs the
 // preflight and appends approved or approved_but_blocked.
 func (s *Server) handlePostApproval(w http.ResponseWriter, r *http.Request) {
+	// Tenant principals resolve the path strategy FIRST (multi-tenant-
+	// rbac.md §Approvals ordering): a foreign or absent strategy is 404
+	// UNKNOWN_STRATEGY before the verdict chain is even consulted. Env
+	// classes are platform-scoped and keep the Phase 1 flow verbatim.
+	pr := principalFrom(r)
+	if pr.tenantBound() {
+		if _, err := s.cfg.Store.GetStrategyInTenant(r.PathValue("id"), pr.tenantID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, codeUnknownStrategy, "unknown strategy")
+				return
+			}
+			s.writeInternal(w, r, err)
+			return
+		}
+	}
+
 	var req approvalRequest
 	if !decodeStrict(w, r, &req) {
 		return
@@ -40,7 +56,8 @@ func (s *Server) handlePostApproval(w http.ResponseWriter, r *http.Request) {
 	meta, err := s.cfg.Store.GetVerdictMeta(req.VerdictID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && meta.StrategyID != r.PathValue("id")) {
 		// verdict -> proposal -> strategy match is REQUIRED; a mismatch is
-		// indistinguishable from an unknown verdict.
+		// indistinguishable from an unknown verdict (this also covers an
+		// own-tenant path with a foreign-tenant verdict_id).
 		writeError(w, http.StatusNotFound, codeUnknownVerdict, "unknown verdict")
 		return
 	}
@@ -82,9 +99,11 @@ func (s *Server) handlePostApproval(w http.ResponseWriter, r *http.Request) {
 		ProposalID:       meta.ProposalID,
 		Outcome:          outcome,
 		PreflightReasons: reasons,
-		DecidedBy:        s.cfg.OperatorPrincipal,
-		DecidedAt:        formatTime(now),
-		TimeoutSeconds:   timeoutSeconds,
+		// DB-token actors are recorded by token_id (stable, non-secret);
+		// the env operator keeps its Phase 1 OperatorPrincipal.
+		DecidedBy:      s.actorID(pr),
+		DecidedAt:      formatTime(now),
+		TimeoutSeconds: timeoutSeconds,
 	})
 	if errors.Is(err, store.ErrNotPending) {
 		writeError(w, http.StatusUnprocessableEntity, codeNotPending, "verdict is not pending approval")

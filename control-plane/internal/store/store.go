@@ -37,6 +37,20 @@ var ErrNotFound = errors.New("NOT_FOUND")
 // decision (persistence-and-api.md L1 semantics, 422 NOT_PENDING).
 var ErrNotPending = errors.New("NOT_PENDING")
 
+// ErrTenantExists: the tenant_id is already taken (multi-tenant-rbac.md
+// §Tenancy rules, 409 TENANT_EXISTS).
+var ErrTenantExists = errors.New("TENANT_EXISTS")
+
+// ErrDuplicateTokenHash: the minted token_hash collided with an existing
+// row (UNIQUE token_hash); the caller retries with a fresh CSPRNG value,
+// never surfacing the collision (multi-tenant-rbac.md §Token lifecycle).
+var ErrDuplicateTokenHash = errors.New("DUPLICATE_TOKEN_HASH")
+
+// ErrOwnerExists: an owner-recovery mint found an unrevoked owner token
+// (multi-tenant-rbac.md §Token lifecycle: recovery only at zero unrevoked
+// owner tokens; checked in the SAME transaction as the insert).
+var ErrOwnerExists = errors.New("OWNER_TOKEN_EXISTS")
+
 // Store wraps the single control-plane SQLite file.
 type Store struct {
 	db *sql.DB
@@ -44,7 +58,8 @@ type Store struct {
 
 // Open opens (creating if absent) the DB at path, applies the connection
 // pragmas required by the spec (journal_mode=WAL, busy_timeout >= 5000 ms,
-// foreign_keys ON) and executes the embedded schema idempotently.
+// foreign_keys ON) and executes the embedded schema idempotently, followed
+// by the guarded tenancy migration (multi-tenant-rbac.md §Migration note).
 func Open(path string) (*Store, error) {
 	dsn := "file:" + url.PathEscape(path) +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
@@ -59,7 +74,39 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema %s: %w", path, err)
 	}
+	if err := migrateTenancy(db, time.Now()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("tenancy migration %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrateTenancy is the additive Phase-2 migration (multi-tenant-rbac.md
+// §Migration note): the kill_breaker_events.tenant_id column is added iff
+// absent (the table pre-exists, so CREATE IF NOT EXISTS cannot carry it),
+// and every pre-existing strategies.tenant_id value — plus 'default' —
+// gets a tenants row so DB tokens can be minted for grandfathered tenants.
+// NO data backfill on kill_breaker_events: existing rows stay tenant_id
+// NULL (global or strategy scope, exactly as before).
+func migrateTenancy(db *sql.DB, now time.Time) error {
+	var hasTenantID int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('kill_breaker_events')
+		WHERE name = 'tenant_id'`).Scan(&hasTenantID); err != nil {
+		return err
+	}
+	if hasTenantID == 0 {
+		if _, err := db.Exec(`ALTER TABLE kill_breaker_events ADD COLUMN tenant_id TEXT`); err != nil {
+			return err
+		}
+	}
+	seededAt := formatTime(now)
+	if _, err := db.Exec(`INSERT OR IGNORE INTO tenants (tenant_id, name, created_at)
+		VALUES ('default', 'default', ?)`, seededAt); err != nil {
+		return err
+	}
+	_, err := db.Exec(`INSERT OR IGNORE INTO tenants (tenant_id, name, created_at)
+		SELECT DISTINCT tenant_id, tenant_id, ? FROM strategies`, seededAt)
+	return err
 }
 
 // Close closes the underlying database.

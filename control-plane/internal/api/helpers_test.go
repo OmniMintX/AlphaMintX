@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
@@ -21,6 +23,7 @@ const (
 	opTok     = "test-operator-token"
 	agent1Tok = "test-agent-token-1"
 	agent2Tok = "test-agent-token-2"
+	adminTok  = "test-env-admin-token"
 )
 
 var (
@@ -61,6 +64,7 @@ func newEnv(t *testing.T, mutate func(*Config)) *testEnv {
 		OperatorToken:     opTok,
 		OperatorPrincipal: "trader-1",
 		AgentTokens:       map[string]string{strat1: agent1Tok, strat2: agent2Tok},
+		AdminToken:        adminTok,
 		Now:               func() time.Time { return testNow },
 		Logf:              func(string, ...any) {},
 	}
@@ -68,6 +72,54 @@ func newEnv(t *testing.T, mutate func(*Config)) *testEnv {
 		mutate(&cfg)
 	}
 	return &testEnv{store: st, marks: marks, sub: sub, srv: New(cfg)}
+}
+
+// createTenant seeds a tenants row (DB tokens have a tenants FK).
+func createTenant(t *testing.T, s *store.Store, tenantID string) {
+	t.Helper()
+	err := s.CreateTenant(store.Tenant{TenantID: tenantID, Name: tenantID, CreatedAt: formatTime(testNow)})
+	if err != nil {
+		t.Fatalf("CreateTenant(%s): %v", tenantID, err)
+	}
+}
+
+// createTenantStrategy is createStrategy with an explicit tenant.
+func createTenantStrategy(t *testing.T, s *store.Store, strategyID, tenantID, state string) {
+	t.Helper()
+	err := s.CreateStrategy(store.Strategy{
+		StrategyID: strategyID, TenantID: tenantID, Name: "strategy-" + strategyID,
+		LifecycleState: state, CreatedAt: formatTime(testNow), UpdatedAt: formatTime(testNow),
+	})
+	if err != nil {
+		t.Fatalf("CreateStrategy(%s): %v", strategyID, err)
+	}
+}
+
+// seedUserToken persists a DB user token whose bearer plaintext is
+// deterministic for the test; returns the plaintext.
+func seedUserToken(t *testing.T, s *store.Store, tenantID, role, plaintext string) string {
+	t.Helper()
+	tok := store.APIToken{
+		TokenID: uuid.NewString(), TenantID: tenantID, Principal: "user", Role: &role,
+		Label: role + "@" + tenantID, CreatedBy: "test", CreatedAt: formatTime(testNow),
+	}
+	if err := s.InsertAPIToken(tok, hashToken(plaintext), uuid.NewString()); err != nil {
+		t.Fatalf("InsertAPIToken(%s %s): %v", tenantID, role, err)
+	}
+	return plaintext
+}
+
+// seedAgentToken persists a DB agent token scoped to one strategy.
+func seedAgentToken(t *testing.T, s *store.Store, tenantID, strategyID, plaintext string) string {
+	t.Helper()
+	tok := store.APIToken{
+		TokenID: uuid.NewString(), TenantID: tenantID, Principal: "agent", StrategyID: &strategyID,
+		Label: "agent@" + strategyID, CreatedBy: "test", CreatedAt: formatTime(testNow),
+	}
+	if err := s.InsertAPIToken(tok, hashToken(plaintext), uuid.NewString()); err != nil {
+		t.Fatalf("InsertAPIToken(agent %s): %v", strategyID, err)
+	}
+	return plaintext
 }
 
 // do performs one request; body may be nil, []byte, or any JSON-marshalable

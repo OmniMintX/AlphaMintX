@@ -25,6 +25,13 @@ const (
 	codeIdempotencyConflict   = contract.CodeIdempotencyConflict
 	codeRunTickConflict       = "RUN_TICK_CONFLICT"
 	codeInternal              = "INTERNAL"
+	// Multi-tenant RBAC codes (multi-tenant-rbac.md §Permission matrix).
+	codeUnknownToken       = "UNKNOWN_TOKEN"
+	codeUnknownTenant      = "UNKNOWN_TENANT"
+	codeTenantExists       = "TENANT_EXISTS"
+	codeInvalidTenantID    = "INVALID_TENANT_ID"
+	codeInvalidRole        = "INVALID_ROLE"
+	codeInvalidLimitChange = "INVALID_LIMIT_CHANGE"
 	// codeSubmitFailed marks an approved decision whose OMS submission
 	// failed: surfaced in the approval response and persisted to the
 	// rejected_submissions audit surface.

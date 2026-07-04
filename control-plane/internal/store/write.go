@@ -114,11 +114,13 @@ func classifySubmission(q dbtx, sub ProposalSubmission, hash string) (bool, erro
 	return true, nil
 }
 
-// isUniqueConstraint reports a SQLITE_CONSTRAINT_UNIQUE failure from the
-// modernc.org/sqlite driver.
+// isUniqueConstraint reports a uniqueness failure from the
+// modernc.org/sqlite driver: SQLITE_CONSTRAINT_UNIQUE for UNIQUE columns,
+// SQLITE_CONSTRAINT_PRIMARYKEY for PRIMARY KEY collisions (e.g. tenants).
 func isUniqueConstraint(err error) bool {
 	var se *sqlite.Error
-	return errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+	return errors.As(err, &se) &&
+		(se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE || se.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
 }
 
 // InsertVerdict persists the single RiskVerdict for a proposal (UNIQUE

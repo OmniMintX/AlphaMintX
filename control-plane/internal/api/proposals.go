@@ -141,7 +141,10 @@ func (s *Server) evaluateAndRoute(st store.Strategy, p *contract.Proposal, now t
 	if err != nil {
 		return proposalResponse{}, err
 	}
-	verdict := riskgate.Evaluate(p, *s.cfg.Limits, state, now)
+	// The LimitsProvider is the single read path for effective limits
+	// (multi-tenant-rbac.md §Runtime limit changes): the gate observes a
+	// runtime change on the next evaluation.
+	verdict := riskgate.Evaluate(p, s.limits.Limits(st.StrategyID), state, now)
 	if _, err := s.cfg.Store.InsertVerdict(&verdict); err != nil {
 		return proposalResponse{}, err
 	}
@@ -217,8 +220,8 @@ func (s *Server) armPendingApproval(v *contract.Verdict, strategyID string, now 
 // createPendingApproval arms the restart-safe L1/escalation approval timer.
 func (s *Server) createPendingApproval(v *contract.Verdict, strategyID string, now time.Time) error {
 	timeout := riskgate.DefaultL1ApprovalTimeoutSeconds
-	if s.cfg.Limits.L1ApprovalTimeoutSeconds > 0 {
-		timeout = s.cfg.Limits.L1ApprovalTimeoutSeconds
+	if t := s.limits.Limits(strategyID).L1ApprovalTimeoutSeconds; t > 0 {
+		timeout = t
 	}
 	return s.cfg.Store.CreatePendingApproval(v.VerdictID, strategyID, now, timeout)
 }
