@@ -14,6 +14,13 @@ const (
 	rateLimitPerSec = float64(rateLimitBurst) / 60
 )
 
+// Per-strategy proposal ingestion rate limit (docs/ARCHITECTURE.md: default
+// 30/min); excess is 429 with NO persisted verdict.
+const (
+	proposalRateBurst  = 30
+	proposalRatePerSec = float64(proposalRateBurst) / 60
+)
+
 // bearerToken extracts the Authorization bearer credential; ok=false when
 // the header is absent or malformed. The value MUST never be logged.
 func bearerToken(r *http.Request) (string, bool) {
@@ -118,9 +125,13 @@ func (s *Server) agentOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// rateLimiter is a per-token token bucket: capacity 60, refill 1/s.
+// rateLimiter is a keyed token bucket: capacity burst, refill perSec/s.
+// The POST middleware keys it per token (60/min); proposal ingestion keys a
+// second instance per strategy (30/min, docs/ARCHITECTURE.md).
 type rateLimiter struct {
-	now func() time.Time
+	now    func() time.Time
+	burst  float64
+	perSec float64
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
@@ -131,20 +142,20 @@ type bucket struct {
 	last   time.Time
 }
 
-func newRateLimiter(now func() time.Time) *rateLimiter {
-	return &rateLimiter{now: now, buckets: make(map[string]*bucket)}
+func newRateLimiter(now func() time.Time, burst, perSec float64) *rateLimiter {
+	return &rateLimiter{now: now, burst: burst, perSec: perSec, buckets: make(map[string]*bucket)}
 }
 
-func (rl *rateLimiter) allow(token string) bool {
+func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := rl.now()
-	b, ok := rl.buckets[token]
+	b, ok := rl.buckets[key]
 	if !ok {
-		b = &bucket{tokens: rateLimitBurst, last: now}
-		rl.buckets[token] = b
+		b = &bucket{tokens: rl.burst, last: now}
+		rl.buckets[key] = b
 	}
-	b.tokens = min(rateLimitBurst, b.tokens+now.Sub(b.last).Seconds()*rateLimitPerSec)
+	b.tokens = min(rl.burst, b.tokens+now.Sub(b.last).Seconds()*rl.perSec)
 	b.last = now
 	if b.tokens < 1 {
 		return false

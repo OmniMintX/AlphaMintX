@@ -69,27 +69,17 @@ func (s *Store) GetRunDetail(strategyID, runID string) (RunDetail, error) {
 }
 
 func (s *Store) ordersByProposal(proposalID string) ([]Order, error) {
-	rows, err := s.db.Query(`SELECT order_id, proposal_id, origin, strategy_id, symbol, class, side, type,
-		reduce_only, qty_base, limit_price, stop_price, fill_price, kill_epoch, status, submitted_at, filled_at
-		FROM orders WHERE proposal_id = ? ORDER BY submitted_at, order_id`, proposalID)
+	rows, err := s.db.Query(orderSelect+` WHERE proposal_id = ? ORDER BY submitted_at, order_id`, proposalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Order
 	for rows.Next() {
-		var o Order
-		var pid, limitPrice, stopPrice, fillPrice, filledAt sql.NullString
-		if err := rows.Scan(&o.OrderID, &pid, &o.Origin, &o.StrategyID, &o.Symbol, &o.Class,
-			&o.Side, &o.Type, &o.ReduceOnly, &o.QtyBase, &limitPrice, &stopPrice, &fillPrice,
-			&o.KillEpoch, &o.Status, &o.SubmittedAt, &filledAt); err != nil {
+		o, err := scanOrder(rows)
+		if err != nil {
 			return nil, err
 		}
-		o.ProposalID = nullable(pid)
-		o.LimitPrice = nullable(limitPrice)
-		o.StopPrice = nullable(stopPrice)
-		o.FillPrice = nullable(fillPrice)
-		o.FilledAt = nullable(filledAt)
 		out = append(out, o)
 	}
 	return out, rows.Err()

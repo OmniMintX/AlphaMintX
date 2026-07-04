@@ -106,7 +106,9 @@ OMS, never managed by LLM loops (invariant 2).
   returns the original verdict verbatim — never re-evaluated, never a second
   order.
 - Heartbeat: agent-plane POSTs an authenticated heartbeat **per strategy every
-  30 s**. The watchdog reacts after 90 s of silence: it cancels ENTRY orders
+  30 s** (endpoint deferred to the watchdog slice — Phase 3 reaction,
+  risk-limits.md §Watchdog; the client stub exists). The watchdog reacts
+  after 90 s of silence: it cancels ENTRY orders
   only and alerts; protective reduce-only stops stay on the exchange
   (`docs/specs/risk-limits.md` §Watchdog).
 

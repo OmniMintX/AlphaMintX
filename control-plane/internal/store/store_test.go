@@ -84,6 +84,15 @@ func TestInsertProposalIdempotency(t *testing.T) {
 			wantInserted: []bool{true, false},
 			wantErr:      ErrIdempotencyConflict,
 		},
+		{
+			name: "duplicate same payload different tick is a conflict",
+			submissions: []ProposalSubmission{
+				{TickNumber: 0, Proposal: base},
+				{TickNumber: 1, Proposal: base},
+			},
+			wantInserted: []bool{true, false},
+			wantErr:      ErrIdempotencyConflict,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,6 +113,123 @@ func TestInsertProposalIdempotency(t *testing.T) {
 				t.Errorf("final err = %v, want %v", lastErr, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestInsertProposalRunTickConflict(t *testing.T) {
+	s := openStore(t)
+	createStrategy(t, s, uid(1))
+	first := ProposalSubmission{TickNumber: 0, Proposal: testProposal(t, uid(10), uid(1), uid(12))}
+	if _, err := s.InsertProposal(first, testNow); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	// A different run must not claim the occupied (strategy_id, tick_number).
+	_, err := s.InsertProposal(ProposalSubmission{TickNumber: 0, Proposal: testProposal(t, uid(20), uid(1), uid(22))}, testNow)
+	if !errors.Is(err, ErrRunTickConflict) {
+		t.Fatalf("different run, same tick: err = %v, want ErrRunTickConflict", err)
+	}
+	if _, err := s.GetProposalPayload(uid(20)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("conflicting proposal persisted: err = %v, want ErrNotFound", err)
+	}
+
+	// A fresh proposal reusing an existing run at a different tick
+	// contradicts the run row.
+	_, err = s.InsertProposal(ProposalSubmission{TickNumber: 5, Proposal: testProposal(t, uid(30), uid(1), uid(12))}, testNow)
+	if !errors.Is(err, ErrRunTickConflict) {
+		t.Errorf("same run, different tick: err = %v, want ErrRunTickConflict", err)
+	}
+}
+
+func TestIsDuplicateProposal(t *testing.T) {
+	s := openStore(t)
+	createStrategy(t, s, uid(1))
+	base := testProposal(t, uid(10), uid(1), uid(12))
+	sub := ProposalSubmission{TickNumber: 0, Proposal: base}
+
+	if dup, err := s.IsDuplicateProposal(sub); err != nil || dup {
+		t.Fatalf("fresh: dup=%v err=%v, want false, nil", dup, err)
+	}
+	if _, err := s.InsertProposal(sub, testNow); err != nil {
+		t.Fatalf("InsertProposal: %v", err)
+	}
+	if dup, err := s.IsDuplicateProposal(sub); err != nil || !dup {
+		t.Fatalf("verbatim retry: dup=%v err=%v, want true, nil", dup, err)
+	}
+	changed := testProposal(t, uid(10), uid(1), uid(12))
+	changed.Reasoning = "a different payload for the same proposal_id"
+	if _, err := s.IsDuplicateProposal(ProposalSubmission{TickNumber: 0, Proposal: changed}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Errorf("different payload: err = %v, want ErrIdempotencyConflict", err)
+	}
+	if _, err := s.IsDuplicateProposal(ProposalSubmission{TickNumber: 3, Proposal: base}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Errorf("different tick: err = %v, want ErrIdempotencyConflict", err)
+	}
+}
+
+func TestApplySweepAtomicityAndSnapshot(t *testing.T) {
+	s := openStore(t)
+	createStrategy(t, s, uid(1))
+	proposalID, _, _ := insertChain(t, s, 10, uid(1), 0)
+	order := Order{
+		OrderID: uid(30), ProposalID: &proposalID, Origin: "proposal", StrategyID: uid(1),
+		Symbol: "BTC/USDT", Class: "ENTRY", Side: "buy", Type: "market", QtyBase: "0.1",
+		Status: "open", SubmittedAt: formatTime(testNow),
+	}
+	position := Position{
+		StrategyID: uid(1), Symbol: "BTC/USDT", QtyBase: "0.1", EntryPrice: "64000",
+		FeesQuote: "3.2", RealizedPnLQuote: "-3.2", UpdatedAt: formatTime(testNow),
+	}
+	state := StrategyState{
+		StrategyID: uid(1), EquityQuote: "9996.8", PeakEquityQuote: "10000",
+		DailyRealizedPnLQuote: "-3.2", UTCDate: "2026-07-04", UpdatedAt: formatTime(testNow),
+	}
+
+	// A mid-batch failure rolls the WHOLE batch back: no torn sweep.
+	failure := errors.New("mid-batch failure")
+	err := s.ApplySweep(func(tx *SweepTx) error {
+		if err := tx.InsertOrder(order); err != nil {
+			return err
+		}
+		if err := tx.UpsertPosition(position); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("ApplySweep err = %v, want the callback failure", err)
+	}
+	snap, err := s.StrategySnapshot(uid(1))
+	if err != nil {
+		t.Fatalf("StrategySnapshot: %v", err)
+	}
+	if len(snap.Positions) != 0 || len(snap.OpenOrders) != 0 || snap.HasState {
+		t.Fatalf("rolled-back sweep left rows: %+v", snap)
+	}
+
+	// The same batch commits atomically on success and the snapshot sees
+	// all three surfaces together.
+	err = s.ApplySweep(func(tx *SweepTx) error {
+		if err := tx.InsertOrder(order); err != nil {
+			return err
+		}
+		if err := tx.UpsertPosition(position); err != nil {
+			return err
+		}
+		return tx.UpsertStrategyState(state)
+	})
+	if err != nil {
+		t.Fatalf("ApplySweep: %v", err)
+	}
+	snap, err = s.StrategySnapshot(uid(1))
+	if err != nil {
+		t.Fatalf("StrategySnapshot: %v", err)
+	}
+	if len(snap.Positions) != 1 || len(snap.OpenOrders) != 1 || !snap.HasState {
+		t.Fatalf("committed sweep snapshot = %+v, want 1 position, 1 open order, state", snap)
+	}
+	if snap.OpenOrders[0].OrderID != uid(30) || snap.Positions[0].QtyBase != "0.1" ||
+		snap.State.EquityQuote != "9996.8" {
+		t.Errorf("snapshot rows = %+v, want the committed batch verbatim", snap)
 	}
 }
 
@@ -155,6 +281,18 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// Read-only helpers for the HTTP API (internal/api).
 		"GetPendingApproval": true, "GetVerdictMeta": true, "MaxKillEpoch": true, "RunStrategy": true,
 		"RejectedSubmissions": true,
+		// Serve-mode runtime surface (internal/runstate, internal/omsbridge,
+		// proposal ingestion). Orders mutate ONLY their FSM status/fill
+		// columns; positions and strategy_state are mutable snapshots.
+		"GetVerdictByProposalID": true, "GetProposalPayload": true,
+		"ListOpenOrders": true, "ListPositions": true, "GetStrategyState": true,
+		"CountRateVerdictsSince": true, "GlobalMaxKillEpoch": true,
+		"UpsertStrategyState": true, "RecordOrderFill": true, "RecordOrderCancel": true,
+		// IsDuplicateProposal is read-only (verbatim-retry detection);
+		// ApplySweep groups the runtime writers above into one transaction
+		// and StrategySnapshot is its consistent read twin — neither adds
+		// an UPDATE/DELETE surface.
+		"IsDuplicateProposal": true, "ApplySweep": true, "StrategySnapshot": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

@@ -27,3 +27,8 @@ def proposal_schema() -> dict[str, Any]:
 @pytest.fixture(scope="session")
 def verdict_schema() -> dict[str, Any]:
     return load_json(CONTRACTS_DIR / "riskverdict.schema.json")
+
+
+@pytest.fixture(scope="session")
+def trace_schema() -> dict[str, Any]:
+    return load_json(CONTRACTS_DIR / "agent_trace.schema.json")

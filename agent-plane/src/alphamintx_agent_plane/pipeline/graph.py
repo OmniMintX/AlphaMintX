@@ -22,6 +22,8 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict, cast
 from uuid import UUID, uuid4
 
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -284,11 +286,14 @@ def build_pipeline(
     *,
     id_factory: IdFactory = _default_id_factory,
     clock: Clock = _default_clock,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> CompiledStateGraph[PipelineState]:
     """Compile the 4-tier StateGraph around the given LLM client.
 
     ``id_factory`` and ``clock`` are injectable for deterministic runs (e.g. the
     E2E emitter); the defaults keep production behavior (uuid4 / now(UTC)).
+    ``checkpointer`` (persistence-and-api.md §checkpoint/resume) is optional:
+    when None the graph compiles exactly as before.
     """
 
     def forced_hold_update(
@@ -549,20 +554,62 @@ def build_pipeline(
     )
     graph.add_edge("judge", "trader")
     graph.add_edge("trader", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
+
+
+def thread_config(thread_id: str) -> RunnableConfig:
+    """Invocation config for a checkpointed thread (``{strategy_id}#{tick_number}``)."""
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def has_checkpoint(checkpointer: BaseCheckpointSaver[str], thread_id: str) -> bool:
+    """True when the thread already has a checkpoint (resume instead of re-running)."""
+    return checkpointer.get_tuple(thread_config(thread_id)) is not None
 
 
 def run_pipeline(
     llm: LLMClient,
-    inputs: PipelineInput,
+    inputs: PipelineInput | None,
     *,
     max_debate_rounds: int = DEFAULT_MAX_DEBATE_ROUNDS,
     id_factory: IdFactory = _default_id_factory,
     clock: Clock = _default_clock,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+    thread_id: str | None = None,
 ) -> PipelineState:
-    """Run the pipeline end-to-end and return the final state (proposal included)."""
-    graph = build_pipeline(llm, id_factory=id_factory, clock=clock)
-    initial: PipelineState = {
+    """Run the pipeline end-to-end and return the final state (proposal included).
+
+    With ``checkpointer`` + ``thread_id`` set, the run is checkpointed under that
+    thread. When the thread already has a checkpoint the graph is invoked with
+    ``None`` input, so LangGraph REPLAYS from the checkpoint and never re-executes
+    completed nodes (passing the original input would re-execute); a fresh thread
+    runs normally from the initial state. ``inputs`` may be ``None`` ONLY when
+    resuming an existing checkpoint (the caller can then skip gathering fresh
+    inputs entirely, e.g. the scheduler skips the market snapshot fetch).
+    """
+    if (checkpointer is None) != (thread_id is None):
+        raise ValueError("checkpointer and thread_id must be provided together")
+    graph = build_pipeline(llm, id_factory=id_factory, clock=clock, checkpointer=checkpointer)
+    if checkpointer is not None and thread_id is not None:
+        config = thread_config(thread_id)
+        if has_checkpoint(checkpointer, thread_id):
+            return cast(PipelineState, graph.invoke(None, config))
+        if inputs is None:
+            raise ValueError(
+                f"inputs may be None only when thread {thread_id!r} has a checkpoint to resume"
+            )
+        initial = _initial_state(inputs, id_factory, max_debate_rounds)
+        return cast(PipelineState, graph.invoke(initial, config))
+    if inputs is None:
+        raise ValueError("inputs are required when running without a checkpointed thread")
+    initial = _initial_state(inputs, id_factory, max_debate_rounds)
+    return cast(PipelineState, graph.invoke(initial))
+
+
+def _initial_state(
+    inputs: PipelineInput, id_factory: IdFactory, max_debate_rounds: int
+) -> PipelineState:
+    return {
         "strategy_id": inputs.strategy_id,
         "agent_trace_id": str(id_factory("agent_trace_id")),
         "symbol": inputs.symbol,
@@ -579,4 +626,3 @@ def run_pipeline(
         "estimated_cost_nodes": [],
         "proposal": None,
     }
-    return cast(PipelineState, graph.invoke(initial))

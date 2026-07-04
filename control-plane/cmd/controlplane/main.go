@@ -25,7 +25,10 @@ import (
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/api"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/omsbridge"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/runstate"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -45,18 +48,15 @@ func main() {
 	}
 }
 
-// serve runs the Phase-1 HTTP API until SIGINT/SIGTERM.
-//
-// SCAFFOLDING STATUS (deliberate, Phase-1 staging): serve is a read + L1
-// approval plane over an externally populated DB. It wires NO proposal
-// ingestion, NO market-data feed writer (the marketdata.Store starts empty,
-// so the approval preflight blocks MARK_PRICE_UNAVAILABLE), and NO OMS
-// Submitter (approvals that pass every other preflight check are recorded
-// approved_but_blocked with SUBMITTER_UNAVAILABLE — never silently
-// "submitted"). The e2e paperloop (cmd/paperloop) is the only execution
-// path today; wiring InsertProposal ingestion, a BinanceFeed writer calling
-// oms.ProcessTick on every Store write, and a real Submitter here is the
-// remaining Phase-1 work (docs/specs/persistence-and-api.md §Row rules).
+// serve runs the Phase-1 HTTP API until SIGINT/SIGTERM: the read + L1
+// approval plane plus, when configured, the live serve-mode wiring —
+// proposal ingestion gated against hydrated runtime state
+// (CONTROLPLANE_RISK_LIMITS), the paper-OMS bridge acting as the Submitter
+// (CONTROLPLANE_FILL_MODEL), and the BinanceFeed writer that stores marks
+// and fires the OMS trigger sweep on every tick (CONTROLPLANE_SYMBOLS).
+// Each piece is fail-closed when absent: no limits means no verdicts are
+// produced here, no fill model means approvals block SUBMITTER_UNAVAILABLE,
+// and no feed means the gate rejects MARK_PRICE_UNAVAILABLE.
 func serve(dbPath string) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -87,17 +87,78 @@ func serve(dbPath string) error {
 	if operatorPrincipal == "" {
 		operatorPrincipal = "operator"
 	}
-	handler := api.New(api.Config{
+	cfg := api.Config{
 		Store:             st,
 		Marks:             marks,
 		ReadToken:         os.Getenv("CONTROLPLANE_READ_TOKEN"),
 		OperatorToken:     os.Getenv("CONTROLPLANE_OPERATOR_TOKEN"),
 		OperatorPrincipal: operatorPrincipal,
 		AgentTokens:       agentTokens,
-	})
+	}
+
+	limits, err := parseRiskLimits(os.Getenv("CONTROLPLANE_RISK_LIMITS"))
+	if err != nil {
+		return err
+	}
+	var hydrator *runstate.Hydrator
+	if limits != nil {
+		hydrator = &runstate.Hydrator{Store: st, Marks: marks, AllocatedCapitalQuote: limits.AllocatedCapitalQuote}
+		cfg.Limits = limits
+		cfg.RuntimeState = hydrator
+		cfg.DailyLossBreached = func(strategyID string, now time.Time) (bool, error) {
+			daily, err := hydrator.DailyPnL(strategyID, now)
+			if err != nil {
+				return false, err
+			}
+			return daily.LessThanOrEqual(limits.DailyLossLimitQuote.Neg()), nil
+		}
+	}
+
+	var bridge *omsbridge.Bridge
+	if raw := os.Getenv("CONTROLPLANE_FILL_MODEL"); raw != "" {
+		if limits == nil {
+			return errors.New("CONTROLPLANE_FILL_MODEL requires CONTROLPLANE_RISK_LIMITS (allocated_capital_quote seeds equity)")
+		}
+		var fm paper.FillModel
+		if err := json.Unmarshal([]byte(raw), &fm); err != nil {
+			return fmt.Errorf("CONTROLPLANE_FILL_MODEL: %w", err)
+		}
+		bridge, err = omsbridge.New(omsbridge.Config{
+			Store:                 st,
+			Marks:                 marks,
+			FillModel:             fm,
+			AllocatedCapitalQuote: limits.AllocatedCapitalQuote,
+		})
+		if err != nil {
+			return err
+		}
+		cfg.Submitter = bridge
+	}
+
+	handler := api.New(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if symbols := splitSymbols(os.Getenv("CONTROLPLANE_SYMBOLS")); len(symbols) > 0 {
+		market := marketdata.MarketSpot // v1 scope: spot markets (risk-limits.md)
+		if v := os.Getenv("CONTROLPLANE_BINANCE_MARKET"); v != "" {
+			market = marketdata.Market(v)
+		}
+		feed, err := marketdata.NewBinanceFeed(marketdata.BinanceConfig{Market: market})
+		if err != nil {
+			return err
+		}
+		var sweep func(map[string]decimal.Decimal) error
+		if bridge != nil {
+			sweep = bridge.Sweep
+		}
+		go func() {
+			if err := omsbridge.RunFeedWriter(ctx, feed, symbols, marks, sweep, log.Printf); err != nil && ctx.Err() == nil {
+				log.Printf("feed writer: %v", err)
+			}
+		}()
+	}
 
 	sweep := func() {
 		expired, err := st.ExpirePendingApprovals(time.Now())

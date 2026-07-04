@@ -44,21 +44,34 @@ Progress (specs + foundations landed; specs in `docs/specs/market-data.md`,
 - [x] MintRouter client: retry/backoff taxonomy, Decimal cost accounting + price
       table, advisory daily token budget (fail-closed on corruption), forced-hold
       degradation paths; StubLLM remains the CI default.
-- [x] SQLite persistence (`modernc.org/sqlite`): 16-table append-only schema,
+- [x] SQLite persistence (`modernc.org/sqlite`): 17-table append-only schema,
       idempotent proposal/trace ingest, authoritative token ledger, restart-safe
       L1 approvals; `contracts/agent_trace.schema.json`.
 - [x] Control-plane HTTP API: two-token auth, L1 approve/reject with preflight
       (`approved_but_blocked`), trace ingestion with scope check, rate limiting.
 - [x] Web reasoning viewer: strategies → runs → trace (analysts, debate, costs,
       orders/fills, approvals timeline); operator token server-side only.
+- [x] Serve-mode live wiring: `POST .../proposals` ingestion (idempotent, per-strategy
+      30/min + serialization, envelope response), `runstate` hydrator (unrealized PnL
+      folded into equity/daily-loss, persisted peak), `omsbridge` (paper OMS restore,
+      transactional sweep persistence, Submitter with action dispatch + escalate cap),
+      Binance feed writer firing the trigger sweep on every mark write.
+- [x] Agent-plane live scheduler: asyncio loop per strategy, monotonic no-gap ticks,
+      LangGraph SqliteSaver checkpoint/resume (resume skips snapshot, re-POST is
+      idempotent), httpx control-plane client (retry taxonomy, Retry-After clamped),
+      trace envelope builder, Binance read-only snapshot provider.
+- [x] CI plane-boundary gate (`scripts/check_plane_boundary.py`, `make boundary-check`,
+      CI `boundary` job): no direct LLM providers in agent-plane, no control-plane DB
+      access, no exchange trading surface, no LLM calls from control-plane.
 
 Exit criteria:
 - [ ] A strategy runs continuously ≥7 days in paper against live market data with
-      zero unhandled pipeline failures (checkpoint/resume verified). (Needs the
-      live scheduler loop wiring serve mode — see cmd/controlplane scaffolding note.)
+      zero unhandled pipeline failures (checkpoint/resume verified). (Wiring landed;
+      the ≥7-day soak run itself is pending.)
 - [ ] Every run's full agent trace is persisted and viewable end-to-end in the web UI.
-- [ ] LLM cost per strategy metered and visible; daily token budget enforced.
-- [ ] No direct provider calls anywhere (verified by CI check / egress policy).
+      (Ingestion + viewer landed; needs verification against a live scheduler run.)
+- [x] LLM cost per strategy metered and visible; daily token budget enforced.
+- [x] No direct provider calls anywhere (verified by CI check / egress policy).
 
 ## Phase 2 — Backtest tooling, multi-tenant, billing
 

@@ -9,10 +9,12 @@ package api
 import (
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -31,6 +33,12 @@ type Submitter interface {
 	SubmitApproved(meta store.VerdictMeta) error
 }
 
+// RuntimeStateSource hydrates the Risk Gate's RuntimeState for proposal
+// ingestion; *runstate.Hydrator satisfies it.
+type RuntimeStateSource interface {
+	State(strategyID, lifecycleState, symbol string, now time.Time) (riskgate.RuntimeState, error)
+}
+
 // Config wires the server. Store is required; zero-value tokens disable
 // their token class (they never match any request).
 type Config struct {
@@ -43,6 +51,12 @@ type Config struct {
 	// SUBMITTER_UNAVAILABLE (approved_but_blocked, never a false
 	// "submitted to OMS").
 	Submitter Submitter
+	// Limits are the RiskLimits every ingested proposal is evaluated
+	// against; with RuntimeState it enables the proposal ingestion
+	// endpoint (nil disables it: proposals cannot be gated without limits).
+	Limits *riskgate.RiskLimits
+	// RuntimeState hydrates the gate's runtime inputs at ingestion.
+	RuntimeState RuntimeStateSource
 
 	// ReadToken authorizes GETs ONLY (web dashboard).
 	ReadToken string
@@ -69,7 +83,13 @@ type Config struct {
 type Server struct {
 	cfg Config
 	mux *http.ServeMux
-	rl  *rateLimiter
+	rl  *rateLimiter // per-token 60/min, every POST
+	prl *rateLimiter // per-strategy 30/min, proposal ingestion only
+
+	// gateMu serializes gate evaluations per strategy_id (risk-limits.md
+	// "Gate evaluation order").
+	gateMu     sync.Mutex
+	strategyMu map[string]*sync.Mutex
 }
 
 // New builds the server and its routes.
@@ -80,7 +100,13 @@ func New(cfg Config) *Server {
 	if cfg.Logf == nil {
 		cfg.Logf = log.Printf
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), rl: newRateLimiter(cfg.Now)}
+	s := &Server{
+		cfg:        cfg,
+		mux:        http.NewServeMux(),
+		rl:         newRateLimiter(cfg.Now, rateLimitBurst, rateLimitPerSec),
+		prl:        newRateLimiter(cfg.Now, proposalRateBurst, proposalRatePerSec),
+		strategyMu: make(map[string]*sync.Mutex),
+	}
 
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/strategies", s.readOnly(s.handleListStrategies))
@@ -89,7 +115,22 @@ func New(cfg Config) *Server {
 	s.mux.HandleFunc("GET /api/v1/strategies/{id}/runs/{run_id}", s.readOnly(s.handleGetRunDetail))
 	s.mux.HandleFunc("POST /api/v1/strategies/{id}/approvals", s.operatorOnly(s.handlePostApproval))
 	s.mux.HandleFunc("POST /api/v1/strategies/{id}/traces", s.agentOnly(s.handlePostTrace))
+	if cfg.Limits != nil && cfg.RuntimeState != nil {
+		s.mux.HandleFunc("POST /api/v1/strategies/{id}/proposals", s.agentOnly(s.handlePostProposal))
+	}
 	return s
+}
+
+// strategyLock returns the per-strategy gate serialization lock.
+func (s *Server) strategyLock(strategyID string) *sync.Mutex {
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	if m, ok := s.strategyMu[strategyID]; ok {
+		return m
+	}
+	m := &sync.Mutex{}
+	s.strategyMu[strategyID] = m
+	return m
 }
 
 // ServeHTTP implements http.Handler.

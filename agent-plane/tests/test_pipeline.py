@@ -100,8 +100,10 @@ def test_dry_run_client_round_trip(verdict_schema: dict[str, Any]) -> None:
     assert proposal is not None
     auth = StrategyAuth(strategy_id=STRATEGY_ID, bearer_token="phase0-test-token")
     client = ControlPlaneClient(DryRunTransport(), auth)
-    verdict = client.submit_proposal(proposal)
-    assert verdict.decision is Decision.APPROVE
-    assert verdict.proposal_id == proposal.proposal_id
-    Draft202012Validator(verdict_schema).validate(verdict.to_json_dict())
+    submission = client.submit_proposal(proposal, tick_number=0)
+    assert submission.verdict.decision is Decision.APPROVE
+    assert submission.verdict.proposal_id == proposal.proposal_id
+    assert submission.submitted is True
+    assert submission.pending_approval is False
+    Draft202012Validator(verdict_schema).validate(submission.verdict.to_json_dict())
     client.heartbeat()

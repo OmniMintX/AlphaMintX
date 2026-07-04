@@ -102,7 +102,11 @@ Phase 0 filled at mark with no fee or slippage. Phase 1 replaces that with:
   take-profits before entry limits; ties within a class break by `order_id`
   lexicographic. When one tick crosses both a position's SL and TP, the
   stop fills (pessimistic = safe) and the sibling TP is canceled once the
-  position is closed. No intra-tick price path is modeled.
+  position is closed. No intra-tick price path is modeled. In serve mode this
+  component is the **feed writer**: it runs the OMS trigger sweep
+  (`ProcessTick`) after EVERY mark-store write, including the REST bootstrap
+  snapshot on start/reconnect (the behavior above is already normative; this
+  names the component).
 - Protective stops simulate exchange-resident orders (invariant 2): they
   trigger from the feed inside the OMS, never from an LLM loop, and remain
   reduce-only per `docs/specs/risk-limits.md`.

@@ -25,6 +25,11 @@ import (
 // (canonical hash mismatch); mirrors riskgate.ErrIdempotencyConflict.
 var ErrIdempotencyConflict = errors.New(contract.CodeIdempotencyConflict)
 
+// ErrRunTickConflict: the submission's run/tick pairing contradicts the
+// runs table — a different run already owns (strategy_id, tick_number), or
+// the run exists at a different tick (UNIQUE (strategy_id, tick_number)).
+var ErrRunTickConflict = errors.New("RUN_TICK_CONFLICT")
+
 // ErrNotFound: the referenced row does not exist.
 var ErrNotFound = errors.New("NOT_FOUND")
 
@@ -78,3 +83,12 @@ func canonicalJSON(v any) ([]byte, string, error) {
 }
 
 func rollback(tx *sql.Tx) { _ = tx.Rollback() }
+
+// dbtx is the statement surface shared by *sql.DB and *sql.Tx: row helpers
+// take it so the same SQL serves both the one-off Store methods and the
+// ApplySweep / StrategySnapshot transactions.
+type dbtx interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}

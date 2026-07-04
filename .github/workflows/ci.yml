@@ -103,6 +103,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv run --with jsonschema python scripts/validate_contracts.py
 
+  boundary:
+    needs: changes
+    if: needs.changes.outputs.agent-plane == 'true' || needs.changes.outputs.control-plane == 'true' || needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_plane_boundary.py
+
   e2e:
     needs: changes
     if: needs.changes.outputs.e2e == 'true'

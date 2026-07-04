@@ -81,6 +81,10 @@ type RuntimeState struct {
 // DefaultStalenessThresholdSeconds is the contract rule 5 default.
 const DefaultStalenessThresholdSeconds = 60
 
+// DefaultL1ApprovalTimeoutSeconds is the l1_approval_timeout_seconds
+// default (risk-limits.md).
+const DefaultL1ApprovalTimeoutSeconds = 600
+
 // FutureSkewToleranceSeconds is the clock-skew guard of contract rule 5.
 const FutureSkewToleranceSeconds = 5
 

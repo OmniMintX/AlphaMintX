@@ -28,8 +28,9 @@ no server DB). Postgres is the Phase 2 path; the schema ports without redesign.
   `fills`, `lifecycle_transitions`, `model_costs`, `rejected_submissions`,
   `kill_breaker_events`, `risk_limit_changes`, and `pending_approvals` are
   INSERT-only: no UPDATE, no DELETE, ever (a pending item is superseded by
-  its `approvals` row, never mutated). `positions` is a mutable snapshot;
-  `orders` rows mutate only their FSM `status`/`filled_at`.
+  its `approvals` row, never mutated). `positions` and `strategy_state` are
+  mutable snapshots; `orders` rows mutate only through the single
+  `UpdateOrderStatus` mutator (FSM `status`/`fill_price`/`filled_at` only).
 - **Idempotency.** The UNIQUE constraint on `proposals.proposal_id` is the
   atomic insert backing at-least-once proposal delivery; a duplicate returns
   the stored verdict verbatim (the DB-backed version of `riskgate.Service`'s
@@ -64,7 +65,9 @@ CREATE TABLE orders (order_id TEXT PRIMARY KEY, proposal_id TEXT REFERENCES prop
   origin TEXT NOT NULL CHECK (origin IN ('proposal','breaker','kill','watchdog','sl_contingency')),
   strategy_id TEXT NOT NULL, symbol TEXT NOT NULL, class TEXT NOT NULL CHECK (class IN ('ENTRY','PROTECTIVE')),
   side TEXT NOT NULL, type TEXT NOT NULL, reduce_only INTEGER NOT NULL, qty_base TEXT NOT NULL,
-  limit_price TEXT, stop_price TEXT, fill_price TEXT, kill_epoch INTEGER NOT NULL,
+  limit_price TEXT, stop_price TEXT,
+  take_profit TEXT,                                     -- TP obligation persisted so restart re-arms resting entries
+  fill_price TEXT, kill_epoch INTEGER NOT NULL,
   status TEXT NOT NULL, submitted_at TEXT NOT NULL, filled_at TEXT);
 CREATE TABLE fills (fill_id TEXT PRIMARY KEY,           -- append-only
   order_id TEXT NOT NULL REFERENCES orders, qty_base TEXT NOT NULL,
@@ -72,7 +75,9 @@ CREATE TABLE fills (fill_id TEXT PRIMARY KEY,           -- append-only
 CREATE TABLE positions (strategy_id TEXT NOT NULL,      -- mutable snapshot
   symbol TEXT NOT NULL, qty_base TEXT NOT NULL,
   entry_price TEXT NOT NULL,                            -- fee-EXCLUSIVE (see Row rules)
-  fees_quote TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (strategy_id, symbol));
+  fees_quote TEXT NOT NULL,
+  realized_pnl_quote TEXT NOT NULL,                     -- lifetime accumulator net of fees, mirrors paper OMS
+  updated_at TEXT NOT NULL, PRIMARY KEY (strategy_id, symbol));
 CREATE TABLE agent_traces (trace_id TEXT PRIMARY KEY,   -- payload = trace envelope (below)
   run_id TEXT NOT NULL UNIQUE REFERENCES runs, strategy_id TEXT NOT NULL, proposal_id TEXT,
   started_at TEXT NOT NULL, completed_at TEXT NOT NULL,
@@ -94,6 +99,10 @@ CREATE TABLE kill_breaker_events (event_id TEXT PRIMARY KEY,  -- append-only saf
 CREATE TABLE risk_limit_changes (change_id TEXT PRIMARY KEY,  -- append-only limit audit
   strategy_id TEXT NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT NOT NULL,
   actor_id TEXT NOT NULL, changed_at TEXT NOT NULL);
+CREATE TABLE strategy_state (strategy_id TEXT PRIMARY KEY,    -- mutable snapshot; realized-basis, hydrator adds unrealized at read
+  equity_quote TEXT NOT NULL,
+  peak_equity_quote TEXT NOT NULL, daily_realized_pnl_quote TEXT NOT NULL,
+  daily_utc_date TEXT NOT NULL, updated_at TEXT NOT NULL);
 ```
 
 ### Row rules (normative)
@@ -159,8 +168,21 @@ Trace envelope (request body; published as `contracts/agent_trace.schema.json`
 | `GET /api/v1/strategies/{id}/runs?page&limit` | Runs, `tick_number` DESC. |
 | `GET /api/v1/strategies/{id}/runs/{run_id}` | Run detail embedding proposal, verdict, trace, orders, fills, approvals (contract payloads verbatim). |
 | `POST /api/v1/strategies/{id}/approvals` | Body `{verdict_id, approved: bool}`; records the L1 decision (below). **Operator token only.** |
+| `POST /api/v1/strategies/{id}/proposals` | Submission envelope `{tick_number, proposal}`; agent token only. 200 ⇒ `{verdict, submitted?, submit_error_code?, pending_approval?}` (a duplicate same-hash same-tick submission returns the stored verdict verbatim, without the optional flags); 400 unparseable/missing IDs or missing `tick_number` (+ `rejected_submissions` row); 403 `STRATEGY_SCOPE_MISMATCH`; 409 `IDEMPOTENCY_CONFLICT` (same `proposal_id`, different payload or tick) / `RUN_TICK_CONFLICT` (run/tick contradicts the `runs` natural key); 429 per-strategy proposal rate limit (default 30/min, ARCHITECTURE.md) — no persisted verdict. |
 | `POST /api/v1/strategies/{id}/traces` | Trace envelope ingestion (agent-plane token only). |
 | `GET /health` | Unauthenticated liveness. |
+
+Gate evaluation happens **synchronously in the proposal POST**, under
+per-strategy serialization: the response carries the persisted verdict. The
+optional envelope fields report only what THIS request did: `submitted`
+appears iff an OMS submission was attempted (`false` with
+`submit_error_code: "SUBMIT_FAILED"` on failure), `pending_approval` iff
+this request armed the L1/escalation timer. A verbatim duplicate carries
+the stored verdict alone and does NOT charge the per-strategy rate limiter
+(fresh evaluations and 409 conflicts do). A parseable-but-schema-invalid
+proposal receives a reject VERDICT (risk-limits.md step 0a); only
+unparseable bodies, missing IDs, or a missing `tick_number` land in
+`rejected_submissions` with HTTP 400.
 
 - **Auth: two static bearer tokens** — read and approve are never the same
   credential, even single-user:
@@ -179,11 +201,19 @@ Trace envelope (request body; published as `contracts/agent_trace.schema.json`
 
 ## L0 / L1 execution semantics
 
-- **L0 / `paper`-as-advisor**: proposals and verdicts are persisted and shown;
-  nothing is ever submitted to the OMS.
+- **L0 / advisor**: proposals and verdicts are persisted and shown; "nothing
+  is ever submitted" applies to LIVE venue submission. A strategy in
+  lifecycle `paper` auto-executes `approve`/`clip` verdicts against the
+  **paper OMS** — simulation is what paper trading is (strategy-lifecycle.md:
+  paper = pipeline runs, paper OMS only; the ≥ 30 closed paper trades gate
+  needs those fills). `live_l1` uses the pending-approval flow below; an
+  `escalate` verdict creates a pending approval in any live lifecycle.
 - **L1 (`live_l1`)**: an L1 `approve`/`clip` verdict — or any `escalate`
   verdict — inserts a `pending_approvals` row, `deadline_at = created_at +
-  l1_approval_timeout_seconds` (default 600, risk-limits.md). Timers are
+  l1_approval_timeout_seconds` (default 600, risk-limits.md). An approved
+  `escalate` verdict is submitted at `min(size_quote,
+  per_position_notional_cap_quote)` (escalate carries no `clipped_size_quote`
+  but the cap still binds). Timers are
   DERIVED from the persisted `deadline_at`, never in-memory only: a
   **startup sweep** resolves every pending item (a `pending_approvals` row
   with no `approvals` row) past its deadline as `timeout` — restart-safe

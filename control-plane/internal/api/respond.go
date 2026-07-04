@@ -23,6 +23,7 @@ const (
 	codeStrategyScopeMismatch = "STRATEGY_SCOPE_MISMATCH"
 	codeSchemaInvalid         = contract.CodeSchemaInvalid
 	codeIdempotencyConflict   = contract.CodeIdempotencyConflict
+	codeRunTickConflict       = "RUN_TICK_CONFLICT"
 	codeInternal              = "INTERNAL"
 	// codeSubmitFailed marks an approved decision whose OMS submission
 	// failed: surfaced in the approval response and persisted to the

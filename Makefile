@@ -1,8 +1,8 @@
 # Repo-root checks. Mirrors .github/workflows/ci.yml exactly.
 
-.PHONY: check test go-check py-check web-check contracts-check e2e-check e2e-golden
+.PHONY: check test go-check py-check web-check contracts-check boundary-check e2e-check e2e-golden
 
-check: go-check py-check web-check contracts-check e2e-check
+check: go-check py-check web-check contracts-check boundary-check e2e-check
 
 test: check
 
@@ -17,6 +17,9 @@ web-check:
 
 contracts-check:
 	uv run --with jsonschema python scripts/validate_contracts.py
+
+boundary-check:
+	uv run --no-project python scripts/check_plane_boundary.py
 
 # Deterministic E2E paper loop: emit twice + diff (byte-identical), replay
 # twice + diff (byte-identical), diff against the committed goldens (pins

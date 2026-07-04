@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS orders (order_id TEXT PRIMARY KEY, proposal_id TEXT R
   origin TEXT NOT NULL CHECK (origin IN ('proposal','breaker','kill','watchdog','sl_contingency')),
   strategy_id TEXT NOT NULL, symbol TEXT NOT NULL, class TEXT NOT NULL CHECK (class IN ('ENTRY','PROTECTIVE')),
   side TEXT NOT NULL, type TEXT NOT NULL, reduce_only INTEGER NOT NULL, qty_base TEXT NOT NULL,
-  limit_price TEXT, stop_price TEXT, fill_price TEXT, kill_epoch INTEGER NOT NULL,
+  limit_price TEXT, stop_price TEXT,
+  take_profit TEXT,                                     -- TP obligation carried on a resting entry
+  fill_price TEXT, kill_epoch INTEGER NOT NULL,
   status TEXT NOT NULL, submitted_at TEXT NOT NULL, filled_at TEXT);
 CREATE TABLE IF NOT EXISTS fills (fill_id TEXT PRIMARY KEY,           -- append-only
   order_id TEXT NOT NULL REFERENCES orders, qty_base TEXT NOT NULL,
@@ -37,7 +39,9 @@ CREATE TABLE IF NOT EXISTS fills (fill_id TEXT PRIMARY KEY,           -- append-
 CREATE TABLE IF NOT EXISTS positions (strategy_id TEXT NOT NULL,      -- mutable snapshot
   symbol TEXT NOT NULL, qty_base TEXT NOT NULL,
   entry_price TEXT NOT NULL,                            -- fee-EXCLUSIVE (see Row rules)
-  fees_quote TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (strategy_id, symbol));
+  fees_quote TEXT NOT NULL,
+  realized_pnl_quote TEXT NOT NULL,                     -- cumulative, net of ALL fees; survives a flat book
+  updated_at TEXT NOT NULL, PRIMARY KEY (strategy_id, symbol));
 CREATE TABLE IF NOT EXISTS agent_traces (trace_id TEXT PRIMARY KEY,   -- payload = contracts/agent_trace.schema.json
   run_id TEXT NOT NULL UNIQUE REFERENCES runs, strategy_id TEXT NOT NULL, proposal_id TEXT,
   started_at TEXT NOT NULL, completed_at TEXT NOT NULL,
@@ -59,4 +63,11 @@ CREATE TABLE IF NOT EXISTS kill_breaker_events (event_id TEXT PRIMARY KEY,  -- a
 CREATE TABLE IF NOT EXISTS risk_limit_changes (change_id TEXT PRIMARY KEY,  -- append-only limit audit
   strategy_id TEXT NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT NOT NULL,
   actor_id TEXT NOT NULL, changed_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS strategy_state (             -- mutable realized-equity snapshot
+  strategy_id TEXT PRIMARY KEY REFERENCES strategies,
+  equity_quote TEXT NOT NULL,                           -- allocated capital + cumulative realized PnL
+  peak_equity_quote TEXT NOT NULL,                      -- monotone max of realized equity
+  daily_realized_pnl_quote TEXT NOT NULL,               -- realized PnL of utc_date (fees included)
+  utc_date TEXT NOT NULL,                               -- YYYY-MM-DD day the daily figure belongs to
+  updated_at TEXT NOT NULL);
 `

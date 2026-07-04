@@ -119,7 +119,7 @@ func (s *Server) handlePostApproval(w http.ResponseWriter, r *http.Request) {
 			// here must not mask the recorded outcome (a retried POST would
 			// 409), so it is logged and the response still says
 			// submitted=false.
-			if perr := s.recordSubmitFailure(meta, recorded, err, now); perr != nil {
+			if perr := s.recordSubmitFailure(meta, recorded.ApprovalID, err, now); perr != nil {
 				s.cfg.Logf("api: record submit failure for verdict %s: %v", meta.VerdictID, perr)
 			}
 		}
@@ -128,16 +128,21 @@ func (s *Server) handlePostApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// recordSubmitFailure appends the post-approval OMS submission failure to
-// the rejected_submissions audit surface, keyed back to the approval and
-// verdict, so approved-but-not-executed decisions stay visible.
-func (s *Server) recordSubmitFailure(meta store.VerdictMeta, recorded store.Approval, submitErr error, now time.Time) error {
-	payload, err := json.Marshal(map[string]string{
-		"approval_id": recorded.ApprovalID,
+// recordSubmitFailure appends an OMS submission failure to the
+// rejected_submissions audit surface, keyed back to the verdict (and the
+// approval, when the L1 flow triggered the submission), so
+// approved-but-not-executed decisions stay visible. approvalID is empty on
+// the direct paper/L2/L3 submission path.
+func (s *Server) recordSubmitFailure(meta store.VerdictMeta, approvalID string, submitErr error, now time.Time) error {
+	fields := map[string]string{
 		"verdict_id":  meta.VerdictID,
 		"proposal_id": meta.ProposalID,
 		"error":       submitErr.Error(),
-	})
+	}
+	if approvalID != "" {
+		fields["approval_id"] = approvalID
+	}
+	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err
 	}

@@ -85,6 +85,7 @@ type Order struct {
 	QtyBase     string  `json:"qty_base"`
 	LimitPrice  *string `json:"limit_price"`
 	StopPrice   *string `json:"stop_price"`
+	TakeProfit  *string `json:"take_profit"` // TP obligation carried on a resting entry
 	FillPrice   *string `json:"fill_price"`
 	KillEpoch   int64   `json:"kill_epoch"`
 	Status      string  `json:"status"`
@@ -104,13 +105,29 @@ type Fill struct {
 
 // Position mirrors the mutable positions snapshot. EntryPrice is
 // fee-EXCLUSIVE; fees accumulate only in FeesQuote (Row rules).
+// RealizedPnLQuote is the cumulative realized PnL net of ALL fees; it
+// survives a flat book so restarts restore the paper OMS books verbatim.
 type Position struct {
-	StrategyID string `json:"strategy_id"`
-	Symbol     string `json:"symbol"`
-	QtyBase    string `json:"qty_base"`
-	EntryPrice string `json:"entry_price"`
-	FeesQuote  string `json:"fees_quote"`
-	UpdatedAt  string `json:"updated_at"`
+	StrategyID       string `json:"strategy_id"`
+	Symbol           string `json:"symbol"`
+	QtyBase          string `json:"qty_base"`
+	EntryPrice       string `json:"entry_price"`
+	FeesQuote        string `json:"fees_quote"`
+	RealizedPnLQuote string `json:"realized_pnl_quote"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+// StrategyState mirrors the mutable strategy_state snapshot: the
+// realized-only equity figures the Risk Gate hydrator folds unrealized PnL
+// into (risk-limits.md Definitions). DailyRealizedPnLQuote belongs to
+// UTCDate; a write on a later UTC day rolls it over to zero first.
+type StrategyState struct {
+	StrategyID            string `json:"strategy_id"`
+	EquityQuote           string `json:"equity_quote"`
+	PeakEquityQuote       string `json:"peak_equity_quote"`
+	DailyRealizedPnLQuote string `json:"daily_realized_pnl_quote"`
+	UTCDate               string `json:"utc_date"`
+	UpdatedAt             string `json:"updated_at"`
 }
 
 // RejectedSubmission mirrors the append-only rejected_submissions table
