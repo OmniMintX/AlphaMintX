@@ -113,6 +113,7 @@ export const orderSchema = z.strictObject({
   qty_base: decimal,
   limit_price: decimal.nullable(),
   stop_price: decimal.nullable(),
+  take_profit: decimal.nullable(),
   fill_price: decimal.nullable(),
   kill_epoch: z.number().int().min(0),
   status: z.string().min(1),

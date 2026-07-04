@@ -150,10 +150,14 @@ class HttpTransport:
 
     @staticmethod
     def _error_code(response: httpx.Response) -> str:
+        # The Go error body is {"code": ..., "message": ...} (respond.go);
+        # "error" is tolerated as a legacy alias.
         try:
             data: Any = response.json()
         except ValueError:
             return "UNKNOWN"
-        if isinstance(data, dict) and isinstance(data.get("error"), str):
-            return str(data["error"])
+        if isinstance(data, dict):
+            for key in ("code", "error"):
+                if isinstance(data.get(key), str):
+                    return str(data[key])
         return "UNKNOWN"

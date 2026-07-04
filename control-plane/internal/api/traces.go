@@ -51,7 +51,7 @@ func (s *Server) handlePostTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inserted, err := s.cfg.Store.InsertTrace(&env, s.cfg.Now())
+	_, err = s.cfg.Store.InsertTrace(&env, s.cfg.Now())
 	switch {
 	case errors.Is(err, store.ErrIdempotencyConflict):
 		writeError(w, http.StatusConflict, codeIdempotencyConflict,
@@ -60,9 +60,10 @@ func (s *Server) handlePostTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, codeUnknownRun, "unknown run")
 	case err != nil:
 		s.writeInternal(w, r, err)
-	case inserted:
-		writeJSON(w, http.StatusCreated, map[string]string{"run_id": env.RunID})
 	default:
+		// Fresh and duplicate ingests both answer 200 {run_id}: the agent
+		// client treats exactly 200 as success (persistence-and-api.md HTTP
+		// API table), mirroring the proposals envelope precedent.
 		writeJSON(w, http.StatusOK, map[string]string{"run_id": env.RunID})
 	}
 }

@@ -169,7 +169,7 @@ Trace envelope (request body; published as `contracts/agent_trace.schema.json`
 | `GET /api/v1/strategies/{id}/runs/{run_id}` | Run detail embedding proposal, verdict, trace, orders, fills, approvals (contract payloads verbatim). |
 | `POST /api/v1/strategies/{id}/approvals` | Body `{verdict_id, approved: bool}`; records the L1 decision (below). **Operator token only.** |
 | `POST /api/v1/strategies/{id}/proposals` | Submission envelope `{tick_number, proposal}`; agent token only. 200 ⇒ `{verdict, submitted?, submit_error_code?, pending_approval?}` (a duplicate same-hash same-tick submission returns the stored verdict verbatim, without the optional flags); 400 unparseable/missing IDs or missing `tick_number` (+ `rejected_submissions` row); 403 `STRATEGY_SCOPE_MISMATCH`; 409 `IDEMPOTENCY_CONFLICT` (same `proposal_id`, different payload or tick) / `RUN_TICK_CONFLICT` (run/tick contradicts the `runs` natural key); 429 per-strategy proposal rate limit (default 30/min, ARCHITECTURE.md) — no persisted verdict. |
-| `POST /api/v1/strategies/{id}/traces` | Trace envelope ingestion (agent-plane token only). |
+| `POST /api/v1/strategies/{id}/traces` | Trace envelope ingestion (agent-plane token only). 200 ⇒ `{run_id}` for BOTH a fresh ingest and a verbatim duplicate (idempotent re-POST); 400 schema-invalid; 403 `STRATEGY_SCOPE_MISMATCH`; 404 `UNKNOWN_RUN` (proposals arrive before traces); 409 `IDEMPOTENCY_CONFLICT` (same `run_id`, different payload). |
 | `GET /health` | Unauthenticated liveness. |
 
 Gate evaluation happens **synchronously in the proposal POST**, under

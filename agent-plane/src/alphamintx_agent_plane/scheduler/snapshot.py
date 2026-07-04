@@ -20,6 +20,10 @@ import httpx
 from alphamintx_agent_plane.contract.models import decimal_to_str
 
 BINANCE_BASE_URL = "https://api.binance.com"
+# Optional override (market-data.md §Endpoint overrides): a market-data-only
+# mirror such as https://data-api.binance.vision, or a testnet. Read-only
+# public data either way — never a trading endpoint.
+ENV_BINANCE_BASE_URL = "ALPHAMINTX_BINANCE_BASE_URL"
 KLINES_PATH = "/api/v3/klines"
 KLINES_INTERVAL = "1h"
 KLINES_LIMIT = 24

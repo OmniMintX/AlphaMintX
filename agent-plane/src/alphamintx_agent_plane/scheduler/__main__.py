@@ -9,10 +9,12 @@ per strategy until SIGINT/SIGTERM. The LLM mode defaults to stub
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import signal
 from collections.abc import Mapping
+from typing import TextIO
 
 from alphamintx_agent_plane.client.controlplane import (
     TOKEN_ENV_VAR,
@@ -30,7 +32,11 @@ from alphamintx_agent_plane.scheduler.loop import (
     Scheduler,
     StrategyRuntime,
 )
-from alphamintx_agent_plane.scheduler.snapshot import BinanceSnapshotProvider
+from alphamintx_agent_plane.scheduler.snapshot import (
+    BINANCE_BASE_URL,
+    ENV_BINANCE_BASE_URL,
+    BinanceSnapshotProvider,
+)
 from alphamintx_agent_plane.scheduler.state import ENV_STATE_PATH, TickState
 
 logger = logging.getLogger(__name__)
@@ -75,7 +81,9 @@ def build_scheduler(environ: Mapping[str, str] | None = None) -> Scheduler:
     )
     return Scheduler(
         strategies=[runtime],
-        snapshots=BinanceSnapshotProvider(),
+        snapshots=BinanceSnapshotProvider(
+            base_url=env.get(ENV_BINANCE_BASE_URL, "") or BINANCE_BASE_URL
+        ),
         checkpointer=open_checkpointer(checkpoint_db),
         tick_state=TickState(state_path),
         tick_interval_seconds=tick_interval_seconds,
@@ -94,11 +102,39 @@ async def _main_async(scheduler: Scheduler) -> None:
         logger.info("scheduler stopped by signal")
 
 
+def acquire_instance_lock(state_path: str) -> TextIO:
+    """Exclusive advisory lock keyed to the tick-state file.
+
+    Two schedulers sharing one tick-state file + checkpoint DB race every
+    tick (live smoke finding: the loser resumes the winner's checkpoint and
+    its divergent trace is 409-rejected). Exactly one instance may own a
+    tick-state file; the second fails fast at startup.
+    """
+    lock_path = state_path + ".lock"
+    try:
+        handle = open(lock_path, "w")
+    except OSError as exc:
+        raise RuntimeError(f"cannot open scheduler lock file {lock_path}: {exc}") from exc
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise RuntimeError(
+            f"another scheduler instance holds {lock_path}; exactly one "
+            "scheduler may own a tick-state file"
+        ) from exc
+    return handle
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )
-    asyncio.run(_main_async(build_scheduler()))
+    lock = acquire_instance_lock(_require(os.environ, ENV_STATE_PATH))
+    try:
+        asyncio.run(_main_async(build_scheduler()))
+    finally:
+        lock.close()
 
 
 if __name__ == "__main__":

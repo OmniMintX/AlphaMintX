@@ -102,11 +102,21 @@ def test_auth_failures_are_not_retried(status: int) -> None:
 
 
 def test_409_conflict_is_typed_and_not_retried() -> None:
-    recorder = _Recorder([httpx.Response(409, json={"error": "IDEMPOTENCY_CONFLICT"})])
+    # The Go wire shape is {"code": ..., "message": ...} (respond.go).
+    recorder = _Recorder(
+        [httpx.Response(409, json={"code": "IDEMPOTENCY_CONFLICT", "message": "dup"})]
+    )
     with pytest.raises(ControlPlaneConflictError) as excinfo:
         recorder.transport().post(PATH, HEADERS, BODY)
     assert excinfo.value.error_code == "IDEMPOTENCY_CONFLICT"
     assert len(recorder.requests) == 1
+
+
+def test_409_legacy_error_key_is_tolerated() -> None:
+    recorder = _Recorder([httpx.Response(409, json={"error": "RUN_TICK_CONFLICT"})])
+    with pytest.raises(ControlPlaneConflictError) as excinfo:
+        recorder.transport().post(PATH, HEADERS, BODY)
+    assert excinfo.value.error_code == "RUN_TICK_CONFLICT"
 
 
 def test_other_4xx_is_not_retried() -> None:
@@ -237,3 +247,26 @@ def test_bare_verdict_body_without_envelope_fails_loudly() -> None:
     recorder = _Recorder([_json_response(_GO_VERDICT_JSON)])
     with pytest.raises(ControlPlaneContractError):
         _client(recorder).submit_proposal(_proposal(), tick_number=0)
+
+
+def _trace_envelope() -> dict[str, Any]:
+    return {"strategy_id": SID, "run_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"}
+
+
+def test_trace_ingest_go_response_parses_end_to_end() -> None:
+    # The Go traces handler answers 200 {"run_id": ...} for fresh AND
+    # duplicate ingests (persistence-and-api.md HTTP API table).
+    body = '{"run_id":"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"}'
+    recorder = _Recorder([_json_response(body)])
+    _client(recorder).submit_trace(_trace_envelope())
+    assert len(recorder.requests) == 1
+
+
+def test_trace_ingest_201_fails_loudly() -> None:
+    # Regression (live smoke run): a 201 Created from the traces endpoint
+    # broke the wire — only 200 is success; anything else is a typed error.
+    body = '{"run_id":"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"}'
+    resp = httpx.Response(201, content=body, headers={"Content-Type": "application/json"})
+    recorder = _Recorder([resp])
+    with pytest.raises(ControlPlaneRequestError):
+        _client(recorder).submit_trace(_trace_envelope())

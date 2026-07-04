@@ -71,6 +71,7 @@ package boundaries speak canonical `BASE/QUOTE`; venue forms never leak out.
 | Silent-connection watchdog | Track the last-message timestamp; no message for > 60 s ⇒ treat the connection as dead and reconnect. A connected-but-silent socket MUST NOT keep stale marks alive (staleness rule still applies). |
 | Reconnect | Exponential backoff 100 ms → 30 s cap, with jitter; reset on a successful (re-)subscribe. Respect Binance connection limits (~300 attempts / 5 min / IP; ≤ 5 inbound msg/s). |
 | Re-snapshot | Every reconnect MUST re-run the REST bootstrap before resuming WS consumption (ticks missed while disconnected are otherwise silently lost). |
+| Endpoint overrides | Base URLs are env-overridable for market-data-only mirrors and testnets: control-plane `CONTROLPLANE_BINANCE_WS_URL` / `CONTROLPLANE_BINANCE_REST_URL`; agent-plane snapshot `ALPHAMINTX_BINANCE_BASE_URL`. Binance's data-only mirror (`https://data-api.binance.vision`, `wss://data-stream.binance.vision`) serves identical spot market-data endpoints where `api.binance.com` is geo-blocked (HTTP 451). Overrides never change the read-only surface: no keys, no trading endpoints (plane-boundary rules unchanged). Empty ⇒ production defaults. |
 
 ### ReplayFeed (e2e / CI)
 

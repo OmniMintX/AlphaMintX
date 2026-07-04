@@ -63,13 +63,24 @@ Progress (specs + foundations landed; specs in `docs/specs/market-data.md`,
 - [x] CI plane-boundary gate (`scripts/check_plane_boundary.py`, `make boundary-check`,
       CI `boundary` job): no direct LLM providers in agent-plane, no control-plane DB
       access, no exchange trading surface, no LLM calls from control-plane.
+- [x] Live smoke run (stub LLM, live Binance marks via the data-only mirror,
+      10 s ticks): full loop verified end-to-end — proposals/traces 200,
+      paper fills + trigger sweeps persisted, `DAILY_LOSS_LIMIT_BREACHED`
+      rejections from hydrated state, crash-resume with no tick gap, and a
+      two-scheduler race survived by idempotency (duplicate proposal replayed
+      verbatim, divergent trace 409-rejected append-only). Fixes from the run:
+      traces endpoint 201→200 (wire break), Binance endpoint override env vars,
+      web `orderSchema.take_profit` drift, trace-conflict WARNING on re-drive,
+      scheduler single-instance flock, 409 error-code key (`code`).
 
 Exit criteria:
 - [ ] A strategy runs continuously ≥7 days in paper against live market data with
-      zero unhandled pipeline failures (checkpoint/resume verified). (Wiring landed;
-      the ≥7-day soak run itself is pending.)
+      zero unhandled pipeline failures (checkpoint/resume verified). (Soak run
+      started 2026-07-04 against the Binance data-only mirror.)
 - [ ] Every run's full agent trace is persisted and viewable end-to-end in the web UI.
-      (Ingestion + viewer landed; needs verification against a live scheduler run.)
+      (Verified against a live run at the API + the viewer's own zod schemas;
+      browser render check pending the same-origin deployment the client is
+      designed for — the control-plane serves no CORS headers by design.)
 - [x] LLM cost per strategy metered and visible; daily token budget enforced.
 - [x] No direct provider calls anywhere (verified by CI check / egress policy).
 

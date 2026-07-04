@@ -133,6 +133,7 @@ describe("run detail (contract payloads verbatim)", () => {
         qty_base: "0.0234",
         limit_price: "64250.50",
         stop_price: null,
+        take_profit: "66820.52",
         fill_price: "64250.50",
         kill_epoch: 0,
         status: "filled",

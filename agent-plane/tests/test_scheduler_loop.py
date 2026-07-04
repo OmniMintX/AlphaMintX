@@ -9,12 +9,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from alphamintx_agent_plane.client.controlplane import (
     ControlPlaneClient,
     DryRunTransport,
     StrategyAuth,
 )
-from alphamintx_agent_plane.client.errors import ControlPlaneUnavailableError
+from alphamintx_agent_plane.client.errors import (
+    ControlPlaneConflictError,
+    ControlPlaneUnavailableError,
+)
 from alphamintx_agent_plane.llm.stub import bullish_scenario
 from alphamintx_agent_plane.pipeline.graph import PipelineInput, run_pipeline
 from alphamintx_agent_plane.scheduler.checkpoint import open_checkpointer
@@ -54,6 +59,21 @@ class FailingProposalTransport(RecordingTransport):
     ) -> dict[str, Any]:
         if path.endswith("/proposals"):
             raise ControlPlaneUnavailableError("control-plane unavailable after retries")
+        return super().post(path, headers, body)
+
+
+class ConflictingTraceTransport(RecordingTransport):
+    """Records like RecordingTransport but every trace POST 409-conflicts."""
+
+    def post(
+        self, path: str, headers: Mapping[str, str], body: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        if path.endswith("/traces"):
+            self.records.append((path, dict(body)))
+            raise ControlPlaneConflictError(
+                "IDEMPOTENCY_CONFLICT",
+                "run_id already has a trace with a different payload",
+            )
         return super().post(path, headers, body)
 
 
@@ -194,6 +214,24 @@ def test_failed_proposal_post_yields_null_proposal_id_in_trace(tmp_path: Path) -
     assert len(traces) == 1
     assert traces[0]["proposal_id"] is None  # null ONLY on POST failure after retries
     assert traces[0]["tick_number"] == 0
+    assert tick_state.next_tick_number(SID) == 1  # the tick still concludes
+
+
+def test_trace_conflict_is_a_warning_not_a_defect(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Live smoke finding: an idempotent re-drive re-builds the trace envelope
+    # with fresh wall-clock timestamps, so a 409 against the already-persisted
+    # trace is expected recovery noise — a WARNING, never a defect ERROR.
+    transport = ConflictingTraceTransport()
+    scheduler, tick_state = _scheduler(tmp_path, transport)
+    with caplog.at_level("WARNING", logger="alphamintx_agent_plane.scheduler.loop"):
+        asyncio.run(scheduler.run(max_ticks=1))
+    loop_records = [
+        r for r in caplog.records if r.name == "alphamintx_agent_plane.scheduler.loop"
+    ]
+    assert [r.levelname for r in loop_records] == ["WARNING"]
+    assert "already persisted" in loop_records[0].message
     assert tick_state.next_tick_number(SID) == 1  # the tick still concludes
 
 

@@ -29,7 +29,10 @@ from typing import Any, Protocol
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from alphamintx_agent_plane.client.controlplane import ControlPlaneClient
-from alphamintx_agent_plane.client.errors import ControlPlaneError
+from alphamintx_agent_plane.client.errors import (
+    ControlPlaneConflictError,
+    ControlPlaneError,
+)
 from alphamintx_agent_plane.contract.models import decimal_to_str, rfc3339_utc
 from alphamintx_agent_plane.llm.budget import DailyTokenBudget
 from alphamintx_agent_plane.llm.stub import LLMClient
@@ -231,6 +234,18 @@ class Scheduler:
         )
         try:
             await asyncio.to_thread(strategy.client.submit_trace, envelope)
+        except ControlPlaneConflictError:
+            # Idempotent re-drive: the run's trace is already persisted and
+            # append-only wins. A re-built envelope legitimately differs
+            # (wall-clock started_at/completed_at, advisory budget counters),
+            # so this 409 is expected recovery noise, not a defect.
+            logger.warning(
+                "trace already persisted for this run; re-driven envelope "
+                "differs and was rejected append-only: strategy=%s tick=%s run_id=%s",
+                strategy.strategy_id,
+                tick_number,
+                envelope.get("run_id"),
+            )
         except ControlPlaneError:
             logger.exception(
                 "defect: trace POST failed after retries: strategy=%s tick=%s "

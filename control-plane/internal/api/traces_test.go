@@ -20,9 +20,11 @@ func TestTraceIngestion(t *testing.T) {
 	proposalID, _, runID := insertChain(t, e.store, 10, strat1, 0)
 	env := testTraceEnvelope(t, strat1, runID, &proposalID)
 
+	// Fresh ingest answers 200 (not 201): the agent client treats exactly
+	// 200 as success, matching the proposals envelope precedent.
 	rec := e.do(t, "POST", tracePath(strat1), agent1Tok, env)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201 (body %q)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
 	var body map[string]string
 	decodeJSON(t, rec, &body)

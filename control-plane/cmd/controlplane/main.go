@@ -145,7 +145,14 @@ func serve(dbPath string) error {
 		if v := os.Getenv("CONTROLPLANE_BINANCE_MARKET"); v != "" {
 			market = marketdata.Market(v)
 		}
-		feed, err := marketdata.NewBinanceFeed(marketdata.BinanceConfig{Market: market})
+		// Optional endpoint overrides (docs/specs/market-data.md §Endpoint
+		// overrides): market-data-only mirrors (data-api.binance.vision /
+		// data-stream.binance.vision) or testnets; empty means production.
+		feed, err := marketdata.NewBinanceFeed(marketdata.BinanceConfig{
+			Market:  market,
+			WSURL:   os.Getenv("CONTROLPLANE_BINANCE_WS_URL"),
+			RESTURL: os.Getenv("CONTROLPLANE_BINANCE_REST_URL"),
+		})
 		if err != nil {
 			return err
 		}

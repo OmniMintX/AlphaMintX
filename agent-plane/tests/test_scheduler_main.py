@@ -8,13 +8,18 @@ import pytest
 
 from alphamintx_agent_plane.client.controlplane import TOKEN_ENV_VAR
 from alphamintx_agent_plane.client.http import ENV_BASE_URL
-from alphamintx_agent_plane.scheduler.__main__ import build_scheduler
+from alphamintx_agent_plane.scheduler.__main__ import acquire_instance_lock, build_scheduler
 from alphamintx_agent_plane.scheduler.checkpoint import ENV_CHECKPOINT_DB
 from alphamintx_agent_plane.scheduler.loop import (
     ENV_STRATEGY_ID,
     ENV_SYMBOL,
     ENV_TICK_INTERVAL_SECONDS,
     Scheduler,
+)
+from alphamintx_agent_plane.scheduler.snapshot import (
+    BINANCE_BASE_URL,
+    ENV_BINANCE_BASE_URL,
+    BinanceSnapshotProvider,
 )
 from alphamintx_agent_plane.scheduler.state import ENV_STATE_PATH
 
@@ -53,3 +58,38 @@ def test_invalid_tick_interval_fails_fast(tmp_path: Path, raw: str) -> None:
     env[ENV_TICK_INTERVAL_SECONDS] = raw
     with pytest.raises(RuntimeError, match=ENV_TICK_INTERVAL_SECONDS):
         build_scheduler(env)
+
+
+def test_binance_base_url_env_override(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    env[ENV_BINANCE_BASE_URL] = "https://data-api.binance.vision"
+    scheduler = build_scheduler(env)
+    provider = scheduler._snapshots
+    assert isinstance(provider, BinanceSnapshotProvider)
+    assert str(provider._client.base_url).rstrip("/") == "https://data-api.binance.vision"
+
+
+def test_binance_base_url_defaults_to_production(tmp_path: Path) -> None:
+    scheduler = build_scheduler(_env(tmp_path))
+    provider = scheduler._snapshots
+    assert isinstance(provider, BinanceSnapshotProvider)
+    assert str(provider._client.base_url).rstrip("/") == BINANCE_BASE_URL
+
+
+def test_second_scheduler_instance_fails_fast(tmp_path: Path) -> None:
+    # Two schedulers sharing one tick-state file race every tick (live smoke
+    # finding); the second instance must fail fast at startup.
+    state_path = str(tmp_path / "ticks.json")
+    lock = acquire_instance_lock(state_path)
+    try:
+        with pytest.raises(RuntimeError, match="another scheduler instance"):
+            acquire_instance_lock(state_path)
+    finally:
+        lock.close()
+
+
+def test_instance_lock_is_released_on_close(tmp_path: Path) -> None:
+    state_path = str(tmp_path / "ticks.json")
+    acquire_instance_lock(state_path).close()
+    lock = acquire_instance_lock(state_path)  # re-acquirable after release
+    lock.close()
