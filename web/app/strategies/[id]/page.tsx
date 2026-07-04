@@ -9,8 +9,8 @@ import { useCallback, useState } from "react";
 
 import { fetchRuns, fetchStrategy } from "../../../src/lib/api/client";
 import { usePoll } from "../../../src/lib/api/usePoll";
-import { isAdvisoryOnly } from "../../../src/lib/view/run";
-import { AdvisoryBanner, ErrorBanner, Pager, StateBadge, card, mono, section } from "../ui";
+import { isAdvisoryOnly, isPaperSimulated } from "../../../src/lib/view/run";
+import { AdvisoryBanner, ErrorBanner, Pager, PaperBanner, StateBadge, card, mono, section } from "../ui";
 
 export default function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -39,6 +39,7 @@ export default function StrategyDetailPage() {
             {strategy.data.strategy_id}
           </p>
           {isAdvisoryOnly(strategy.data.lifecycle_state) && <AdvisoryBanner />}
+          {isPaperSimulated(strategy.data.lifecycle_state) && <PaperBanner />}
         </>
       )}
 

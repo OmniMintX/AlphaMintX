@@ -15,6 +15,7 @@ import {
   isAdvisoryOnly,
   isDegradedDebate,
   isDegradedSummary,
+  isPaperSimulated,
   modelCostTotals,
 } from "./run";
 
@@ -113,12 +114,20 @@ describe("approvalDecisionLabel", () => {
 });
 
 describe("isAdvisoryOnly", () => {
-  it("treats draft and paper as L0 advisory, live/paused/killed as not", () => {
+  it("treats only draft as advisory: paper auto-executes on the paper OMS", () => {
     expect(isAdvisoryOnly("draft")).toBe(true);
-    expect(isAdvisoryOnly("paper")).toBe(true);
+    expect(isAdvisoryOnly("paper")).toBe(false);
     expect(isAdvisoryOnly("live_l1")).toBe(false);
     expect(isAdvisoryOnly("live_l3")).toBe(false);
     expect(isAdvisoryOnly("paused")).toBe(false);
     expect(isAdvisoryOnly("killed")).toBe(false);
+  });
+});
+
+describe("isPaperSimulated", () => {
+  it("is true only for paper", () => {
+    expect(isPaperSimulated("paper")).toBe(true);
+    expect(isPaperSimulated("draft")).toBe(false);
+    expect(isPaperSimulated("live_l2")).toBe(false);
   });
 });

@@ -12,7 +12,7 @@ only components that ever touch an exchange.
 | Path | Contents |
 |---|---|
 | `control-plane/` | Go: API, RBAC, strategy lifecycle, Risk Gate, OMS, exchange connectivity, billing hooks |
-| `agent-plane/` | Python: LangGraph agent pipeline, strategy engine, backtest/paper trading |
+| `agent-plane/` | Python: LangGraph agent pipeline, strategy engine (paper/live), offline backtest emitter (backtest replay runs in control-plane) |
 | `web/` | Next.js: dashboard, reasoning viewer, copilot approve/reject UI, risk settings, kill-switch |
 | `contracts/` | JSON Schemas (TradeProposal, RiskVerdict) + golden fixtures for cross-language contract tests |
 | `docs/` | Architecture, delivery plan, normative specs, ADRs |

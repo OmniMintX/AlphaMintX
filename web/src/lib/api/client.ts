@@ -3,6 +3,12 @@
 // come from the environment — never hardcoded:
 //   NEXT_PUBLIC_API_BASE_URL   control-plane origin ("" = same origin)
 //   NEXT_PUBLIC_READ_TOKEN     READ_TOKEN, GETs only (never authorizes POSTs)
+// In the same-origin deployment the empty base URL resolves against the Next
+// server, which proxies /api/v1/* to the control-plane via build-time
+// rewrites (CONTROLPLANE_API_BASE_URL, src/lib/config/rewrites.ts).
+// NEXT_PUBLIC_API_BASE_URL remains the explicit cross-origin escape hatch —
+// it requires a fronting proxy, since the control-plane serves no CORS
+// headers.
 // The OPERATOR_TOKEN is server-only: approvals POST to the same-origin route
 // handler (app/api/strategies/[id]/approvals/route.ts), which attaches it —
 // the approve credential is never inlined into a client bundle.

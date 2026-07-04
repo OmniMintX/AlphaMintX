@@ -77,17 +77,25 @@ Exit criteria:
 - [ ] A strategy runs continuously ≥7 days in paper against live market data with
       zero unhandled pipeline failures (checkpoint/resume verified). (Soak run
       started 2026-07-04 against the Binance data-only mirror.)
-- [ ] Every run's full agent trace is persisted and viewable end-to-end in the web UI.
-      (Verified against a live run at the API + the viewer's own zod schemas;
-      browser render check pending the same-origin deployment the client is
-      designed for — the control-plane serves no CORS headers by design.)
+- [x] Every run's full agent trace is persisted and viewable end-to-end in the web UI.
+      (2026-07-04: same-origin deployment landed — Next.js rewrites proxy
+      `/api/v1/*` from `CONTROLPLANE_API_BASE_URL`, persistence-and-api.md
+      §Auth. Evidence against the live soak: all 86 runs had traces parsing
+      the viewer's own zod schemas, and a real-browser render check of a live
+      run-detail page showed every trace section — analyst summaries, debate,
+      trader decision, verdict, model costs — with zero console errors. The
+      check also caught and fixed a web drift: `paper` was labeled
+      advisory-only, contradicting §L0/L1 execution semantics.)
 - [x] LLM cost per strategy metered and visible; daily token budget enforced.
 - [x] No direct provider calls anywhere (verified by CI check / egress policy).
 
 ## Phase 2 — Backtest tooling, multi-tenant, billing
 
 Scope:
-- Backtest engine sharing the exact strategy/pipeline code with paper (parity).
+- Backtest engine sharing the exact strategy/pipeline code with paper (parity)
+  (spec: `docs/specs/backtest-engine.md` — candle-close replay clock with
+  pinned OHLC sub-tick pumping, two-stage recorded-proposal architecture,
+  isolated `backtest.db`).
 - Lookahead-bias detection (progressive data-masking re-runs, freqtrade pattern).
 - Multi-tenant: tenant isolation, RBAC enforcement, per-tenant kill-switch.
 - Billing on metered LLM cost + subscription plans (mintrouter patterns).

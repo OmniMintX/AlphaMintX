@@ -18,8 +18,8 @@ import {
 } from "../../../../../src/lib/api/client";
 import type { ApprovalDecision } from "../../../../../src/lib/api/schema";
 import { usePoll } from "../../../../../src/lib/api/usePoll";
-import { isAdvisoryOnly } from "../../../../../src/lib/view/run";
-import { AdvisoryBanner, ErrorBanner, StateBadge, card, mono } from "../../../ui";
+import { isAdvisoryOnly, isPaperSimulated } from "../../../../../src/lib/view/run";
+import { AdvisoryBanner, ErrorBanner, PaperBanner, StateBadge, card, mono } from "../../../ui";
 import {
   AnalystSection,
   ApprovalsSection,
@@ -84,6 +84,7 @@ export default function RunDetailPage() {
       )}
       <p style={{ ...mono, color: "#555", fontSize: "0.85rem" }}>run {runId}</p>
       {strategy.data && isAdvisoryOnly(strategy.data.lifecycle_state) && <AdvisoryBanner />}
+      {strategy.data && isPaperSimulated(strategy.data.lifecycle_state) && <PaperBanner />}
       {run.error && <ErrorBanner message={run.error} />}
       {!data && !run.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
 

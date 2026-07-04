@@ -62,8 +62,8 @@ export function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-// L0 / paper-as-advisor: proposals and verdicts are persisted and shown;
-// nothing is ever submitted to the OMS.
+// Draft / advisory: proposals and verdicts are persisted and shown;
+// nothing is ever submitted to any OMS.
 export function AdvisoryBanner() {
   return (
     <p
@@ -75,8 +75,27 @@ export function AdvisoryBanner() {
         padding: "0.6rem 1rem",
       }}
     >
-      Advisory only (L0): proposals and verdicts are shown here but never
+      Advisory only: proposals and verdicts are shown here but never
       submitted to the OMS.
+    </p>
+  );
+}
+
+// Paper simulation: approve/clip verdicts auto-execute on the paper OMS
+// (persistence-and-api.md §L0 / L1 execution semantics); no exchange orders.
+export function PaperBanner() {
+  return (
+    <p
+      style={{
+        background: "#e7f0fd",
+        border: "1px solid #0a5bd3",
+        borderRadius: "6px",
+        color: "#0a5bd3",
+        padding: "0.6rem 1rem",
+      }}
+    >
+      Paper trading: approved verdicts execute against the paper OMS
+      (simulated fills); nothing reaches a live exchange.
     </p>
   );
 }

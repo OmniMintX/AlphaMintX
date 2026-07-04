@@ -11,7 +11,10 @@ Phase 1 uses **SQLite** via **`modernc.org/sqlite`** (pure Go — no CGO, so CI
 and cross-compilation stay a plain `go build`; single-node paper trading needs
 no server DB). Postgres is the Phase 2 path; the schema ports without redesign.
 
-- One DB file for the whole control-plane; path comes from config.
+- One DB file for the whole control-plane; path comes from config. Carve-out
+  (Phase 2): backtest data — the klines cache and backtest runs/records —
+  lives in a separate `backtest.db` per `docs/specs/backtest-engine.md`; the
+  live `control.db` schema (normative DDL below) is unaffected.
 - Connection MUST set `journal_mode=WAL` and `busy_timeout` (≥ 5000 ms).
 - All money/size/price columns are TEXT decimal-as-string (ADR-0003).
 - All timestamps are TEXT, RFC 3339 UTC with `Z` suffix.
@@ -193,6 +196,23 @@ unparseable bodies, missing IDs, or a missing `tick_number` land in
     `approvals.decided_by` = its principal id, so every decision is
     attributed. Phase-2 RBAC maps this to Trader+ (strategy-lifecycle.md).
   - Agent-plane strategy tokens are valid only for their ingestion endpoints.
+- **Web deployment (same-origin):** the control-plane serves **no CORS
+  headers** by design; the dashboard is served by the Next.js server on the
+  same origin as the API path. The Next server (a) proxies `GET /api/v1/*`
+  to the control-plane via rewrites configured from
+  `CONTROLPLANE_API_BASE_URL` — baked into the build at `next build` time —
+  and (b) attaches the `OPERATOR_TOKEN` server-side in the approvals route
+  handler (existing behavior).
+  - READ-token exposure, owned explicitly: `NEXT_PUBLIC_READ_TOKEN` is
+    inlined into the public client bundle at build time; anyone who can
+    fetch the Next server's JS can extract it and read every strategy, run,
+    and trace. Accepted for Phase 1 because the READ token authorizes GETs
+    only (never POSTs — pinned above) and the dashboard is deployed to
+    operators only. Moving reads behind a server-side proxy that attaches
+    the READ token (mirroring the operator proxy) is the recorded Phase 2
+    hardening path — the rewrites infrastructure here is the mechanism it
+    would use.
+  - `NEXT_PUBLIC_API_BASE_URL` stays the explicit cross-origin escape hatch.
 - **Limits (every POST):** body > 1 MiB ⇒ 413; per-token 60 req/min ⇒ 429.
 - Pagination: `{items, total, page, limit}` (`page` 1-based, `limit` default
   20, max 100). Web validates embedded payloads with the existing zod

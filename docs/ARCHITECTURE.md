@@ -24,13 +24,18 @@ AlphaMintX/
   clientOrderId, fill reconciliation (ws primary, REST audit), orphan recovery.
 - Exchange credential storage: field-level encrypted, write-only (invariant 6).
 - Kill-switch endpoints (strategy / tenant / platform) and watchdog.
+- Backtest engine (Phase 2): historical kline replay through the identical
+  Risk Gate + paper OMS path (`docs/specs/backtest-engine.md`).
 - Billing hooks: meters LLM cost (from `model_costs`) per strategy/tenant.
 
 ### agent-plane/ (Python 3.12+, LangGraph, pydantic)
 - Tier 1: Market / News / Fundamental analysts (parallel fan-out, cheap models).
 - Tier 2: Bull vs Bear researcher debate, bounded rounds (default 2).
 - Tier 3: Trader agent synthesizes the **TradeProposal** (`contracts/proposal.schema.json`).
-- Backtest and paper strategy engine; strategy code identical across backtest/paper/live.
+- Paper/live strategy engine; strategy code identical across backtest/paper/live.
+  Backtest replay/execution is control-plane (`internal/backtest`, Phase 2);
+  agent-plane contributes the same pipeline code, run offline by the backtest
+  emitter (`docs/specs/backtest-engine.md`).
 - Untrusted external text (news/social) is wrapped as data, never as instructions.
 - `StubLLM` mode: deterministic canned responses per role for CI (no network).
 

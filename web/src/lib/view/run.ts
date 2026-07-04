@@ -102,8 +102,15 @@ export function approvalDecisionLabel(decision: {
   return approvalOutcomeLabel(decision.outcome);
 }
 
-// L0 is the effective-autonomy floor: `paper` strategies (and `draft`, which
-// has no runs yet) are advisory-only — nothing is ever submitted to the OMS.
+// Advisory-only means nothing is ever submitted to ANY OMS. That is `draft`
+// only: a `paper` strategy auto-executes approve/clip verdicts against the
+// paper OMS (persistence-and-api.md §L0 / L1 execution semantics) — L0's
+// "nothing is ever submitted" applies to LIVE venue submission.
 export function isAdvisoryOnly(state: LifecycleState): boolean {
-  return state === "draft" || state === "paper";
+  return state === "draft";
+}
+
+// Paper simulation: verdicts execute on the paper OMS; no exchange orders.
+export function isPaperSimulated(state: LifecycleState): boolean {
+  return state === "paper";
 }
