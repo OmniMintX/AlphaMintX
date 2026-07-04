@@ -4,6 +4,12 @@ Tier 1 runs the market/news/fundamental analysts in parallel; Tier 2 is a bull v
 bear debate bounded to ``max_debate_rounds`` (default 2) closed by a judge; Tier 3
 is the trader node that emits the TradeProposal. External text (news) is always
 wrapped as untrusted data in prompts, never interpolated as instructions.
+
+Failure taxonomy (docs/specs/llm-routing-and-budget.md §5): an unavailable analyst
+degrades to an explicit marker and the pipeline continues; bull/bear/judge failures
+cut the debate short; trader failure, budget exhaustion (402/local pre-check), rate
+limiting after retries, non-retryable 4xx, and twice-malformed output all resolve to
+a deterministic forced-hold proposal — never a crash, never a skipped record.
 """
 
 from __future__ import annotations
@@ -27,9 +33,16 @@ from alphamintx_agent_plane.contract.models import (
     Entry,
     EntryType,
     ModelCost,
+    Signal,
     TimeInForce,
     TradeProposal,
     rfc3339_utc,
+)
+from alphamintx_agent_plane.llm.costs import aggregate_overflow
+from alphamintx_agent_plane.llm.errors import (
+    LLMError,
+    LLMUnavailableError,
+    MalformedLLMOutputError,
 )
 from alphamintx_agent_plane.llm.stub import (
     ROLE_BEAR_RESEARCHER,
@@ -93,7 +106,10 @@ class PipelineState(TypedDict):
     analyst_summaries: Annotated[dict[str, AnalystSummary], _merge_summaries]
     debate_rounds: Annotated[list[DebateRound], operator.add]
     debate_summary: str
+    debate_degraded: bool
     model_costs: Annotated[list[ModelCost], operator.add]
+    forced_hold_reasons: Annotated[list[str], operator.add]
+    estimated_cost_nodes: Annotated[list[str], operator.add]
     proposal: TradeProposal | None
 
 
@@ -115,17 +131,75 @@ def _cost(role: str, response: LLMResponse) -> ModelCost:
     )
 
 
-def _analyst_call(
-    llm: LLMClient, role: str, symbol: str, prompt: str
-) -> tuple[AnalystSummary, ModelCost]:
-    response = llm.complete(role=role, symbol=symbol, prompt=prompt)
-    summary = AnalystSummary.model_validate(json.loads(response.text))
-    return summary, _cost(role, response)
+def _merge_unique(left: list[str], right: list[str]) -> list[str]:
+    return list(dict.fromkeys([*left, *right]))
 
 
-def _parse_argument(response: LLMResponse) -> tuple[str, float]:
-    payload = json.loads(response.text)
+def _unavailable_summary(role: str) -> AnalystSummary:
+    """Explicit degradation marker for a failed analyst (spec §5)."""
+    return AnalystSummary(
+        signal=Signal.NEUTRAL, confidence=0.0, summary=f"unavailable: {role} LLM call failed"
+    )
+
+
+def _forced_hold_reason(exc: LLMError, strategy_id: str, clock: Clock) -> str:
+    utc_date = clock().astimezone(UTC).date().isoformat()
+    return f"Forced hold ({exc.marker}): {exc}. strategy_id={strategy_id} utc_date={utc_date}"
+
+
+def _parse_or_reprompt[T](
+    llm: LLMClient, role: str, symbol: str, prompt: str, parse: Callable[[str], T]
+) -> tuple[T, list[ModelCost], list[str]]:
+    """Call the LLM and parse its output with exactly ONE reprompt on malformed
+    output (spec §5). Transport errors propagate carrying every cost entry spent
+    so far; a second parse failure raises ``MalformedLLMOutputError``."""
+    costs: list[ModelCost] = []
+    estimated: list[str] = []
+
+    def call(current_prompt: str) -> str:
+        try:
+            response = llm.complete(role=role, symbol=symbol, prompt=current_prompt)
+        except LLMError as exc:
+            exc.attempt_costs = [*costs, *exc.attempt_costs]
+            exc.estimated_cost_nodes = _merge_unique(estimated, exc.estimated_cost_nodes)
+            raise
+        costs.extend([*response.extra_costs, _cost(role, response)])
+        for node in response.estimated_cost_nodes:
+            if node not in estimated:
+                estimated.append(node)
+        return response.text
+
+    text = call(prompt)
+    try:
+        return parse(text), costs, estimated
+    except (ValueError, KeyError, TypeError) as first_error:
+        reprompt = (
+            f"{prompt}\n"
+            f"Your previous response was invalid: {first_error}\n"
+            "Respond again with a single valid JSON object and nothing else."
+        )
+        text = call(reprompt)
+        try:
+            return parse(text), costs, estimated
+        except (ValueError, KeyError, TypeError) as second_error:
+            raise MalformedLLMOutputError(
+                f"{role} output failed validation after one reprompt: {second_error}",
+                attempt_costs=costs,
+                estimated_cost_nodes=estimated,
+            ) from second_error
+
+
+def _parse_summary(text: str) -> AnalystSummary:
+    return AnalystSummary.model_validate(json.loads(text))
+
+
+def _parse_argument(text: str) -> tuple[str, float]:
+    payload = json.loads(text)
     return str(payload["argument"]), float(payload["score"])
+
+
+def _parse_judge_summary(text: str) -> str:
+    return str(json.loads(text)["summary"])
 
 
 def _debate_context(state: PipelineState) -> str:
@@ -140,6 +214,71 @@ def _debate_context(state: PipelineState) -> str:
     return "\n".join(lines)
 
 
+def _filled_summaries(state: PipelineState) -> AnalystSummaries:
+    """Analyst summaries with unavailable markers for any analyst that never ran."""
+    summaries = state["analyst_summaries"]
+    return AnalystSummaries(
+        market=summaries.get("market", _unavailable_summary(ROLE_MARKET_ANALYST)),
+        news=summaries.get("news", _unavailable_summary(ROLE_NEWS_ANALYST)),
+        fundamental=summaries.get("fundamental", _unavailable_summary(ROLE_FUNDAMENTAL_ANALYST)),
+    )
+
+
+def _proposal_from_trader_output(
+    state: PipelineState, text: str, id_factory: IdFactory, clock: Clock
+) -> TradeProposal:
+    """Build the TradeProposal from the trader's JSON output (``model_costs`` is
+    filled in afterwards); any parse/validation error here triggers the single
+    reprompt in ``_parse_or_reprompt``."""
+    payload = json.loads(text)
+    confidence = float(payload["confidence"])
+    action = Action(payload["action"])
+    reasoning = str(payload["reasoning"])
+    if confidence < LOW_CONFIDENCE_THRESHOLD and action is not Action.HOLD:
+        action = Action.HOLD
+        reasoning = (
+            f"Forced hold: trader confidence {confidence} is below the "
+            f"{LOW_CONFIDENCE_THRESHOLD} action threshold. Original rationale: {reasoning}"
+        )
+    if action in (Action.OPEN_LONG, Action.OPEN_SHORT):
+        entry = Entry(
+            type=EntryType(payload["entry_type"]),
+            limit_price=payload.get("limit_price"),
+        )
+        size_quote = payload["size_quote"]
+        stop_loss = payload["stop_loss"]
+        take_profit = payload.get("take_profit")
+    elif action is Action.CLOSE:
+        entry = Entry(type=EntryType.MARKET)
+        size_quote = payload.get("size_quote", "0")
+        stop_loss = None
+        take_profit = None
+    else:
+        entry = Entry(type=EntryType.MARKET)
+        size_quote = "0"
+        stop_loss = None
+        take_profit = None
+    return TradeProposal(
+        schema_version=SCHEMA_VERSION,
+        proposal_id=str(id_factory("proposal_id")),
+        strategy_id=state["strategy_id"],
+        agent_trace_id=state["agent_trace_id"],
+        created_at=rfc3339_utc(clock()),
+        symbol=state["symbol"],
+        action=action,
+        size_quote=size_quote,
+        entry=entry,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        time_in_force=TimeInForce(payload["time_in_force"]),
+        confidence=confidence,
+        reasoning=reasoning,
+        analyst_summaries=_filled_summaries(state),
+        debate_summary=state["debate_summary"],
+        model_costs=[],
+    )
+
+
 def build_pipeline(
     llm: LLMClient,
     *,
@@ -152,118 +291,12 @@ def build_pipeline(
     E2E emitter); the defaults keep production behavior (uuid4 / now(UTC)).
     """
 
-    def market_analyst(state: PipelineState) -> dict[str, Any]:
-        prompt = (
-            f"Assess technical conditions for {state['symbol']}.\n"
-            f"Market data:\n{state['market_data']}"
-        )
-        summary, cost = _analyst_call(llm, ROLE_MARKET_ANALYST, state["symbol"], prompt)
-        return {"analyst_summaries": {"market": summary}, "model_costs": [cost]}
-
-    def news_analyst(state: PipelineState) -> dict[str, Any]:
-        prompt = (
-            f"Assess news sentiment for {state['symbol']}.\n"
-            f"{wrap_untrusted('news_feed', state['news'])}"
-        )
-        summary, cost = _analyst_call(llm, ROLE_NEWS_ANALYST, state["symbol"], prompt)
-        return {"analyst_summaries": {"news": summary}, "model_costs": [cost]}
-
-    def fundamental_analyst(state: PipelineState) -> dict[str, Any]:
-        prompt = (
-            f"Assess fundamentals for {state['symbol']}.\n"
-            f"Fundamental data:\n{state['fundamentals']}"
-        )
-        summary, cost = _analyst_call(llm, ROLE_FUNDAMENTAL_ANALYST, state["symbol"], prompt)
-        return {"analyst_summaries": {"fundamental": summary}, "model_costs": [cost]}
-
-    def debate(state: PipelineState) -> dict[str, Any]:
-        round_index = len(state["debate_rounds"])
-        context = _debate_context(state)
-        bull_response = llm.complete(
-            role=ROLE_BULL_RESEARCHER,
-            symbol=state["symbol"],
-            prompt=f"Debate round {round_index + 1}. Argue the bull case.\n{context}",
-        )
-        bull_argument, bull_score = _parse_argument(bull_response)
-        bear_response = llm.complete(
-            role=ROLE_BEAR_RESEARCHER,
-            symbol=state["symbol"],
-            prompt=(
-                f"Debate round {round_index + 1}. Argue the bear case.\n"
-                f"{context}\nBull just argued: {bull_argument}"
-            ),
-        )
-        bear_argument, bear_score = _parse_argument(bear_response)
-        completed = DebateRound(
-            round_index=round_index,
-            bull_argument=bull_argument,
-            bull_score=bull_score,
-            bear_argument=bear_argument,
-            bear_score=bear_score,
-        )
-        costs = [
-            _cost(ROLE_BULL_RESEARCHER, bull_response),
-            _cost(ROLE_BEAR_RESEARCHER, bear_response),
-        ]
-        return {"debate_rounds": [completed], "model_costs": costs}
-
-    def next_after_debate(state: PipelineState) -> str:
-        if len(state["debate_rounds"]) < state["max_debate_rounds"]:
-            return "debate"
-        return "judge"
-
-    def judge(state: PipelineState) -> dict[str, Any]:
-        response = llm.complete(
-            role=ROLE_DEBATE_JUDGE,
-            symbol=state["symbol"],
-            prompt=f"Summarize the debate and name the stronger case.\n{_debate_context(state)}",
-        )
-        payload = json.loads(response.text)
-        return {
-            "debate_summary": str(payload["summary"]),
-            "model_costs": [_cost(ROLE_DEBATE_JUDGE, response)],
-        }
-
-    def trader(state: PipelineState) -> dict[str, Any]:
-        response = llm.complete(
-            role=ROLE_TRADER,
-            symbol=state["symbol"],
-            prompt=(
-                f"Synthesize a trade decision for {state['symbol']}.\n"
-                f"{_debate_context(state)}\n"
-                f"Debate judge summary: {state['debate_summary']}"
-            ),
-        )
-        trader_cost = _cost(ROLE_TRADER, response)
-        payload = json.loads(response.text)
-        confidence = float(payload["confidence"])
-        action = Action(payload["action"])
-        reasoning = str(payload["reasoning"])
-        if confidence < LOW_CONFIDENCE_THRESHOLD and action is not Action.HOLD:
-            action = Action.HOLD
-            reasoning = (
-                f"Forced hold: trader confidence {confidence} is below the "
-                f"{LOW_CONFIDENCE_THRESHOLD} action threshold. Original rationale: {reasoning}"
-            )
-        if action in (Action.OPEN_LONG, Action.OPEN_SHORT):
-            entry = Entry(
-                type=EntryType(payload["entry_type"]),
-                limit_price=payload.get("limit_price"),
-            )
-            size_quote = payload["size_quote"]
-            stop_loss = payload["stop_loss"]
-            take_profit = payload.get("take_profit")
-        elif action is Action.CLOSE:
-            entry = Entry(type=EntryType.MARKET)
-            size_quote = payload.get("size_quote", "0")
-            stop_loss = None
-            take_profit = None
-        else:
-            entry = Entry(type=EntryType.MARKET)
-            size_quote = "0"
-            stop_loss = None
-            take_profit = None
-        summaries = state["analyst_summaries"]
+    def forced_hold_update(
+        state: PipelineState, reason: str, extra_costs: list[ModelCost], estimated: list[str]
+    ) -> dict[str, Any]:
+        """Deterministic forced-hold proposal (spec §4-5): never a crash, never a
+        skipped record; carries the ``model_costs`` accumulated up to the cutoff
+        (possibly empty when the cutoff happened before any LLM call)."""
         proposal = TradeProposal(
             schema_version=SCHEMA_VERSION,
             proposal_id=str(id_factory("proposal_id")),
@@ -271,23 +304,234 @@ def build_pipeline(
             agent_trace_id=state["agent_trace_id"],
             created_at=rfc3339_utc(clock()),
             symbol=state["symbol"],
-            action=action,
-            size_quote=size_quote,
-            entry=entry,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            time_in_force=TimeInForce(payload["time_in_force"]),
-            confidence=confidence,
-            reasoning=reasoning,
-            analyst_summaries=AnalystSummaries(
-                market=summaries["market"],
-                news=summaries["news"],
-                fundamental=summaries["fundamental"],
-            ),
-            debate_summary=state["debate_summary"],
-            model_costs=[*state["model_costs"], trader_cost],
+            action=Action.HOLD,
+            size_quote="0",
+            entry=Entry(type=EntryType.MARKET),
+            time_in_force=TimeInForce.GTC,
+            confidence=0.0,
+            # Bounded to the contract's reasoning cap (max_length 8000).
+            reasoning=reason[:8000],
+            analyst_summaries=_filled_summaries(state),
+            debate_summary=state["debate_summary"] or "unavailable: debate skipped (forced hold)",
+            model_costs=aggregate_overflow([*state["model_costs"], *extra_costs]),
         )
-        return {"proposal": proposal, "model_costs": [trader_cost]}
+        return {
+            "proposal": proposal,
+            "model_costs": extra_costs,
+            "estimated_cost_nodes": estimated,
+        }
+
+    def analyst_node(
+        role: str, summary_key: str, prompt_builder: Callable[[PipelineState], str]
+    ) -> Callable[[PipelineState], dict[str, Any]]:
+        def node(state: PipelineState) -> dict[str, Any]:
+            try:
+                summary, costs, estimated = _parse_or_reprompt(
+                    llm, role, state["symbol"], prompt_builder(state), _parse_summary
+                )
+            except LLMUnavailableError as exc:
+                # Timeout/5xx after retries: degrade to the marker, keep going.
+                return {
+                    "analyst_summaries": {summary_key: _unavailable_summary(role)},
+                    "model_costs": exc.attempt_costs,
+                    "estimated_cost_nodes": exc.estimated_cost_nodes,
+                }
+            except LLMError as exc:
+                # Budget/rate-limit/4xx/malformed: flag the forced hold for trader.
+                return {
+                    "analyst_summaries": {summary_key: _unavailable_summary(role)},
+                    "forced_hold_reasons": [
+                        _forced_hold_reason(exc, state["strategy_id"], clock)
+                    ],
+                    "model_costs": exc.attempt_costs,
+                    "estimated_cost_nodes": exc.estimated_cost_nodes,
+                }
+            return {
+                "analyst_summaries": {summary_key: summary},
+                "model_costs": costs,
+                "estimated_cost_nodes": estimated,
+            }
+
+        return node
+
+    market_analyst_impl = analyst_node(
+        ROLE_MARKET_ANALYST,
+        "market",
+        lambda state: (
+            f"Assess technical conditions for {state['symbol']}.\n"
+            f"Market data:\n{state['market_data']}"
+        ),
+    )
+    news_analyst_impl = analyst_node(
+        ROLE_NEWS_ANALYST,
+        "news",
+        lambda state: (
+            f"Assess news sentiment for {state['symbol']}.\n"
+            f"{wrap_untrusted('news_feed', state['news'])}"
+        ),
+    )
+    fundamental_analyst_impl = analyst_node(
+        ROLE_FUNDAMENTAL_ANALYST,
+        "fundamental",
+        lambda state: (
+            f"Assess fundamentals for {state['symbol']}.\n"
+            f"Fundamental data:\n{state['fundamentals']}"
+        ),
+    )
+
+    def market_analyst(state: PipelineState) -> dict[str, Any]:
+        return market_analyst_impl(state)
+
+    def news_analyst(state: PipelineState) -> dict[str, Any]:
+        return news_analyst_impl(state)
+
+    def fundamental_analyst(state: PipelineState) -> dict[str, Any]:
+        return fundamental_analyst_impl(state)
+
+    def debate(state: PipelineState) -> dict[str, Any]:
+        if state["forced_hold_reasons"] or state["debate_degraded"]:
+            return {}
+        round_index = len(state["debate_rounds"])
+        context = _debate_context(state)
+        costs: list[ModelCost] = []
+        estimated: list[str] = []
+
+        def cut_short(role: str, exc: LLMUnavailableError) -> dict[str, Any]:
+            return {
+                "debate_degraded": True,
+                "debate_summary": f"Debate cut short: unavailable: {role} LLM call failed.",
+                "model_costs": [*costs, *exc.attempt_costs],
+                "estimated_cost_nodes": _merge_unique(estimated, exc.estimated_cost_nodes),
+            }
+
+        def hold(exc: LLMError) -> dict[str, Any]:
+            return {
+                "forced_hold_reasons": [_forced_hold_reason(exc, state["strategy_id"], clock)],
+                "model_costs": [*costs, *exc.attempt_costs],
+                "estimated_cost_nodes": _merge_unique(estimated, exc.estimated_cost_nodes),
+            }
+
+        try:
+            (bull_argument, bull_score), bull_costs, bull_estimated = _parse_or_reprompt(
+                llm,
+                ROLE_BULL_RESEARCHER,
+                state["symbol"],
+                f"Debate round {round_index + 1}. Argue the bull case.\n{context}",
+                _parse_argument,
+            )
+        except LLMUnavailableError as exc:
+            return cut_short(ROLE_BULL_RESEARCHER, exc)
+        except LLMError as exc:
+            return hold(exc)
+        costs.extend(bull_costs)
+        estimated = _merge_unique(estimated, bull_estimated)
+        try:
+            (bear_argument, bear_score), bear_costs, bear_estimated = _parse_or_reprompt(
+                llm,
+                ROLE_BEAR_RESEARCHER,
+                state["symbol"],
+                (
+                    f"Debate round {round_index + 1}. Argue the bear case.\n"
+                    f"{context}\nBull just argued: {bull_argument}"
+                ),
+                _parse_argument,
+            )
+        except LLMUnavailableError as exc:
+            return cut_short(ROLE_BEAR_RESEARCHER, exc)
+        except LLMError as exc:
+            return hold(exc)
+        costs.extend(bear_costs)
+        estimated = _merge_unique(estimated, bear_estimated)
+        completed = DebateRound(
+            round_index=round_index,
+            bull_argument=bull_argument,
+            bull_score=bull_score,
+            bear_argument=bear_argument,
+            bear_score=bear_score,
+        )
+        return {
+            "debate_rounds": [completed],
+            "model_costs": costs,
+            "estimated_cost_nodes": estimated,
+        }
+
+    def next_after_debate(state: PipelineState) -> str:
+        if state["forced_hold_reasons"] or state["debate_degraded"]:
+            return "judge"
+        if len(state["debate_rounds"]) < state["max_debate_rounds"]:
+            return "debate"
+        return "judge"
+
+    def judge(state: PipelineState) -> dict[str, Any]:
+        if state["forced_hold_reasons"] or state["debate_degraded"]:
+            return {}
+        try:
+            summary, costs, estimated = _parse_or_reprompt(
+                llm,
+                ROLE_DEBATE_JUDGE,
+                state["symbol"],
+                f"Summarize the debate and name the stronger case.\n{_debate_context(state)}",
+                _parse_judge_summary,
+            )
+        except LLMUnavailableError as exc:
+            return {
+                "debate_degraded": True,
+                "debate_summary": (
+                    f"Debate cut short: unavailable: {ROLE_DEBATE_JUDGE} LLM call failed."
+                ),
+                "model_costs": exc.attempt_costs,
+                "estimated_cost_nodes": exc.estimated_cost_nodes,
+            }
+        except LLMError as exc:
+            return {
+                "forced_hold_reasons": [_forced_hold_reason(exc, state["strategy_id"], clock)],
+                "model_costs": exc.attempt_costs,
+                "estimated_cost_nodes": exc.estimated_cost_nodes,
+            }
+        return {
+            "debate_summary": summary,
+            "model_costs": costs,
+            "estimated_cost_nodes": estimated,
+        }
+
+    def trader(state: PipelineState) -> dict[str, Any]:
+        if state["forced_hold_reasons"]:
+            # Join EVERY distinct reason (the reducer order is deterministic)
+            # so the audit trail keeps e.g. a BUDGET_EXHAUSTED analyst AND a
+            # RATE_LIMITED judge, not just whichever flagged first.
+            reasons = "; ".join(dict.fromkeys(state["forced_hold_reasons"]))
+            return forced_hold_update(state, reasons, [], [])
+
+        def parse(text: str) -> TradeProposal:
+            return _proposal_from_trader_output(state, text, id_factory, clock)
+
+        try:
+            proposal, costs, estimated = _parse_or_reprompt(
+                llm,
+                ROLE_TRADER,
+                state["symbol"],
+                (
+                    f"Synthesize a trade decision for {state['symbol']}.\n"
+                    f"{_debate_context(state)}\n"
+                    f"Debate judge summary: {state['debate_summary']}"
+                ),
+                parse,
+            )
+        except LLMError as exc:
+            return forced_hold_update(
+                state,
+                _forced_hold_reason(exc, state["strategy_id"], clock),
+                exc.attempt_costs,
+                exc.estimated_cost_nodes,
+            )
+        proposal = proposal.model_copy(
+            update={"model_costs": aggregate_overflow([*state["model_costs"], *costs])}
+        )
+        return {
+            "proposal": proposal,
+            "model_costs": costs,
+            "estimated_cost_nodes": estimated,
+        }
 
     graph = StateGraph(PipelineState)
     graph.add_node("market_analyst", market_analyst)
@@ -329,7 +573,10 @@ def run_pipeline(
         "analyst_summaries": {},
         "debate_rounds": [],
         "debate_summary": "",
+        "debate_degraded": False,
         "model_costs": [],
+        "forced_hold_reasons": [],
+        "estimated_cost_nodes": [],
         "proposal": None,
     }
     return cast(PipelineState, graph.invoke(initial))

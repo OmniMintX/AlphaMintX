@@ -123,9 +123,13 @@ only if all reject-checks pass.
 
 `hold` proposals skip 3–11: they produce an `approve` verdict and no order.
 
-**Re-evaluation on approval:** when a human approves an L1/escalated proposal,
-the gate MUST re-run steps 1–11 against current state before OMS submission;
-a failure is recorded on the approval record as a reject.
+**Preflight on approval:** when a human approves an L1/escalated proposal,
+the control plane MUST run the approval **preflight** before OMS submission
+(kill-epoch unchanged, strategy state, mark freshness by mark AGE, daily-loss
+limit — `docs/specs/persistence-and-api.md`); it does NOT re-run steps 1–11
+(one verdict per proposal; step 2 staleness applies at gate evaluation only).
+A preflight failure is recorded on the approval record as
+`outcome=approved_but_blocked` with reasons; no order.
 
 ## Definitions (normative)
 

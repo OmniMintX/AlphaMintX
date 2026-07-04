@@ -3,6 +3,12 @@
   "tick_seconds": 60,
   "seed": 42,
   "quote_currency": "USDT",
+  "fill_model": {
+    "market_slippage_bps": "5",
+    "taker_fee_bps": "5",
+    "maker_fee_bps": "2"
+  },
+  "max_age_seconds": 90,
   "strategies": [
     {
       "strategy_id": "e2e00000-0000-4000-8000-000000000001",

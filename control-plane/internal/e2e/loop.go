@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
 )
@@ -98,18 +100,35 @@ type strategyState struct {
 }
 
 // Run replays the proposal envelopes against a fresh gate and paper OMS,
-// writing records to out. Proposal i (0-based line index) is evaluated at
-// clock_start + i*tick_seconds + 1s — never at wall time. The stale scenario
-// relies on the index-based clock: its created_at lags the loop clock.
+// writing records to out. Runspec marks stream from a marketdata.ReplayFeed
+// into a Store under the index-based clock (tick i is timestamped
+// clock_start + i*tick_seconds); proposal i (0-based line index) is
+// evaluated 1s after tick i — never at wall time — with its mark resolved
+// from the Store under the runspec max_age_seconds staleness bound. The
+// stale scenario relies on the index-based clock: its created_at lags the
+// loop clock.
 func Run(spec *RunSpec, proposals io.Reader, out io.Writer) ([]Outcome, error) {
 	marks, err := parseMarks(spec)
 	if err != nil {
 		return nil, err
 	}
+	lines, err := readProposalLines(proposals)
+	if err != nil {
+		return nil, err
+	}
 	limits := runLimits()
 	gate := riskgate.NewService()
-	oms := paper.New()
-
+	// The fill model v2 and staleness bound are REQUIRED runspec values
+	// (docs/specs/market-data.md §Determinism: no hidden defaults);
+	// paper.New and NewStore reject missing or invalid ones.
+	oms, err := paper.New(spec.FillModel)
+	if err != nil {
+		return nil, fmt.Errorf("runspec fill_model: %w", err)
+	}
+	store, err := marketdata.NewStore(time.Duration(spec.MaxAgeSeconds) * time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("runspec max_age_seconds: %w", err)
+	}
 	tokens := make(map[string]string, len(spec.Strategies))
 	states := make(map[string]*strategyState, len(spec.Strategies))
 	for _, s := range spec.Strategies {
@@ -124,20 +143,25 @@ func Run(spec *RunSpec, proposals io.Reader, out io.Writer) ([]Outcome, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pump, err := startReplay(ctx, spec, marks, store, oms, states, out, len(lines))
+	if err != nil {
+		return nil, err
+	}
+
 	got := make(map[string]OutcomeDetail, len(spec.Strategies))
-	scanner := bufio.NewScanner(proposals)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	index := 0
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	for index, line := range lines {
 		var env Envelope
 		if err := json.Unmarshal(line, &env); err != nil {
 			return nil, fmt.Errorf("proposals line %d: %w", index+1, err)
 		}
 		p := &env.Proposal
+
+		now := spec.ClockStart.Time().Add(time.Duration(index*spec.TickSeconds)*time.Second + time.Second)
+		if err := pump.advance(now); err != nil {
+			return nil, err
+		}
 
 		// Ingestion auth: the envelope token must be the token issued to
 		// proposal.strategy_id. Mismatch or unknown strategy is rejected
@@ -152,19 +176,16 @@ func Run(spec *RunSpec, proposals io.Reader, out io.Writer) ([]Outcome, error) {
 				return nil, err
 			}
 			got[p.StrategyID] = OutcomeDetail{Outcome: "rejected_submission", PrimaryReason: ReasonStrategyScopeMismatch}
-			index++
 			continue
 		}
 
-		now := spec.ClockStart.Time().Add(time.Duration(index*spec.TickSeconds)*time.Second + time.Second)
-		mark := markAt(marks, p.Symbol, index)
+		// Stale or missing mark ⇒ Mark returns zero: the gate's zero-price
+		// guard rejects market-entry opens MARK_PRICE_UNAVAILABLE
+		// (fail-closed; the Store never leaks a stale price).
+		mark, _, _ := store.Mark(p.Symbol, now)
 		if err := evaluateOne(gate, oms, limits, states[p.StrategyID], p, mark, now, out, got); err != nil {
 			return nil, err
 		}
-		index++
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	outcomes := make([]Outcome, 0, len(spec.Strategies))
@@ -177,4 +198,22 @@ func Run(spec *RunSpec, proposals io.Reader, out io.Writer) ([]Outcome, error) {
 		})
 	}
 	return outcomes, nil
+}
+
+// readProposalLines reads the non-empty proposals.jsonl lines up front: the
+// ReplayFeed needs the tick count (one tick index per proposal line) before
+// the loop starts.
+func readProposalLines(r io.Reader) ([][]byte, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	var lines [][]byte
+	for scanner.Scan() {
+		if line := scanner.Bytes(); len(line) > 0 {
+			lines = append(lines, append([]byte(nil), line...))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
 }

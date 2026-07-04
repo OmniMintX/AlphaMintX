@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
+
+from alphamintx_agent_plane.contract.models import ModelCost
 
 ROLE_MARKET_ANALYST = "market_analyst"
 ROLE_NEWS_ANALYST = "news_analyst"
@@ -20,6 +22,16 @@ ROLE_BULL_RESEARCHER = "bull_researcher"
 ROLE_BEAR_RESEARCHER = "bear_researcher"
 ROLE_DEBATE_JUDGE = "debate_judge"
 ROLE_TRADER = "trader"
+
+PIPELINE_ROLES: tuple[str, ...] = (
+    ROLE_MARKET_ANALYST,
+    ROLE_NEWS_ANALYST,
+    ROLE_FUNDAMENTAL_ANALYST,
+    ROLE_BULL_RESEARCHER,
+    ROLE_BEAR_RESEARCHER,
+    ROLE_DEBATE_JUDGE,
+    ROLE_TRADER,
+)
 
 _COST_PER_INPUT_TOKEN = Decimal("0.000001")
 _COST_PER_OUTPUT_TOKEN = Decimal("0.000002")
@@ -32,6 +44,11 @@ class LLMResponse:
     input_tokens: int
     output_tokens: int
     cost_usd: Decimal
+    # Cost entries spent by failed attempts within the same call (e.g. estimated
+    # entries for timed-out attempts before a successful retry), and the nodes
+    # whose entries are estimates (llm-routing-and-budget.md §3).
+    extra_costs: tuple[ModelCost, ...] = field(default=())
+    estimated_cost_nodes: tuple[str, ...] = field(default=())
 
 
 class LLMClient(Protocol):

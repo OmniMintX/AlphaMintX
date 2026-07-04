@@ -24,7 +24,7 @@ semantics and rules beyond JSON Schema. Both planes MUST enforce both.
 | `reasoning` | Trader agent's natural-language rationale, ≤8000 chars. Shown in reasoning viewer; part of the immutable record. |
 | `analyst_summaries` | Exactly `market`, `news`, `fundamental`, each `{signal: bullish\|bearish\|neutral, confidence: [0,1], summary}`. Each `summary` ≤2000 chars. |
 | `debate_summary` | Judge's summary of the bull/bear debate, ≤4000 chars. |
-| `model_costs` | Per-node LLM cost: `{node, model, input_tokens, output_tokens, cost_usd}` (`node`/`model` ≤64 chars, ≤32 items). Source for billing/metering. MAY be empty only in stub/test mode. |
+| `model_costs` | Per-node LLM cost: `{node, model, input_tokens, output_tokens, cost_usd}` (`node`/`model` ≤64 chars, ≤32 items). Source for billing/metering. MAY be empty only in stub/test mode, or when a live forced hold occurred before any LLM call (the `reasoning` MUST state this; `docs/specs/llm-routing-and-budget.md`). |
 
 ## RiskVerdict — field semantics
 
@@ -48,13 +48,17 @@ human sign-off), the outcome is recorded as a separate append-only follow-up
 record referencing the verdict:
 
 - **ApprovalDecision** (shape, briefly): `{approval_id (uuid), verdict_id (uuid),
-  proposal_id (uuid), outcome: approved | rejected | timeout, decided_by
-  (user id, or "timeout"), decided_at (RFC 3339 UTC)}`.
+  proposal_id (uuid), outcome: approved | approved_but_blocked | rejected |
+  timeout, decided_by (user id, or "timeout"), decided_at (RFC 3339 UTC)}`.
+  `approved_but_blocked` = human approved but the approval preflight failed at
+  decision time (`docs/specs/persistence-and-api.md`); no order.
 - No decision within `l1_approval_timeout` ⇒ an ApprovalDecision with
   `outcome=timeout` is persisted; the proposal is not executed. `APPROVAL_TIMEOUT`
   is an ApprovalDecision outcome, never a verdict reason.
 - The OMS submits an order only for `approve`/`clip` verdicts, or for `escalate`
-  verdicts that have an ApprovalDecision with `outcome=approved`.
+  verdicts that have an ApprovalDecision with `outcome=approved`; at L1,
+  `approve`/`clip` verdicts likewise require an `outcome=approved`
+  ApprovalDecision (`docs/specs/persistence-and-api.md`).
 
 ## Decimal-as-string rationale (ADR-0003)
 
@@ -162,9 +166,9 @@ Contract tests in Go and Python MUST both consume these files:
 The following review findings concern this contract and are deliberately
 deferred (recorded here so the gap is chosen, not accidental):
 
-- **MS-17 / SS-15** — re-running the gate at L1/L2 approval time (staleness and
-  limits re-validation before OMS submission). Design noted above
-  (ApprovalDecision); enforcement lands with the Phase-1 L1 UI.
+- **MS-17 / SS-15** — approval-time re-validation before OMS submission: now
+  specified as the approval **preflight** (`docs/specs/persistence-and-api.md`),
+  not a gate re-run; enforcement lands with the Phase-1 L1 UI.
 - **MS-18** — `max_order_age` for resting GTC entry orders (RiskLimits field,
   Phase 1).
 - **MS-32** — take-profit emulation where the venue lacks native TP/OCO order

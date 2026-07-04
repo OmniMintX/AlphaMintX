@@ -33,6 +33,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <a href="/" style={{ color: "#0a5bd3", textDecoration: "none" }}>
               Dashboard
             </a>
+            <a href="/strategies" style={{ color: "#0a5bd3", textDecoration: "none" }}>
+              Strategies
+            </a>
             <a href="/reasoning" style={{ color: "#0a5bd3", textDecoration: "none" }}>
               Reasoning viewer
             </a>

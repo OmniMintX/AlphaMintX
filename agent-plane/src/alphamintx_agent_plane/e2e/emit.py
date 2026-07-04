@@ -25,6 +25,7 @@ from alphamintx_agent_plane.contract.models import (
     Action,
     AnalystSummaries,
     AnalystSummary,
+    DecimalStr,
     Entry,
     EntryType,
     Signal,
@@ -59,6 +60,16 @@ class RunSpecStrategy(BaseModel):
     scenario: str = Field(min_length=1)
 
 
+class RunSpecFillModel(BaseModel):
+    """Fill model params (owned by the Go paper OMS; mirrored for strictness)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    market_slippage_bps: DecimalStr
+    taker_fee_bps: DecimalStr
+    maker_fee_bps: DecimalStr
+
+
 class RunSpec(BaseModel):
     """Strict mirror of e2e/runspec.json (owned by the Go builder)."""
 
@@ -68,6 +79,8 @@ class RunSpec(BaseModel):
     tick_seconds: int = Field(gt=0)
     seed: int
     quote_currency: str = Field(min_length=1)
+    fill_model: RunSpecFillModel
+    max_age_seconds: int = Field(gt=0)
     strategies: list[RunSpecStrategy]
     marks: dict[str, list[str]]
 

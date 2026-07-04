@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alphamintx.dev/contracts/agent_trace.schema.json",
+  "title": "AgentTrace",
+  "description": "AgentTrace v1. The trace envelope agent-plane POSTs to control-plane for persistence. Normative prose: docs/specs/persistence-and-api.md (Trace ingestion).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "strategy_id",
+    "run_id",
+    "tick_number",
+    "started_at",
+    "completed_at",
+    "analyst_summaries",
+    "debate_rounds",
+    "debate_summary",
+    "proposal_id",
+    "model_costs",
+    "budget_state"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "strategy_id": { "$ref": "#/$defs/uuid" },
+    "run_id": {
+      "$ref": "#/$defs/uuid",
+      "description": "UUID == the proposal's agent_trace_id. UNIQUE per trace."
+    },
+    "tick_number": { "type": "integer", "minimum": 0 },
+    "started_at": { "$ref": "#/$defs/utc_timestamp" },
+    "completed_at": { "$ref": "#/$defs/utc_timestamp" },
+    "analyst_summaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["market", "news", "fundamental"],
+      "properties": {
+        "market": { "$ref": "#/$defs/analyst_summary" },
+        "news": { "$ref": "#/$defs/analyst_summary" },
+        "fundamental": { "$ref": "#/$defs/analyst_summary" }
+      }
+    },
+    "debate_rounds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/debate_round" },
+      "description": "One entry per completed debate round; length is bounded by the strategy's max_debate_rounds config (beyond-schema)."
+    },
+    "debate_summary": { "type": "string", "maxLength": 4000 },
+    "transcripts": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "OPTIONAL full LLM transcripts keyed by pipeline node; \u2264 256 KiB serialized (beyond-schema)."
+    },
+    "proposal_id": {
+      "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }],
+      "description": "UUID of the emitted proposal; null ONLY when the proposal POST itself failed after retries (llm-routing \u00a75)."
+    },
+    "model_costs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/model_cost" }
+    },
+    "estimated_cost_nodes": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 64 },
+      "description": "Nodes whose model_costs entries carry estimated token counts (timeouts/aborts, llm-routing \u00a73)."
+    },
+    "budget_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["utc_date", "tokens_used", "cost_usd_used"],
+      "properties": {
+        "utc_date": { "$ref": "#/$defs/utc_date" },
+        "tokens_used": { "type": "integer", "minimum": 0 },
+        "cost_usd_used": { "$ref": "#/$defs/decimal" }
+      },
+      "description": "Informational only; never writes the token_budget_ledger."
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+      "maxLength": 34
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "maxLength": 35
+    },
+    "utc_date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "maxLength": 10
+    },
+    "analyst_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signal", "confidence", "summary"],
+      "properties": {
+        "signal": { "enum": ["bullish", "bearish", "neutral"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "summary": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "model_cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "model", "input_tokens", "output_tokens", "cost_usd"],
+      "properties": {
+        "node": { "type": "string", "maxLength": 64 },
+        "model": { "type": "string", "maxLength": 64 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "$ref": "#/$defs/decimal" }
+      }
+    },
+    "debate_round": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round_index", "bull_argument", "bull_score", "bear_argument", "bear_score"],
+      "properties": {
+        "round_index": { "type": "integer", "minimum": 0 },
+        "bull_argument": { "type": "string", "maxLength": 4000 },
+        "bull_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "bear_argument": { "type": "string", "maxLength": 4000 },
+        "bear_score": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

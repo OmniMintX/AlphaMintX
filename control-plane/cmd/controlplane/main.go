@@ -1,26 +1,169 @@
-// Command controlplane is the Phase-0 demo loop: load a golden fixture
-// proposal, evaluate it through the deterministic Risk Gate, and print the
-// resulting RiskVerdict JSON.
+// Command controlplane serves the Phase-1 control-plane HTTP API when
+// CONTROLPLANE_DB is set (docs/specs/persistence-and-api.md). Without a DB
+// path it stays the Phase-0 demo loop: load a golden fixture proposal,
+// evaluate it through the deterministic Risk Gate, and print the resulting
+// RiskVerdict JSON.
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/api"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
+// sweepInterval is the periodic pending-approval expiry sweep; the sweep
+// also runs once at startup (restart-safe default-deny).
+const sweepInterval = 30 * time.Second
+
 func main() {
+	if dbPath := os.Getenv("CONTROLPLANE_DB"); dbPath != "" {
+		if err := serve(dbPath); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// serve runs the Phase-1 HTTP API until SIGINT/SIGTERM.
+//
+// SCAFFOLDING STATUS (deliberate, Phase-1 staging): serve is a read + L1
+// approval plane over an externally populated DB. It wires NO proposal
+// ingestion, NO market-data feed writer (the marketdata.Store starts empty,
+// so the approval preflight blocks MARK_PRICE_UNAVAILABLE), and NO OMS
+// Submitter (approvals that pass every other preflight check are recorded
+// approved_but_blocked with SUBMITTER_UNAVAILABLE — never silently
+// "submitted"). The e2e paperloop (cmd/paperloop) is the only execution
+// path today; wiring InsertProposal ingestion, a BinanceFeed writer calling
+// oms.ProcessTick on every Store write, and a real Submitter here is the
+// remaining Phase-1 work (docs/specs/persistence-and-api.md §Row rules).
+func serve(dbPath string) error {
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// max_age_seconds is REQUIRED config (market-data.md §Staleness rule):
+	// no hidden default, matching the e2e runspec behavior.
+	v := os.Getenv("CONTROLPLANE_MARK_MAX_AGE_SECONDS")
+	if v == "" {
+		return errors.New("CONTROLPLANE_MARK_MAX_AGE_SECONDS is REQUIRED (max_age_seconds has no default, docs/specs/market-data.md)")
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("CONTROLPLANE_MARK_MAX_AGE_SECONDS %q: %w", v, err)
+	}
+	marks, err := marketdata.NewStore(time.Duration(secs) * time.Second)
+	if err != nil {
+		return err
+	}
+
+	agentTokens, err := parseAgentTokens(os.Getenv("CONTROLPLANE_AGENT_TOKENS"))
+	if err != nil {
+		return err
+	}
+	operatorPrincipal := os.Getenv("CONTROLPLANE_OPERATOR_PRINCIPAL")
+	if operatorPrincipal == "" {
+		operatorPrincipal = "operator"
+	}
+	handler := api.New(api.Config{
+		Store:             st,
+		Marks:             marks,
+		ReadToken:         os.Getenv("CONTROLPLANE_READ_TOKEN"),
+		OperatorToken:     os.Getenv("CONTROLPLANE_OPERATOR_TOKEN"),
+		OperatorPrincipal: operatorPrincipal,
+		AgentTokens:       agentTokens,
+	})
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	sweep := func() {
+		expired, err := st.ExpirePendingApprovals(time.Now())
+		if err != nil {
+			log.Printf("pending-approval sweep: %v", err)
+		}
+		for _, a := range expired {
+			log.Printf("pending approval expired: verdict %s -> timeout", a.VerdictID)
+		}
+	}
+	sweep() // startup sweep: restart-safe default-deny
+	go func() {
+		ticker := time.NewTicker(sweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweep()
+			}
+		}
+	}()
+
+	addr := os.Getenv("CONTROLPLANE_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("control-plane API listening on %s", addr)
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// parseAgentTokens parses "strategy_id=token,strategy_id=token". Values are
+// secrets: never logged, in errors or otherwise.
+func parseAgentTokens(v string) (map[string]string, error) {
+	if v == "" {
+		return nil, nil
+	}
+	out := make(map[string]string)
+	for _, pair := range strings.Split(v, ",") {
+		strategyID, token, ok := strings.Cut(pair, "=")
+		if !ok || strategyID == "" || token == "" {
+			return nil, errors.New("CONTROLPLANE_AGENT_TOKENS: entries must be strategy_id=token")
+		}
+		out[strategyID] = token
+	}
+	return out, nil
 }
 
 func run() error {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
 )
 
 const (
@@ -44,8 +45,9 @@ func summary() contract.AnalystSummary {
 	return contract.AnalystSummary{Signal: "neutral", Confidence: 0.5, Summary: "s"}
 }
 
-// openProposal: open_long BTC/USDT 1000 at limit 100, stop 98 (2% distance,
-// worst_case 20), tp 105 — approved and filled at the tick-0 mark 100.
+// openProposal: open_long BTC/USDT 1000 at limit 64200, stop 63000 (~1.9%
+// distance, worst_case ~18.7), tp 65000 — approved and filled at the tick-0
+// mark 64180.1 (marketable buy limit: mark <= limit).
 func openProposal(t *testing.T, strategyID, proposalID, createdAt string) *contract.Proposal {
 	t.Helper()
 	return &contract.Proposal{
@@ -57,9 +59,9 @@ func openProposal(t *testing.T, strategyID, proposalID, createdAt string) *contr
 		Symbol:        "BTC/USDT",
 		Action:        contract.ActionOpenLong,
 		SizeQuote:     mustDec(t, "1000"),
-		Entry:         contract.Entry{Type: "limit", LimitPrice: decPtr(t, "100")},
-		StopLoss:      decPtr(t, "98"),
-		TakeProfit:    decPtr(t, "105"),
+		Entry:         contract.Entry{Type: "limit", LimitPrice: decPtr(t, "64200")},
+		StopLoss:      decPtr(t, "63000"),
+		TakeProfit:    decPtr(t, "65000"),
 		TimeInForce:   "gtc",
 		Confidence:    0.7,
 		Reasoning:     "test",
@@ -85,6 +87,19 @@ func closeProposal(t *testing.T, strategyID, proposalID, createdAt string) *cont
 	return p
 }
 
+// holdProposal: action=hold, size 0 — approved, nothing executed; used to
+// advance the loop clock one tick.
+func holdProposal(t *testing.T, strategyID, proposalID, createdAt string) *contract.Proposal {
+	t.Helper()
+	p := openProposal(t, strategyID, proposalID, createdAt)
+	p.Action = contract.ActionHold
+	p.SizeQuote = mustDec(t, "0")
+	p.Entry = contract.Entry{Type: "market"}
+	p.StopLoss = nil
+	p.TakeProfit = nil
+	return p
+}
+
 func testSpec(t *testing.T) *RunSpec {
 	t.Helper()
 	return &RunSpec{
@@ -92,13 +107,15 @@ func testSpec(t *testing.T) *RunSpec {
 		TickSeconds:   60,
 		Seed:          42,
 		QuoteCurrency: "USDT",
+		FillModel:     paper.FillModel{MarketSlippageBps: "5", TakerFeeBps: "5", MakerFeeBps: "2"},
+		MaxAgeSeconds: 90,
 		Strategies: []Strategy{
 			{StrategyID: testStrategy1, Token: "e2e-token-1", Scenario: "bullish_btc_l3"},
 			{StrategyID: testStrategy2, Token: "e2e-token-2", Scenario: ScenarioCloseExempt},
 			{StrategyID: testStrategy3, Token: "e2e-token-3", Scenario: "scope_mismatch"},
 		},
 		Marks: map[string][]string{
-			"BTC/USDT": {"100", "100", "100", "100"},
+			"BTC/USDT": {"64180.1", "64180.1", "64180.1", "64180.1"},
 			"ETH/USDT": {"3400", "3400", "3400", "3400"},
 		},
 	}
@@ -277,5 +294,85 @@ func TestCloseExemptionApprovesDespiteBreachedDailyLoss(t *testing.T) {
 	}
 	if order["reduce_only"] != true || order["status"] != "filled" {
 		t.Errorf("close order = %v, want reduce-only filled flatten", order)
+	}
+}
+
+// TestTickSweepFiresProtectiveStop pins the ProcessTick wiring: an approved
+// entry rests its protective stop; when a later tick gaps through the stop,
+// the pump's per-tick sweep fills it at the observed mark ± slippage (never
+// stop_price itself) and records the fill as an order record.
+func TestTickSweepFiresProtectiveStop(t *testing.T) {
+	spec := testSpec(t)
+	spec.Strategies = []Strategy{{StrategyID: testStrategy1, Token: "e2e-token-1", Scenario: "bullish_btc_l3"}}
+	spec.Marks = map[string][]string{"BTC/USDT": {"64180.1", "62000"}}
+	envs := []Envelope{
+		{Token: "e2e-token-1", Proposal: *openProposal(t, testStrategy1, "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c11", "2026-07-04T12:00:00Z")},
+		{Token: "e2e-token-1", Proposal: *holdProposal(t, testStrategy1, "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c12", "2026-07-04T12:01:00Z")},
+	}
+	var b strings.Builder
+	for _, env := range envs {
+		line, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal envelope: %v", err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	var out bytes.Buffer
+	if _, err := Run(spec, strings.NewReader(b.String()), &out); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var stop map[string]any
+	for _, rec := range decodeRecords(t, out.Bytes()) {
+		if rec["kind"] == "order" && rec["type"] == "stop" {
+			stop = rec
+		}
+	}
+	if stop == nil {
+		t.Fatalf("no stop order record: the protective stop never fired")
+	}
+	if stop["status"] != "filled" || stop["reduce_only"] != true {
+		t.Errorf("stop order = %v, want reduce-only filled", stop)
+	}
+	// Stop-market: fills at the gapped mark − slippage (5 bps on 62000),
+	// never at stop_price 63000 itself.
+	if stop["fill_price"] != "61969" {
+		t.Errorf("stop fill_price = %v, want 61969 (62000 − 5 bps)", stop["fill_price"])
+	}
+}
+
+// TestQueuedCloseKeepsRunAlive pins the queued-exit handling: a close
+// evaluated with no usable mark queues the flatten (order record open,
+// position and stops intact) instead of aborting the run with a
+// residual-position error.
+func TestQueuedCloseKeepsRunAlive(t *testing.T) {
+	spec := testSpec(t)
+	spec.Strategies = []Strategy{{StrategyID: testStrategy2, Token: "e2e-token-2", Scenario: ScenarioCloseExempt}}
+	spec.Marks = map[string][]string{"ETH/USDT": {"3400"}}
+	env := Envelope{Token: "e2e-token-2", Proposal: *closeProposal(t, testStrategy2, "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c21", "2026-07-04T12:00:00Z")}
+	line, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	var out bytes.Buffer
+	if _, err := Run(spec, strings.NewReader(string(line)+"\n"), &out); err != nil {
+		t.Fatalf("Run: %v (a queued close must not abort the run)", err)
+	}
+
+	var order map[string]any
+	for _, rec := range decodeRecords(t, out.Bytes()) {
+		if rec["kind"] == "order" {
+			order = rec
+		}
+	}
+	if order == nil {
+		t.Fatalf("no order record for the queued close")
+	}
+	if order["status"] != "open" || order["reduce_only"] != true {
+		t.Errorf("queued close order = %v, want open reduce-only", order)
+	}
+	if _, ok := order["fill_price"]; ok {
+		t.Errorf("queued close must not carry a fill price: %v", order)
 	}
 }

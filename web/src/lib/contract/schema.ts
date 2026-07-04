@@ -24,24 +24,24 @@ function isZeroDecimal(value: string): boolean {
   return compareDecimals(value, "0") === 0;
 }
 
-const uuid = z
+export const uuid = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-const decimal = z.string().max(34).regex(decimalRegex);
-const signedDecimal = z.string().max(35).regex(signedDecimalRegex);
-const symbol = z.string().regex(/^[A-Z0-9]{2,15}\/[A-Z0-9]{2,10}$/);
-const utcTimestamp = z
+export const decimal = z.string().max(34).regex(decimalRegex);
+export const signedDecimal = z.string().max(35).regex(signedDecimalRegex);
+export const symbol = z.string().regex(/^[A-Z0-9]{2,15}\/[A-Z0-9]{2,10}$/);
+export const utcTimestamp = z
   .string()
   .max(35)
   .regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/);
 
-const analystSummary = z.strictObject({
+export const analystSummarySchema = z.strictObject({
   signal: z.enum(["bullish", "bearish", "neutral"]),
   confidence: z.number().min(0).max(1),
   summary: z.string().max(2000),
 });
 
-const modelCost = z.strictObject({
+export const modelCostSchema = z.strictObject({
   node: z.string().max(64),
   model: z.string().max(64),
   input_tokens: z.number().int().min(0),
@@ -88,12 +88,12 @@ export const tradeProposalSchema = z
     confidence: z.number().min(0).max(1),
     reasoning: z.string().max(8000),
     analyst_summaries: z.strictObject({
-      market: analystSummary,
-      news: analystSummary,
-      fundamental: analystSummary,
+      market: analystSummarySchema,
+      news: analystSummarySchema,
+      fundamental: analystSummarySchema,
     }),
     debate_summary: z.string().max(4000),
-    model_costs: z.array(modelCost).max(32),
+    model_costs: z.array(modelCostSchema).max(32),
   })
   .superRefine((p, ctx) => {
     const opens = p.action === "open_long" || p.action === "open_short";
@@ -241,3 +241,5 @@ export const riskVerdictSchema = z
 
 export type TradeProposal = z.infer<typeof tradeProposalSchema>;
 export type RiskVerdict = z.infer<typeof riskVerdictSchema>;
+export type AnalystSummary = z.infer<typeof analystSummarySchema>;
+export type ModelCost = z.infer<typeof modelCostSchema>;

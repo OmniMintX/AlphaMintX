@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
 )
 
 // NamespaceE2E = uuid5(NAMESPACE_URL, "https://alphamintx.dev/e2e"); shared
@@ -36,11 +37,16 @@ type Strategy struct {
 }
 
 // RunSpec is e2e/runspec.json: the single source of truth for a run.
+// FillModel and MaxAgeSeconds are REQUIRED (docs/specs/market-data.md
+// §Determinism): reproducibility requires the fill and staleness parameters
+// explicit in the runspec, never hidden defaults.
 type RunSpec struct {
 	ClockStart    contract.UTCTime    `json:"clock_start"`
 	TickSeconds   int                 `json:"tick_seconds"`
 	Seed          int                 `json:"seed"`
 	QuoteCurrency string              `json:"quote_currency"`
+	FillModel     paper.FillModel     `json:"fill_model"`
+	MaxAgeSeconds int                 `json:"max_age_seconds"`
 	Strategies    []Strategy          `json:"strategies"`
 	Marks         map[string][]string `json:"marks"`
 }
@@ -57,6 +63,12 @@ func LoadRunSpec(path string) (*RunSpec, error) {
 	}
 	if spec.TickSeconds <= 0 {
 		return nil, fmt.Errorf("runspec %s: tick_seconds must be > 0", path)
+	}
+	if spec.FillModel.MarketSlippageBps == "" || spec.FillModel.TakerFeeBps == "" || spec.FillModel.MakerFeeBps == "" {
+		return nil, fmt.Errorf("runspec %s: fill_model with market_slippage_bps, taker_fee_bps and maker_fee_bps is REQUIRED (no hidden defaults)", path)
+	}
+	if spec.MaxAgeSeconds <= 0 {
+		return nil, fmt.Errorf("runspec %s: max_age_seconds must be > 0 (REQUIRED, no hidden defaults)", path)
 	}
 	return &spec, nil
 }
@@ -111,6 +123,7 @@ type orderRecord struct {
 	QtyBase    string `json:"qty_base"`
 	LimitPrice string `json:"limit_price,omitempty"`
 	FillPrice  string `json:"fill_price,omitempty"`
+	FeeQuote   string `json:"fee_quote,omitempty"`
 	Status     string `json:"status"`
 }
 

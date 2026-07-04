@@ -1,0 +1,13 @@
+{
+  "as_of": "2026-07-04",
+  "models": {
+    "gpt-4o-mini": {
+      "input_usd_per_1m": "0.15",
+      "output_usd_per_1m": "0.60"
+    },
+    "gpt-4o": {
+      "input_usd_per_1m": "2.50",
+      "output_usd_per_1m": "10.00"
+    }
+  }
+}

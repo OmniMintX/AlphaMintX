@@ -35,9 +35,27 @@ Scope:
 - Web reasoning viewer: analyst summaries, debate, proposal, verdict, trace.
 - L0/L1 semantics in UI (advisor feed; copilot approve/reject with timeout).
 
+Progress (specs + foundations landed; specs in `docs/specs/market-data.md`,
+`llm-routing-and-budget.md`, `persistence-and-api.md`):
+- [x] `marketdata` package: Binance WS/REST feed + deterministic ReplayFeed +
+      staleness store (fail-closed `MARK_PRICE_UNAVAILABLE`).
+- [x] Paper OMS fill model v2: directional slippage, taker/maker fees, clip-notional
+      invariant, gap-through-stop, queued zero-mark exits, per-tick trigger sweep.
+- [x] MintRouter client: retry/backoff taxonomy, Decimal cost accounting + price
+      table, advisory daily token budget (fail-closed on corruption), forced-hold
+      degradation paths; StubLLM remains the CI default.
+- [x] SQLite persistence (`modernc.org/sqlite`): 16-table append-only schema,
+      idempotent proposal/trace ingest, authoritative token ledger, restart-safe
+      L1 approvals; `contracts/agent_trace.schema.json`.
+- [x] Control-plane HTTP API: two-token auth, L1 approve/reject with preflight
+      (`approved_but_blocked`), trace ingestion with scope check, rate limiting.
+- [x] Web reasoning viewer: strategies → runs → trace (analysts, debate, costs,
+      orders/fills, approvals timeline); operator token server-side only.
+
 Exit criteria:
 - [ ] A strategy runs continuously ≥7 days in paper against live market data with
-      zero unhandled pipeline failures (checkpoint/resume verified).
+      zero unhandled pipeline failures (checkpoint/resume verified). (Needs the
+      live scheduler loop wiring serve mode — see cmd/controlplane scaffolding note.)
 - [ ] Every run's full agent trace is persisted and viewable end-to-end in the web UI.
 - [ ] LLM cost per strategy metered and visible; daily token budget enforced.
 - [ ] No direct provider calls anywhere (verified by CI check / egress policy).
