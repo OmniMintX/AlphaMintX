@@ -19,6 +19,9 @@ out/
 coverage/
 *.tsbuildinfo
 
+# E2E artifacts (out/proposals.jsonl, out/records.jsonl)
+/out/
+
 # Environment & OS
 .env*
 .DS_Store

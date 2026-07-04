@@ -34,9 +34,14 @@ _SYMBOL_PATTERN = r"^[A-Z0-9]{2,15}/[A-Z0-9]{2,10}$"
 _REASON_CODE_PATTERN = r"^[A-Z][A-Z0-9_]*$"
 
 
+def rfc3339_utc(dt: datetime) -> str:
+    """Render an aware datetime as an RFC 3339 UTC timestamp with the ``Z`` suffix."""
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def utc_now_rfc3339() -> str:
     """Current time as an RFC 3339 UTC timestamp with the mandatory ``Z`` suffix."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return rfc3339_utc(datetime.now(UTC))
 
 
 def decimal_to_str(value: Decimal) -> str:

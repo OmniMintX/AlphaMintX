@@ -1,0 +1,75 @@
+{
+  "clock_start": "2026-07-04T12:00:00Z",
+  "tick_seconds": 60,
+  "seed": 42,
+  "quote_currency": "USDT",
+  "strategies": [
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000001",
+      "token": "e2e-token-1",
+      "scenario": "bullish_btc_l3"
+    },
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000002",
+      "token": "e2e-token-2",
+      "scenario": "low_confidence_hold"
+    },
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000003",
+      "token": "e2e-token-3",
+      "scenario": "whitelist_violation"
+    },
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000004",
+      "token": "e2e-token-4",
+      "scenario": "notional_clip"
+    },
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000005",
+      "token": "e2e-token-5",
+      "scenario": "close_exempt"
+    },
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000006",
+      "token": "e2e-token-6",
+      "scenario": "stale_proposal"
+    },
+    {
+      "strategy_id": "e2e00000-0000-4000-8000-000000000007",
+      "token": "e2e-token-7",
+      "scenario": "scope_mismatch"
+    }
+  ],
+  "marks": {
+    "BTC/USDT": [
+      "64180.10",
+      "64300.25",
+      "64150.00",
+      "64500.00",
+      "64620.75",
+      "64580.30",
+      "64410.90",
+      "64355.40"
+    ],
+    "ETH/USDT": [
+      "3400.00",
+      "3412.50",
+      "3395.75",
+      "3420.10",
+      "3450.00",
+      "3438.60",
+      "3427.15",
+      "3405.90"
+    ],
+    "SOL/USDT": [
+      "150.00",
+      "150.40",
+      "150.25",
+      "149.90",
+      "150.75",
+      "150.30",
+      "150.10",
+      "149.85"
+    ]
+  }
+}

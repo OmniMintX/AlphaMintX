@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import operator
-import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict, cast
+from uuid import UUID, uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -27,7 +29,7 @@ from alphamintx_agent_plane.contract.models import (
     ModelCost,
     TimeInForce,
     TradeProposal,
-    utc_now_rfc3339,
+    rfc3339_utc,
 )
 from alphamintx_agent_plane.llm.stub import (
     ROLE_BEAR_RESEARCHER,
@@ -43,6 +45,17 @@ from alphamintx_agent_plane.llm.stub import (
 
 LOW_CONFIDENCE_THRESHOLD = 0.3
 DEFAULT_MAX_DEBATE_ROUNDS = 2
+
+IdFactory = Callable[[str], UUID]
+Clock = Callable[[], datetime]
+
+
+def _default_id_factory(_name: str) -> UUID:
+    return uuid4()
+
+
+def _default_clock() -> datetime:
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -127,8 +140,17 @@ def _debate_context(state: PipelineState) -> str:
     return "\n".join(lines)
 
 
-def build_pipeline(llm: LLMClient) -> CompiledStateGraph[PipelineState]:
-    """Compile the 4-tier StateGraph around the given LLM client."""
+def build_pipeline(
+    llm: LLMClient,
+    *,
+    id_factory: IdFactory = _default_id_factory,
+    clock: Clock = _default_clock,
+) -> CompiledStateGraph[PipelineState]:
+    """Compile the 4-tier StateGraph around the given LLM client.
+
+    ``id_factory`` and ``clock`` are injectable for deterministic runs (e.g. the
+    E2E emitter); the defaults keep production behavior (uuid4 / now(UTC)).
+    """
 
     def market_analyst(state: PipelineState) -> dict[str, Any]:
         prompt = (
@@ -244,10 +266,10 @@ def build_pipeline(llm: LLMClient) -> CompiledStateGraph[PipelineState]:
         summaries = state["analyst_summaries"]
         proposal = TradeProposal(
             schema_version=SCHEMA_VERSION,
-            proposal_id=str(uuid.uuid4()),
+            proposal_id=str(id_factory("proposal_id")),
             strategy_id=state["strategy_id"],
             agent_trace_id=state["agent_trace_id"],
-            created_at=utc_now_rfc3339(),
+            created_at=rfc3339_utc(clock()),
             symbol=state["symbol"],
             action=action,
             size_quote=size_quote,
@@ -291,12 +313,14 @@ def run_pipeline(
     inputs: PipelineInput,
     *,
     max_debate_rounds: int = DEFAULT_MAX_DEBATE_ROUNDS,
+    id_factory: IdFactory = _default_id_factory,
+    clock: Clock = _default_clock,
 ) -> PipelineState:
     """Run the pipeline end-to-end and return the final state (proposal included)."""
-    graph = build_pipeline(llm)
+    graph = build_pipeline(llm, id_factory=id_factory, clock=clock)
     initial: PipelineState = {
         "strategy_id": inputs.strategy_id,
-        "agent_trace_id": str(uuid.uuid4()),
+        "agent_trace_id": str(id_factory("agent_trace_id")),
         "symbol": inputs.symbol,
         "market_data": inputs.market_data,
         "news": inputs.news,

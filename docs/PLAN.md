@@ -13,15 +13,17 @@ Scope:
   (fixed fill model) → persisted proposal/verdict/order records.
 
 Exit criteria:
-- [ ] `contracts/*.schema.json` validate; Go and Python contract tests both pass on
+- [x] `contracts/*.schema.json` validate; Go and Python contract tests both pass on
       all `contracts/fixtures/` (valid fixtures accepted, invalid fixture rejected).
-- [ ] End-to-end paper run in CI with StubLLM is bit-deterministic (same inputs ⇒
-      same proposals, verdicts, paper fills) and requires no network.
-- [ ] Risk Gate unit tests cover every limit in `docs/specs/risk-limits.md`,
+- [x] End-to-end paper run in CI with StubLLM is bit-deterministic (same inputs ⇒
+      same proposals, verdicts, paper fills) and requires no network — `make
+      e2e-check` double-runs both planes and diffs against committed
+      `e2e/golden/*.jsonl`, pinning reason codes and clip sizes per scenario.
+- [x] Risk Gate unit tests cover every limit in `docs/specs/risk-limits.md`,
       including kill-switch precedence, circuit breaker, the `close` exit
       exemption, per-strategy serialization (concurrent proposals), and
       cross-strategy token-scope rejection.
-- [ ] `make test` green at repo root (go vet + go test -race, ruff + mypy + pytest).
+- [x] `make test` green at repo root (go vet + go test -race, ruff + mypy + pytest).
 
 ## Phase 1 — Paper trading with real data + real LLMs + reasoning viewer
 
