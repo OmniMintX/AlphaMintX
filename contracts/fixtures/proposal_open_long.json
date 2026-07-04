@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "strategy_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+  "agent_trace_id": "c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f",
+  "created_at": "2026-07-04T12:00:00Z",
+  "symbol": "BTC/USDT",
+  "action": "open_long",
+  "size_quote": "1500.00",
+  "entry": {
+    "type": "limit",
+    "limit_price": "64250.50"
+  },
+  "stop_loss": "62965.49",
+  "take_profit": "66820.52",
+  "time_in_force": "gtc",
+  "confidence": 0.72,
+  "reasoning": "Market analyst reports a confirmed breakout above the 20-day range high on rising volume; RSI at 61 leaves room before overbought. News sentiment is net positive on ETF inflow headlines. Fundamentals neutral. Bear case (macro tightening) was argued but judged weaker over the 1-3 day horizon. Long with a 2% stop below breakout level and 4% target.",
+  "analyst_summaries": {
+    "market": {
+      "signal": "bullish",
+      "confidence": 0.78,
+      "summary": "Breakout above 20-day range high on 1.8x average volume; RSI 61; MACD positive crossover."
+    },
+    "news": {
+      "signal": "bullish",
+      "confidence": 0.65,
+      "summary": "Net positive sentiment driven by ETF inflow coverage; no adverse regulatory headlines in 24h window."
+    },
+    "fundamental": {
+      "signal": "neutral",
+      "confidence": 0.55,
+      "summary": "On-chain activity flat week-over-week; funding rates near neutral; no supply-side events."
+    }
+  },
+  "debate_summary": "Bull: momentum breakout with volume confirmation and supportive flows. Bear: macro tightening risk and thin holiday liquidity. Judge: bull case stronger for a short-horizon long with tight stop; bear risks bounded by exchange-resident stop-loss.",
+  "model_costs": [
+    {
+      "node": "market_analyst",
+      "model": "gpt-4o-mini",
+      "input_tokens": 2412,
+      "output_tokens": 384,
+      "cost_usd": "0.000593"
+    },
+    {
+      "node": "news_analyst",
+      "model": "gpt-4o-mini",
+      "input_tokens": 3120,
+      "output_tokens": 402,
+      "cost_usd": "0.000709"
+    },
+    {
+      "node": "fundamental_analyst",
+      "model": "gpt-4o-mini",
+      "input_tokens": 1985,
+      "output_tokens": 351,
+      "cost_usd": "0.000508"
+    },
+    {
+      "node": "trader",
+      "model": "claude-sonnet-4",
+      "input_tokens": 5210,
+      "output_tokens": 890,
+      "cost_usd": "0.028980"
+    }
+  ]
+}

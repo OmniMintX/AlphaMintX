@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "verdict_id": "b8c9d0e1-f2a3-4b4c-8d5e-7f8a9b0c1d2e",
+  "proposal_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "decision": "reject",
+  "reasons": [
+    {
+      "code": "DAILY_LOSS_LIMIT_BREACHED",
+      "message": "Realized+unrealized loss for 2026-07-04 (UTC) is 512.40 USDT, breaching daily_loss_limit_quote 500.00 (trigger: loss >= limit). Circuit breaker engaged: positions flattened, strategy demoted to L0 until next UTC day."
+    }
+  ],
+  "limits_snapshot": {
+    "symbol_whitelist": ["BTC/USDT", "ETH/USDT"],
+    "max_open_positions": 3,
+    "per_position_notional_cap_quote": "2000.00",
+    "daily_loss_limit_quote": "500.00",
+    "max_drawdown_pct": 10,
+    "max_orders_per_minute": 6,
+    "require_stop_loss": true,
+    "equity_quote": "9487.60",
+    "peak_equity_quote": "10000.00",
+    "daily_realized_pnl_quote": "-512.40",
+    "open_positions_count": 2,
+    "pending_entry_orders_count": 0,
+    "mark_price": "64180.10"
+  },
+  "evaluated_at": "2026-07-04T12:00:03Z"
+}

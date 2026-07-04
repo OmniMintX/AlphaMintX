@@ -1,0 +1,24 @@
+# Go
+*.exe
+*.test
+*.out
+control-plane/bin/
+
+# Python (uv.lock stays tracked)
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Environment & OS
+.env*
+.DS_Store

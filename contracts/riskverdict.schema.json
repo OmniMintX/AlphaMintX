@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alphamintx.dev/contracts/riskverdict.schema.json",
+  "title": "RiskVerdict",
+  "description": "RiskVerdict v1. Deterministic Risk Gate output for a TradeProposal. Normative prose: docs/specs/proposal-contract.md and docs/specs/risk-limits.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "verdict_id",
+    "proposal_id",
+    "decision",
+    "reasons",
+    "limits_snapshot",
+    "evaluated_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "verdict_id": { "$ref": "#/$defs/uuid" },
+    "proposal_id": { "$ref": "#/$defs/uuid" },
+    "decision": { "enum": ["approve", "reject", "clip", "escalate"] },
+    "clipped_size_quote": { "$ref": "#/$defs/decimal" },
+    "reasons": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "maxLength": 64 },
+          "message": { "type": "string", "maxLength": 500 }
+        }
+      }
+    },
+    "limits_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "symbol_whitelist",
+        "max_open_positions",
+        "per_position_notional_cap_quote",
+        "daily_loss_limit_quote",
+        "max_drawdown_pct",
+        "max_orders_per_minute",
+        "require_stop_loss",
+        "equity_quote",
+        "peak_equity_quote",
+        "daily_realized_pnl_quote",
+        "open_positions_count",
+        "pending_entry_orders_count",
+        "mark_price"
+      ],
+      "properties": {
+        "symbol_whitelist": { "type": "array", "items": { "$ref": "#/$defs/symbol" } },
+        "max_open_positions": { "type": "integer", "minimum": 0 },
+        "per_position_notional_cap_quote": { "$ref": "#/$defs/decimal" },
+        "daily_loss_limit_quote": { "$ref": "#/$defs/decimal" },
+        "max_drawdown_pct": { "type": "number", "minimum": 0 },
+        "max_orders_per_minute": { "type": "integer", "minimum": 0 },
+        "require_stop_loss": { "type": "boolean" },
+        "l2_max_size_quote": { "$ref": "#/$defs/decimal" },
+        "l2_allowed_symbols": { "type": "array", "items": { "$ref": "#/$defs/symbol" } },
+        "equity_quote": { "$ref": "#/$defs/decimal" },
+        "peak_equity_quote": { "$ref": "#/$defs/decimal" },
+        "daily_realized_pnl_quote": { "$ref": "#/$defs/signed_decimal" },
+        "open_positions_count": { "type": "integer", "minimum": 0 },
+        "pending_entry_orders_count": { "type": "integer", "minimum": 0 },
+        "mark_price": { "$ref": "#/$defs/decimal" }
+      }
+    },
+    "evaluated_at": { "$ref": "#/$defs/utc_timestamp" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "decision": { "const": "clip" } }, "required": ["decision"] },
+      "then": { "required": ["clipped_size_quote"] },
+      "else": { "not": { "required": ["clipped_size_quote"] } }
+    },
+    {
+      "if": { "properties": { "decision": { "enum": ["reject", "clip"] } }, "required": ["decision"] },
+      "then": { "properties": { "reasons": { "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+      "maxLength": 34
+    },
+    "signed_decimal": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+      "maxLength": 35
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]{2,15}/[A-Z0-9]{2,10}$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "maxLength": 35
+    }
+  }
+}

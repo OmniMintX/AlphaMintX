@@ -1,0 +1,96 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      control-plane: ${{ steps.filter.outputs.control-plane }}
+      agent-plane: ${{ steps.filter.outputs.agent-plane }}
+      web: ${{ steps.filter.outputs.web }}
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # contracts/** is the cross-language contract: it retriggers all planes.
+          filters: |
+            contracts:
+              - 'contracts/**'
+            control-plane:
+              - 'control-plane/**'
+              - 'contracts/**'
+            agent-plane:
+              - 'agent-plane/**'
+              - 'contracts/**'
+            web:
+              - 'web/**'
+              - 'contracts/**'
+
+  control-plane:
+    needs: changes
+    if: needs.changes.outputs.control-plane == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: control-plane/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: test -z "$(gofmt -l .)"
+      - run: go test -race ./...
+
+  agent-plane:
+    needs: changes
+    if: needs.changes.outputs.agent-plane == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run mypy src/
+      - run: uv run pytest -q
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --with jsonschema python scripts/validate_contracts.py

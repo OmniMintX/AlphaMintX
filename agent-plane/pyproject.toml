@@ -1,0 +1,38 @@
+[project]
+name = "alphamintx-agent-plane"
+version = "0.1.0"
+description = "AlphaMintX agent-plane: LangGraph agent pipeline emitting TradeProposals to the control-plane."
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-core>=0.3",
+    "langgraph>=0.2",
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.21",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

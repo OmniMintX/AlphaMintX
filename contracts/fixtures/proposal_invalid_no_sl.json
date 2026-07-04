@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "f6a7b8c9-d0e1-4f2a-9b3c-5d6e7f8a9b0c",
+  "strategy_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+  "agent_trace_id": "a7b8c9d0-e1f2-4a3b-8c4d-6e7f8a9b0c1d",
+  "created_at": "2026-07-04T18:00:00Z",
+  "symbol": "ETH/USDT",
+  "action": "open_long",
+  "size_quote": "800.00",
+  "entry": {
+    "type": "market"
+  },
+  "take_profit": "3600.00",
+  "time_in_force": "ioc",
+  "confidence": 0.61,
+  "reasoning": "Momentum long on ETH; fixture intentionally omits stop_loss to exercise the conditional-required rule.",
+  "analyst_summaries": {
+    "market": {
+      "signal": "bullish",
+      "confidence": 0.66,
+      "summary": "Higher lows with rising volume."
+    },
+    "news": {
+      "signal": "neutral",
+      "confidence": 0.5,
+      "summary": "No significant headlines."
+    },
+    "fundamental": {
+      "signal": "bullish",
+      "confidence": 0.58,
+      "summary": "Staking inflows increasing."
+    }
+  },
+  "debate_summary": "Bull case accepted on momentum; bear case weak.",
+  "model_costs": [
+    {
+      "node": "trader",
+      "model": "claude-sonnet-4",
+      "input_tokens": 4100,
+      "output_tokens": 760,
+      "cost_usd": "0.023700"
+    }
+  ]
+}
