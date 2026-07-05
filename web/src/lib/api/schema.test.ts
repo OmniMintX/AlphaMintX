@@ -9,11 +9,15 @@ import proposalOpenLong from "../../../../contracts/fixtures/proposal_open_long.
 import verdictRejectDailyLoss from "../../../../contracts/fixtures/verdict_reject_daily_loss.json";
 import {
   agentTraceSchema,
+  alertsPageSchema,
   apiErrorBodySchema,
   approvalDecisionSchema,
   approvalRequestSchema,
+  paperGateReportSchema,
   runDetailSchema,
   runsPageSchema,
+  safetyAlertSchema,
+  safetyStatusSchema,
   strategiesPageSchema,
 } from "./schema";
 
@@ -273,5 +277,150 @@ describe("error shape", () => {
 
   it("rejects a non-SCREAMING_SNAKE code", () => {
     expect(apiErrorBodySchema.safeParse({ code: "not pending", message: "m" }).success).toBe(false);
+  });
+});
+
+// ---- Operator surface (operator-surface.md OS-7/OS-18/OS-31) -------------------
+
+const unclearedKill = {
+  event_id: "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b",
+  scope: "strategy",
+  kill_epoch: 4,
+  flatten: true,
+  actor_id: "admin-1",
+  recorded_at: "2026-07-04T12:00:00Z",
+  cleared: null,
+};
+
+const clearedKill = {
+  event_id: "f2a3b4c5-d6e7-4f8a-9b0c-1d2e3f4a5b6c",
+  scope: "tenant",
+  kill_epoch: 2,
+  flatten: false,
+  actor_id: "watchdog",
+  recorded_at: "2026-07-03T09:00:00Z",
+  cleared: {
+    clear_id: "a3b4c5d6-e7f8-4a9b-8c0d-2e3f4a5b6c7d",
+    actor_id: "admin-1",
+    reason: "resolved",
+    recorded_at: "2026-07-03T10:00:00Z",
+    cleared_epoch: 3,
+  },
+};
+
+const safetyStatus = {
+  strategy_id: STRATEGY_ID,
+  lifecycle_state: "paused",
+  paused_from: "live_l1",
+  active_kill: true,
+  kills: [unclearedKill, clearedKill],
+  breaker: {
+    active_today: true,
+    event: {
+      event_id: "b4c5d6e7-f8a9-4b0c-8d1e-3f4a5b6c7d8e",
+      recorded_at: "2026-07-04T11:00:00Z",
+      trigger_ref: '{"daily_pnl":"-120.5","limit":"-100","evaluated_at":"2026-07-04T11:00:00Z"}',
+    },
+  },
+  watchdog: { enabled: true, last_heartbeat_at: "2026-07-04T12:00:00Z", seconds_since: 12 },
+};
+
+describe("safetyStatusSchema (OS-7)", () => {
+  it("parses the composite with kills, breaker, and watchdog", () => {
+    const parsed = safetyStatusSchema.parse(safetyStatus);
+    expect(parsed.active_kill).toBe(true);
+    expect(parsed.kills[0]?.cleared).toBeNull();
+    expect(parsed.kills[1]?.cleared?.cleared_epoch).toBe(3);
+  });
+
+  it("accepts nullable paused_from, breaker event, and watchdog nulls", () => {
+    const parsed = safetyStatusSchema.parse({
+      ...safetyStatus,
+      paused_from: null,
+      active_kill: false,
+      kills: [],
+      breaker: { active_today: false, event: null },
+      watchdog: { enabled: true, last_heartbeat_at: null, seconds_since: null },
+    });
+    expect(parsed.paused_from).toBeNull();
+    expect(parsed.watchdog.last_heartbeat_at).toBeNull();
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(safetyStatusSchema.safeParse({ ...safetyStatus, extra: 1 }).success).toBe(false);
+    expect(
+      safetyStatusSchema.safeParse({
+        ...safetyStatus,
+        kills: [{ ...unclearedKill, extra: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an unknown kill scope", () => {
+    expect(
+      safetyStatusSchema.safeParse({
+        ...safetyStatus,
+        kills: [{ ...unclearedKill, scope: "galaxy" }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("safetyAlertSchema / alertsPageSchema (OS-18)", () => {
+  const alert = {
+    alert_id: "c5d6e7f8-a9b0-4c1d-8e2f-4a5b6c7d8e9f",
+    kind: "breaker_daily_loss",
+    strategy_id: STRATEGY_ID,
+    ref_id: "ref-1",
+    details_json: '{"daily_pnl":"-120.5"}',
+    recorded_at: "2026-07-04T11:00:00Z",
+  };
+
+  it("accepts an unknown kind as a plain string (open set) and nullable fields", () => {
+    const parsed = safetyAlertSchema.parse({
+      ...alert,
+      kind: "some_future_kind",
+      strategy_id: null,
+      ref_id: null,
+    });
+    expect(parsed.kind).toBe("some_future_kind");
+    expect(parsed.strategy_id).toBeNull();
+  });
+
+  it("parses the pagination envelope and rejects unknown keys", () => {
+    const page = alertsPageSchema.parse({ items: [alert], total: 1, page: 1, limit: 20 });
+    expect(page.items[0]?.kind).toBe("breaker_daily_loss");
+    expect(safetyAlertSchema.safeParse({ ...alert, extra: 1 }).success).toBe(false);
+  });
+});
+
+describe("paperGateReportSchema (LC-23)", () => {
+  const report = {
+    passed: false,
+    window_started_at: "2026-06-20T00:00:00Z",
+    evaluated_at: "2026-07-04T12:00:00Z",
+    conditions: [
+      { name: "min_days", passed: true, measured: "14", required: "14" },
+      { name: "max_drawdown", passed: false, measured: "0.21", required: "0.15" },
+    ],
+  };
+
+  it("accepts the report with decimal-string measured/required", () => {
+    const parsed = paperGateReportSchema.parse(report);
+    expect(parsed.conditions[1]?.measured).toBe("0.21");
+  });
+
+  it("accepts a null window_started_at", () => {
+    expect(paperGateReportSchema.parse({ ...report, window_started_at: null }).window_started_at).toBeNull();
+  });
+
+  it("rejects unknown keys and non-decimal measurements", () => {
+    expect(paperGateReportSchema.safeParse({ ...report, extra: 1 }).success).toBe(false);
+    expect(
+      paperGateReportSchema.safeParse({
+        ...report,
+        conditions: [{ name: "x", passed: true, measured: "not-a-number", required: "1" }],
+      }).success,
+    ).toBe(false);
   });
 });

@@ -629,6 +629,9 @@ commit; `Append*`/`Insert*`/reads only — no new mutators):
 
 ## Alerts and events
 
+Read surface: `docs/specs/operator-surface.md` (per-strategy and global
+alert feeds, safety-status composite).
+
 | Table | kind / marker | Appended by | Meaning |
 |---|---|---|---|
 | `safety_effects` | (row presence) | DriveSafetyEffects | The referenced kill/breaker row's effects completed (zero residual work after carve-outs). |

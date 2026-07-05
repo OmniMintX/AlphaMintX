@@ -742,6 +742,8 @@ their matrix rows exist.
 - LC-D4 — SW-3 kill-driven token revocation, deferred again unchanged.
 - LC-D5 — SW-4 manual breaker reset / re-trip cool-down (breakers remain
   un-clearable here, LC-37).
-- LC-D6 — web dashboard surface for lifecycle/paper-gate/clear operations.
+- LC-D6 — web dashboard surface for lifecycle/paper-gate/clear operations:
+  LANDED — `docs/specs/operator-surface.md` (the lifecycle/clear/paper-gate
+  ops panel and its proxies).
 - LC-D7 — richer paper-gate analytics (per-symbol floors, Sharpe, fill
   realism) — the gate stays a necessary-but-not-sufficient sanity floor.

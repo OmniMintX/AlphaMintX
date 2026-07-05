@@ -322,6 +322,12 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// LatestStrategyKillEvent is the read-only WD-16 back-fill accessor
 		// (docs/specs/watchdog.md §Wiring seams).
 		"LatestStrategyKillEvent": true,
+		// Operator-surface reads (docs/specs/operator-surface.md §Wiring
+		// seams): the OS-10a single-snapshot status and the two paginated
+		// alert feeds — read-only, no UPDATE/DELETE surface.
+		"SafetyStatus":                   true,
+		"ListSafetyAlertsByStrategyPage": true,
+		"ListSafetyAlertsGlobalPage":     true,
 		// Lifecycle-API surface (docs/specs/lifecycle-api.md §Store
 		// surface): the CAS transition appender, the append-only SW-2
 		// kill-clear appenders (kill rows are never mutated — a clear is

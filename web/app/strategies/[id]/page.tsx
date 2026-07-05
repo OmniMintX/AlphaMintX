@@ -1,7 +1,8 @@
 "use client";
 
 // Strategy detail: lifecycle state badge + paginated runs list
-// (GET /api/v1/strategies/{id} and .../runs?page&limit, tick_number DESC).
+// (GET /api/v1/strategies/{id} and .../runs?page&limit, tick_number DESC),
+// plus the ops panel (operator-surface.md OS-22..OS-30).
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -11,6 +12,7 @@ import { fetchRuns, fetchStrategy } from "../../../src/lib/api/client";
 import { usePoll } from "../../../src/lib/api/usePoll";
 import { isAdvisoryOnly, isPaperSimulated } from "../../../src/lib/view/run";
 import { AdvisoryBanner, ErrorBanner, Pager, PaperBanner, StateBadge, card, mono, section } from "../ui";
+import { OpsPanel } from "./ops";
 
 export default function StrategyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -78,6 +80,8 @@ export default function StrategyDetailPage() {
           </>
         )}
       </section>
+
+      <OpsPanel strategyId={id} onLifecycleChange={strategy.refresh} />
     </>
   );
 }

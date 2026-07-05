@@ -197,6 +197,8 @@ DB principals:
 | `POST /api/v1/tenants/{tenant_id}/kill` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/strategies/{id}/lifecycle` (lifecycle transition, lifecycle-api.md LC-2) | ✗ | ✓ | ✓ | ✓ | ✗ |
 | `GET /api/v1/strategies/{id}/paper-gate` (promotion visibility, LC-24) | ✓ | ✓ | ✓ | ✓ | ✗ |
+| `GET /api/v1/strategies/{id}/safety`, `GET .../alerts` (operator-surface.md OS-5/OS-15) | ✓ | ✓ | ✓ | ✓ | ✗ |
+| `GET /api/v1/alerts` (global feed, env classes only — OS-19/OS-20) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST /api/v1/strategies/{id}/kill/clear` (unlock is Admin+, LC-29) | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/tenants/{tenant_id}/kill/clear` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/platform/kill/clear` (env-admin ONLY) | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -205,14 +207,17 @@ DB principals:
 | `GET /health` | unauthenticated | | | | |
 
 Env classes (platform-scoped, §Principals): read ⇒ all strategy-data GETs,
-any tenant, incl. `GET .../paper-gate` (NOT the token-metadata routes — the
+any tenant, incl. `GET .../paper-gate` and the operator-surface reads
+(`GET .../safety`, `GET .../alerts`, `GET /api/v1/alerts` —
+operator-surface.md) (NOT the token-metadata routes — the
 most-exposed credential gets the least surface); operator ⇒
 `POST .../approvals` only, any tenant; agent ⇒ its two ingestion routes
 only; env-admin ⇒ `POST .../limits`, `POST .../kill`,
 `POST .../lifecycle`, all three `.../kill/clear` routes (the platform
 clear is env-admin ONLY), all `/api/v1/tokens` routes, and
 `POST /api/v1/tenants` — any tenant, and NO strategy-data reads (the read
-class already exists).
+class already exists); its platform reads are the billing feeds and the
+global alert feed `GET /api/v1/alerts` (operator-surface.md OS-19).
 
 - Reads at viewer+ preserve Phase 1 semantics (READ_TOKEN never authorizes a
   POST); `POST .../approvals` at trader+ preserves operator semantics

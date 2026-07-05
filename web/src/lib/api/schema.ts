@@ -201,6 +201,141 @@ export const runDetailSchema = z.strictObject({
   pending_approval: pendingApprovalSchema.nullable(),
 });
 
+// ---- Safety status (operator-surface.md OS-7/OS-31) ---------------------------
+
+// scope is DERIVED server-side from id NULL-ness (OS-8): Phase-1 global rows
+// report "platform".
+export const killScopeSchema = z.enum(["strategy", "tenant", "platform"]);
+
+// The newest clear COVERING a kill row (OS-9); null while the kill stands.
+export const killClearedSchema = z.strictObject({
+  clear_id: uuid,
+  actor_id: z.string().min(1),
+  reason: z.string().min(1),
+  recorded_at: utcTimestamp,
+  cleared_epoch: z.number().int().min(0),
+});
+
+// One kill binding the strategy (OS-8a wire DTO). flatten is a plain
+// boolean: a NULL pre-flatten-era column renders false server-side (OS-8).
+export const boundKillSchema = z.strictObject({
+  event_id: uuid,
+  scope: killScopeSchema,
+  kill_epoch: z.number().int().min(0),
+  flatten: z.boolean(),
+  actor_id: z.string().min(1),
+  recorded_at: utcTimestamp,
+  cleared: killClearedSchema.nullable(),
+});
+
+// Newest breaker row on today's UTC date (OS-11); trigger_ref is the stored
+// TEXT verbatim (the monitor's {daily_pnl, limit, evaluated_at} sample) or null.
+export const breakerEventSchema = z.strictObject({
+  event_id: uuid,
+  recorded_at: utcTimestamp,
+  trigger_ref: z.string().nullable(),
+});
+
+export const safetyStatusSchema = z.strictObject({
+  strategy_id: uuid,
+  lifecycle_state: lifecycleStateSchema,
+  // Non-null iff paused with known provenance (OS-7); drives the resume verb.
+  paused_from: lifecycleStateSchema.nullable(),
+  // The LC-28 acting predicate verbatim — never re-derived client-side.
+  active_kill: z.boolean(),
+  kills: z.array(boundKillSchema),
+  breaker: z.strictObject({
+    active_today: z.boolean(),
+    event: breakerEventSchema.nullable(),
+  }),
+  watchdog: z.strictObject({
+    enabled: z.boolean(),
+    last_heartbeat_at: utcTimestamp.nullable(),
+    seconds_since: z.number().int().min(0).nullable(),
+  }),
+});
+
+// ---- Safety alerts (operator-surface.md OS-18) ---------------------------------
+
+// kind is the OPEN set (SS-25): a plain string, never an enum; details_json
+// is the stored TEXT verbatim, never re-shaped server-side.
+export const safetyAlertSchema = z.strictObject({
+  alert_id: uuid,
+  kind: z.string().min(1),
+  strategy_id: uuid.nullable(),
+  ref_id: z.string().nullable(),
+  details_json: z.string(),
+  recorded_at: utcTimestamp,
+});
+
+export const alertsPageSchema = paginated(safetyAlertSchema);
+
+// ---- Paper-gate report (lifecycle-api.md LC-23) ---------------------------------
+
+export const paperGateConditionSchema = z.strictObject({
+  name: z.string().min(1),
+  passed: z.boolean(),
+  measured: decimal,
+  required: decimal,
+});
+
+export const paperGateReportSchema = z.strictObject({
+  passed: z.boolean(),
+  window_started_at: utcTimestamp.nullable(),
+  evaluated_at: utcTimestamp,
+  conditions: z.array(paperGateConditionSchema),
+});
+
+// ---- Lifecycle / kill / clear bodies and responses ------------------------------
+
+// Body of POST .../lifecycle (LC-4). to: "killed" is never offered by the
+// panel (LC-5: kills flow through the kill endpoint).
+export const lifecycleRequestSchema = z.strictObject({
+  to: lifecycleStateSchema,
+  reason: z.string().min(1),
+});
+
+// LC-13 success envelope.
+export const lifecycleResponseSchema = z.strictObject({
+  strategy_id: uuid,
+  from_state: lifecycleStateSchema,
+  to_state: lifecycleStateSchema,
+  transition_id: uuid,
+  recorded_at: utcTimestamp,
+});
+
+// Body of POST .../kill (safety-wiring.md §Kill endpoints; wire default false).
+export const killRequestSchema = z.strictObject({
+  flatten: z.boolean(),
+});
+
+// Strategy-tier kill acknowledgment — persistence only, never effects.
+export const killResponseSchema = z.strictObject({
+  event_id: uuid,
+  strategy_id: uuid,
+  kill_epoch: z.number().int().min(0),
+  recorded_at: utcTimestamp,
+  flatten: z.boolean(),
+});
+
+// Body of POST .../kill/clear (LC-30): observed_epoch is the CAS token —
+// the displayed standing kill's epoch, never a guess (OS-29).
+export const killClearRequestSchema = z.strictObject({
+  reason: z.string().min(1),
+  observed_epoch: z.number().int().min(0),
+});
+
+// LC-33 clear envelope; scope-id fields render only on their tier (omitempty).
+export const killClearResponseSchema = z.strictObject({
+  clear_id: uuid,
+  scope: killScopeSchema,
+  strategy_id: uuid.optional(),
+  tenant_id: z.string().min(1).optional(),
+  cleared_epoch: z.number().int().min(0),
+  recorded_at: utcTimestamp,
+  superseded_event_ids: z.array(uuid),
+});
+
 // ---- Errors --------------------------------------------------------------------
 
 // Error codes named by the spec; servers may add more, so the schema accepts
@@ -238,3 +373,17 @@ export type PendingApproval = z.infer<typeof pendingApprovalSchema>;
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 export type RunDetail = z.infer<typeof runDetailSchema>;
 export type ApiErrorBody = z.infer<typeof apiErrorBodySchema>;
+export type KillScope = z.infer<typeof killScopeSchema>;
+export type KillCleared = z.infer<typeof killClearedSchema>;
+export type BoundKill = z.infer<typeof boundKillSchema>;
+export type SafetyStatus = z.infer<typeof safetyStatusSchema>;
+export type SafetyAlert = z.infer<typeof safetyAlertSchema>;
+export type AlertsPage = z.infer<typeof alertsPageSchema>;
+export type PaperGateCondition = z.infer<typeof paperGateConditionSchema>;
+export type PaperGateReport = z.infer<typeof paperGateReportSchema>;
+export type LifecycleRequest = z.infer<typeof lifecycleRequestSchema>;
+export type LifecycleResponse = z.infer<typeof lifecycleResponseSchema>;
+export type KillRequest = z.infer<typeof killRequestSchema>;
+export type KillResponse = z.infer<typeof killResponseSchema>;
+export type KillClearRequest = z.infer<typeof killClearRequestSchema>;
+export type KillClearResponse = z.infer<typeof killClearResponseSchema>;

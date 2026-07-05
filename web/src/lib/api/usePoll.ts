@@ -5,17 +5,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { POLL_INTERVAL_MS } from "./client";
+import { ApiError, POLL_INTERVAL_MS } from "./client";
 
 export interface PollState<T> {
   data: T | null;
   error: string | null;
+  // HTTP status of the last failure when it was an ApiError (structured
+  // 429 detection, operator-surface.md OS-25); null otherwise.
+  errorStatus: number | null;
   refresh: () => void;
 }
 
 export function usePoll<T>(load: () => Promise<T>, intervalMs = POLL_INTERVAL_MS): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -26,10 +30,12 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs = POLL_INTERVAL_MS
           if (cancelled) return;
           setData(result);
           setError(null);
+          setErrorStatus(null);
         })
         .catch((err: unknown) => {
           if (cancelled) return;
           setError(err instanceof Error ? err.message : String(err));
+          setErrorStatus(err instanceof ApiError ? err.status : null);
         });
     };
     run();
@@ -41,5 +47,5 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs = POLL_INTERVAL_MS
   }, [load, intervalMs, nonce]);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { data, error, refresh };
+  return { data, error, errorStatus, refresh };
 }

@@ -227,6 +227,19 @@ func (m *Monitor) Beat(strategyID string, at time.Time) {
 	}
 }
 
+// LastBeat reads the strategy's last recorded heartbeat receipt
+// (operator-surface.md §Wiring seams): an hbMu-guarded read of the
+// lastSeen map ONLY — never firstWatched/startedAt (OS-12: baselines are
+// not heartbeats); ok=false when no beat is known. Satisfies the
+// api.WatchdogLiveness seam; sharing hbMu with Beat, the read never
+// blocks a tick beyond the map access.
+func (m *Monitor) LastBeat(strategyID string) (time.Time, bool) {
+	m.hbMu.Lock()
+	defer m.hbMu.Unlock()
+	at, ok := m.lastSeen[strategyID]
+	return at, ok
+}
+
 // Poke nudges an immediate evaluation tick — the live OMS's Config.OnFill
 // seam, the "on every fill" half of the rule (spec §Cadence). Non-blocking
 // and coalescing: pokes arriving during a tick queue at most one extra

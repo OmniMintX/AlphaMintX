@@ -134,7 +134,9 @@ func TestRBACMatrix(t *testing.T) {
 // TestRBACMatrixPins spot-checks the PLAN.md exit-criterion rows so a table
 // edit cannot silently weaken them: Trader cannot change limits; agent
 // tokens are rejected by every endpoint outside their two ingestion routes;
-// env-admin has no read surface.
+// env-admin's read surface is exactly the platform feeds (billing reads
+// plus GET /api/v1/alerts per operator-surface.md OS-19) — never the
+// tenant strategy reads.
 func TestRBACMatrixPins(t *testing.T) {
 	e, dbToks := rbacEnv(t)
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/limits", dbToks.trader,

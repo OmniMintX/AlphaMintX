@@ -578,3 +578,26 @@ func TestWatchdogWatchSetReentryFreshBaseline(t *testing.T) {
 	}
 	h.driver.waitDrive(t)
 }
+
+// TestLastBeat pins the OS-12 read seam (operator-surface.md §Wiring
+// seams): LastBeat reads ONLY lastSeen — a watched strategy with a
+// firstWatched baseline but no beat is ok=false (baselines are never
+// heartbeats), a recorded beat comes back verbatim, and leaving the watch
+// set clears it.
+func TestLastBeat(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "")
+	h.tick() // enters the watch set: firstWatched stamped, no beat
+	if at, ok := h.m.LastBeat(sid); ok {
+		t.Fatalf("LastBeat with no beat = %v, true, want ok=false (baseline is not a heartbeat)", at)
+	}
+	h.m.Beat(sid, testNow)
+	if at, ok := h.m.LastBeat(sid); !ok || !at.Equal(testNow) {
+		t.Fatalf("LastBeat after Beat = %v, %v, want %v, true", at, ok, testNow)
+	}
+	h.st.setState(sid, "paper")
+	h.tick() // leaves the watch set: lastSeen deleted (LC-34b)
+	if at, ok := h.m.LastBeat(sid); ok {
+		t.Fatalf("LastBeat after leaving the watch set = %v, true, want ok=false", at)
+	}
+}

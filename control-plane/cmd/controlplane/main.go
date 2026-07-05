@@ -232,6 +232,12 @@ func serve(dbPath string) error {
 		// Heartbeat receipt lands on the Monitor in live mode (watchdog.md
 		// WD-8); paper deployments leave the sink nil (WD-3).
 		cfg.Heartbeats = monitor
+		// The OS-12 liveness read seam (operator-surface.md §Wiring
+		// seams): wired iff the Monitor runs AND the watchdog is not
+		// disabled; nil renders watchdog.enabled=false with nulls.
+		if !watchdogDisabled {
+			cfg.Watchdog = monitor
+		}
 		// Lifecycle seams (lifecycle-api.md §Wiring seams): the live OMS
 		// is the pause entry-canceler; exchange credentials satisfy the
 		// LC-8 guard input; PaperSubmitter stays false — the live-mode

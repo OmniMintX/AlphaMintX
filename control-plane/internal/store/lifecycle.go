@@ -13,8 +13,15 @@ import "database/sql"
 // necessarily the entry into the current paused period); ok=false when no
 // such row exists (unknown provenance — the machine's paper-only exit).
 func (s *Store) PausedProvenance(strategyID string) (string, bool, error) {
+	return pausedProvenance(s.db, strategyID)
+}
+
+// pausedProvenance is the LC-7 read over dbtx: the lifecycle handler's
+// resume path (via PausedProvenance) and the SafetyStatus snapshot
+// transaction (operator-surface.md OS-7) share this one SQL text.
+func pausedProvenance(q dbtx, strategyID string) (string, bool, error) {
 	var from string
-	err := s.db.QueryRow(`SELECT from_state FROM lifecycle_transitions
+	err := q.QueryRow(`SELECT from_state FROM lifecycle_transitions
 		WHERE strategy_id = ? AND to_state = 'paused'
 		ORDER BY recorded_at DESC, rowid DESC LIMIT 1`, strategyID).Scan(&from)
 	if err == sql.ErrNoRows {

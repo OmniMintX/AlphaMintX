@@ -16,17 +16,33 @@
 import type { z } from "zod";
 
 import {
+  alertsPageSchema,
   apiErrorBodySchema,
   approvalDecisionSchema,
+  killClearResponseSchema,
+  killResponseSchema,
+  lifecycleResponseSchema,
+  paperGateReportSchema,
   runDetailSchema,
   runsPageSchema,
+  safetyStatusSchema,
   strategiesPageSchema,
   strategySchema,
+  type AlertsPage,
   type ApiErrorBody,
   type ApprovalDecision,
   type ApprovalRequest,
+  type KillClearRequest,
+  type KillClearResponse,
+  type KillRequest,
+  type KillResponse,
+  type LifecycleRequest,
+  type LifecycleResponse,
+  type LifecycleState,
+  type PaperGateReport,
   type RunDetail,
   type RunsPage,
+  type SafetyStatus,
   type StrategiesPage,
   type Strategy,
 } from "./schema";
@@ -34,6 +50,11 @@ import { DEFAULT_LIMIT } from "./pagination";
 
 // Polling interval for list/detail revalidation (SSE/websocket is deferred).
 export const POLL_INTERVAL_MS = 10_000;
+
+// Paper-gate poll interval (operator-surface.md OS-25): that GET self-charges
+// the shared READ token's 60/min bucket (LC-24), so it polls at
+// 6 x POLL_INTERVAL_MS (60 s) and never tighter — including on a 429.
+export const PAPER_GATE_POLL_INTERVAL_MS = 6 * POLL_INTERVAL_MS;
 
 export function apiBaseUrl(): string {
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
@@ -61,6 +82,24 @@ export function authHeaders(token: string | undefined): Record<string, string> {
 // Body of POST .../approvals: {verdict_id, approved: bool}.
 export function buildApprovalPayload(verdictId: string, approved: boolean): ApprovalRequest {
   return { verdict_id: verdictId, approved };
+}
+
+// Body of POST .../lifecycle (LC-4): {to, reason}, reason always non-empty
+// (empty reason is 400 SCHEMA_INVALID — the UI never sends without one).
+export function buildLifecyclePayload(to: LifecycleState, reason: string): LifecycleRequest {
+  return { to, reason };
+}
+
+// Body of POST .../kill: {flatten} — always explicit; the wire default is
+// false and no client flattens by omission (safety-wiring.md §Flatten choice).
+export function buildKillPayload(flatten: boolean): KillRequest {
+  return { flatten };
+}
+
+// Body of POST .../kill/clear (LC-30): observed_epoch is the CAS token read
+// from the displayed standing kill (OS-29), threaded verbatim.
+export function buildClearPayload(reason: string, observedEpoch: number): KillClearRequest {
+  return { reason, observed_epoch: observedEpoch };
 }
 
 export class ApiError extends Error {
@@ -115,21 +154,86 @@ export function fetchRunDetail(strategyId: string, runId: string): Promise<RunDe
   return apiGet(`/api/v1/strategies/${strategyId}/runs/${runId}`, runDetailSchema);
 }
 
-// Records the L1 decision through the same-origin server proxy (which holds
-// the OPERATOR_TOKEN; this client never sees it). A repeat decision
-// (double-click, human-vs-timeout race) surfaces as ApiError status 409 with
-// the recorded outcome in error.body.recorded; approved-but-blocked
-// preflight results come back as a normal ApprovalDecision with
-// outcome="approved_but_blocked"; a post-approval OMS submission failure
-// comes back as outcome="approved" with submitted=false.
-export async function postApproval(
-  strategyId: string,
-  payload: ApprovalRequest,
-): Promise<ApprovalDecision> {
-  const res = await fetch(`/api/strategies/${strategyId}/approvals`, {
+// Composite safety status (operator-surface.md OS-7): lifecycle state,
+// binding kills with their clears, breaker-today, watchdog liveness.
+export function fetchSafety(strategyId: string): Promise<SafetyStatus> {
+  return apiGet(`/api/v1/strategies/${strategyId}/safety`, safetyStatusSchema);
+}
+
+// Per-strategy safety_alerts feed (OS-15/OS-16), newest first; pages are
+// per-poll snapshots under LIMIT/OFFSET.
+export function fetchAlerts(strategyId: string, page = 1, limit = DEFAULT_LIMIT): Promise<AlertsPage> {
+  return apiGet(`/api/v1/strategies/${strategyId}/alerts`, alertsPageSchema, { page, limit });
+}
+
+// The LC-23 paper-gate report (LC-24 read). Poll at
+// PAPER_GATE_POLL_INTERVAL_MS only — this GET self-charges the rate bucket.
+export function fetchPaperGate(strategyId: string): Promise<PaperGateReport> {
+  return apiGet(`/api/v1/strategies/${strategyId}/paper-gate`, paperGateReportSchema);
+}
+
+// POSTs to a same-origin Next proxy route (which holds the OPERATOR_TOKEN;
+// this client never sees it and attaches no auth header). Upstream errors
+// pass through verbatim and surface as ApiError (OS-30).
+async function proxyPost<T>(path: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
+  const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return parseResponse(res, approvalDecisionSchema);
+  return parseResponse(res, schema);
+}
+
+// Records the L1 decision through the same-origin server proxy. A repeat
+// decision (double-click, human-vs-timeout race) surfaces as ApiError status
+// 409 with the recorded outcome in error.body.recorded; approved-but-blocked
+// preflight results come back as a normal ApprovalDecision with
+// outcome="approved_but_blocked"; a post-approval OMS submission failure
+// comes back as outcome="approved" with submitted=false.
+export function postApproval(
+  strategyId: string,
+  payload: ApprovalRequest,
+): Promise<ApprovalDecision> {
+  return proxyPost(`/api/strategies/${strategyId}/approvals`, payload, approvalDecisionSchema);
+}
+
+// One lifecycle transition (OS-27). Any 422 (ILLEGAL_TRANSITION,
+// PAPER_GATE_FAILED, "kill tier active") surfaces verbatim, never
+// pre-suppressed — the server is the sole transition authority.
+export function postLifecycle(
+  strategyId: string,
+  payload: LifecycleRequest,
+): Promise<LifecycleResponse> {
+  return proxyPost(`/api/strategies/${strategyId}/lifecycle`, payload, lifecycleResponseSchema);
+}
+
+// Strategy-tier kill (OS-28); the response acknowledges persistence only.
+export function postKill(strategyId: string, payload: KillRequest): Promise<KillResponse> {
+  return proxyPost(`/api/strategies/${strategyId}/kill`, payload, killResponseSchema);
+}
+
+// Strategy-tier clear (OS-29).
+export function postKillClear(
+  strategyId: string,
+  payload: KillClearRequest,
+): Promise<KillClearResponse> {
+  return proxyPost(`/api/strategies/${strategyId}/kill/clear`, payload, killClearResponseSchema);
+}
+
+// Clears the displayed standing strategy kill (OS-29): observed_epoch is the
+// kill_epoch read from the safety card. On a 409 CLEAR_CONFLICT the safety
+// card is re-fetched and the conflict re-thrown for the operator — NEVER an
+// auto-retry with the fresh epoch (the CAS exists so a human re-observes).
+export async function clearStrategyKill(
+  strategyId: string,
+  reason: string,
+  observedEpoch: number,
+  refetchSafety: () => void,
+): Promise<KillClearResponse> {
+  try {
+    return await postKillClear(strategyId, buildClearPayload(reason, observedEpoch));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) refetchSafety();
+    throw err;
+  }
 }

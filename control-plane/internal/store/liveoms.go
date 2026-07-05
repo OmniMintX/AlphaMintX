@@ -776,8 +776,15 @@ func (s *Store) GetLiveOrderForFill(fillID string) (LiveOrder, error) {
 // the given UTC day. The 00:00 UTC auto-reset falls out of the derivation
 // (live-oms-and-reconciler.md §Safety-engine integration).
 func (s *Store) BreakerActiveToday(strategyID, utcDate string) (bool, error) {
+	return breakerActiveToday(s.db, strategyID, utcDate)
+}
+
+// breakerActiveToday is the latch predicate over dbtx: the monitor's read
+// (via BreakerActiveToday) and the SafetyStatus snapshot transaction
+// (operator-surface.md OS-11) share this one SQL text.
+func breakerActiveToday(q dbtx, strategyID, utcDate string) (bool, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM kill_breaker_events
+	err := q.QueryRow(`SELECT COUNT(*) FROM kill_breaker_events
 		WHERE kind = 'breaker' AND substr(recorded_at, 1, 10) = ?
 		AND ((strategy_id IS NULL AND tenant_id IS NULL)
 			OR strategy_id = ?

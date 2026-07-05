@@ -109,6 +109,11 @@ type Config struct {
 	// wired to the safety.Monitor in live mode; nil in paper mode — the
 	// heartbeat handler accepts and discards (WD-3).
 	Heartbeats HeartbeatSink
+	// Watchdog is the OS-12 liveness read seam (operator-surface.md
+	// §Wiring seams), wired to the safety.Monitor iff it is constructed
+	// AND the watchdog is not disabled; nil renders the safety GET's
+	// watchdog object as {"enabled": false} with nulls.
+	Watchdog WatchdogLiveness
 	// EntryCanceler executes EffectCancelEntryOrders after a committed
 	// transition into paused (lifecycle-api.md LC-12); nil alerts instead
 	// of failing the transition.
@@ -201,6 +206,9 @@ func New(cfg Config) *Server {
 		"POST /api/v1/strategies/{id}/kill":              s.handleStrategyKill,
 		"POST /api/v1/strategies/{id}/lifecycle":         s.handlePostLifecycle,
 		"GET /api/v1/strategies/{id}/paper-gate":         s.handleGetPaperGate,
+		"GET /api/v1/strategies/{id}/safety":             s.handleGetSafetyStatus,
+		"GET /api/v1/strategies/{id}/alerts":             s.handleGetStrategyAlerts,
+		"GET /api/v1/alerts":                             s.handleGetGlobalAlerts,
 		"POST /api/v1/strategies/{id}/kill/clear":        s.handleStrategyKillClear,
 		"POST /api/v1/tenants":                           s.handleCreateTenant,
 		"POST /api/v1/tenants/{tenant_id}/kill":          s.handleTenantKill,

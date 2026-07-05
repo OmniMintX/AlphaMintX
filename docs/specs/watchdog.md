@@ -758,6 +758,7 @@ not by this spec)
 - WD-D2 — tenant/platform-tier watchdog escalation and cross-strategy
   agent-host liveness: v1 is per-strategy only, like the parent.
 - WD-D3 — web viewer surface for watchdog/heartbeat status (SW-5
-  neighborhood): v1 surfaces are `safety_alerts` rows and log lines.
+  neighborhood): LANDED — `docs/specs/operator-surface.md` (the OS-12
+  watchdog liveness object on `GET .../safety` and the ops panel).
 - WD-D4 — agent-plane self-restart / supervisor integration: reviving
   a silent agent is an operator runbook act in v1.

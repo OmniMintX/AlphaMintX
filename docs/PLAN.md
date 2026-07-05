@@ -167,6 +167,12 @@ Scope:
   `killed → paper/paused` via the endpoint), LC-16a atomic
   CreateStrategy bootstrap + Open-time migration; unlock/clear/
   lifecycle drills per the spec's §Test obligations.)
+- Operator surface (2026-07-05: landed per `docs/specs/operator-surface.md` —
+  read APIs `GET .../safety` (single-snapshot kill/clear/breaker/watchdog
+  composite), `GET .../alerts` (per-strategy feed), `GET /api/v1/alerts`
+  (env-only global feed), and the web ops panel: safety card, alerts feed,
+  paper-gate report, lifecycle controls, strategy-tier kill/clear via
+  server-side OPERATOR_TOKEN proxies).
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.

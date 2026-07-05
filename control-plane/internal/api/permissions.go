@@ -78,6 +78,15 @@ func Permissions() []RoutePermission {
 		// every reader (LC-24). Always registered, both modes (LC-1).
 		{Method: "POST", Path: "/api/v1/strategies/{id}/lifecycle", Roles: approvers, Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/strategies/{id}/paper-gate", Roles: readers, Classes: []string{classRead}},
+		// Operator surface (operator-surface.md OS-5/OS-15/OS-19): the
+		// two strategy-scoped safety reads are standard reader rows; the
+		// global alert feed is env-class only — no DB role, so every
+		// tenant principal is 403 (OS-20: safety_alerts has no tenant
+		// column and NULL-strategy rows are platform operational data).
+		// Always registered, both modes.
+		{Method: "GET", Path: "/api/v1/strategies/{id}/safety", Roles: readers, Classes: []string{classRead}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/alerts", Roles: readers, Classes: []string{classRead}},
+		{Method: "GET", Path: "/api/v1/alerts", Classes: []string{classRead, classEnvAdmin}},
 		// Kill-clear tiers (lifecycle-api.md LC-29): one level stricter
 		// than kill on the strategy tier (unlock is Admin+); the platform
 		// tier is env-admin ONLY. Always registered, mode-independent.
