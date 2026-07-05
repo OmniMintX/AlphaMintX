@@ -19,8 +19,9 @@ type RoutePermission struct {
 	Public bool
 	// Requires names optional wiring the route depends on: "" always
 	// registered, requiresIngestion (limits + runtime state),
-	// requiresLimits (a limits provider), or requiresLiveOMS (a
-	// ReconStatusProvider — live deployments only).
+	// requiresLimits (a limits provider), requiresLiveOMS (a
+	// ReconStatusProvider — live deployments only), or requiresBackup (a
+	// BackupEngine — CONTROLPLANE_BACKUP_DIR configured).
 	Requires string
 }
 
@@ -28,6 +29,7 @@ const (
 	requiresIngestion = "ingestion"
 	requiresLimits    = "limits"
 	requiresLiveOMS   = "live-oms"
+	requiresBackup    = "backup"
 )
 
 // allows reports whether the principal's role (user class) or class (env
@@ -114,5 +116,11 @@ func Permissions() []RoutePermission {
 		// POSTs). Both exist only when the live OMS is wired.
 		{Method: "GET", Path: "/api/v1/oms/recon/status", Roles: readers, Classes: []string{classRead, classEnvAdmin}, Requires: requiresLiveOMS},
 		{Method: "POST", Path: "/api/v1/oms/recon/run", Classes: []string{classEnvAdmin}, Requires: requiresLiveOMS},
+		// Backup (ops-backup.md OB-6/OB-7): both routes are deployer acts
+		// — env-admin class ONLY, no DB role (tenants never see platform
+		// backups) — and exist only when the backup engine is configured
+		// (CONTROLPLANE_BACKUP_DIR); unconfigured deployments 404.
+		{Method: "POST", Path: "/api/v1/ops/backups/run", Classes: []string{classEnvAdmin}, Requires: requiresBackup},
+		{Method: "GET", Path: "/api/v1/ops/backups", Classes: []string{classEnvAdmin}, Requires: requiresBackup},
 	}
 }

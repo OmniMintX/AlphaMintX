@@ -59,6 +59,14 @@ const (
 	// kill body must carry the explicit ack literal; missing/wrong is 400
 	// and NO row is written.
 	codePlatformKillAckRequired = "PLATFORM_KILL_ACK_REQUIRED"
+	// Backup codes (ops-backup.md OB-6): the 409s follow the
+	// RECON_RUNNING/TENANT_EXISTS precedent; the two 500s deliberately
+	// bypass the uniform INTERNAL envelope and use the standard error
+	// shape with these specific codes.
+	codeBackupInProgress   = "BACKUP_IN_PROGRESS"
+	codeBackupExists       = "BACKUP_EXISTS"
+	codeBackupFailed       = "BACKUP_FAILED"
+	codeBackupVerifyFailed = "BACKUP_VERIFY_FAILED"
 	// Lifecycle and kill-clear codes (lifecycle-api.md §Error codes).
 	codeInvalidLifecycleState    = "INVALID_LIFECYCLE_STATE"
 	codeUseKillEndpoint          = "USE_KILL_ENDPOINT"

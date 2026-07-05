@@ -100,6 +100,10 @@ type Config struct {
 	// deployments) leaves them unregistered (404), preserving the
 	// Phase 1/2 surface exactly (live-oms-and-reconciler.md §API surface).
 	ReconStatus ReconStatusProvider
+	// Backup enables the two /api/v1/ops/backups routes (ops-backup.md
+	// OB-6/OB-7); nil (no CONTROLPLANE_BACKUP_DIR) leaves them
+	// unregistered (404). Mode-independent: paper deployments wire it too.
+	Backup BackupEngine
 	// SafetyDriver is the OPTIONAL on-demand effects drive invoked by the
 	// kill handlers after their row is acknowledged (safety-wiring.md
 	// §API surface); nil in paper mode — no drive runs, the persisted row
@@ -227,6 +231,8 @@ func New(cfg Config) *Server {
 		"GET /api/v1/billing/reconciliations/{recon_id}": s.handleGetReconciliation,
 		"GET /api/v1/oms/recon/status":                   s.handleGetReconStatus,
 		"POST /api/v1/oms/recon/run":                     s.handlePostReconRun,
+		"POST /api/v1/ops/backups/run":                   s.handlePostBackupRun,
+		"GET /api/v1/ops/backups":                        s.handleListBackups,
 	}
 	for _, perm := range Permissions() {
 		switch perm.Requires {
@@ -240,6 +246,10 @@ func New(cfg Config) *Server {
 			}
 		case requiresLiveOMS:
 			if cfg.ReconStatus == nil {
+				continue
+			}
+		case requiresBackup:
+			if cfg.Backup == nil {
 				continue
 			}
 		}

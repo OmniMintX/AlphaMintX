@@ -103,6 +103,22 @@ func serve(dbPath string) error {
 		AdminToken:        os.Getenv("CONTROLPLANE_ADMIN_TOKEN"),
 	}
 
+	// The backup engine (ops-backup.md OB-8): dir enables the whole
+	// surface, mode-independently — paper deployments wire it too.
+	backupCfg, err := parseBackupConfig(
+		os.Getenv("CONTROLPLANE_BACKUP_DIR"),
+		os.Getenv("CONTROLPLANE_BACKUP_RETAIN"),
+		os.Getenv("CONTROLPLANE_BACKUP_INTERVAL_HOURS"),
+	)
+	if err != nil {
+		return err
+	}
+	var backup *backupEngine
+	if backupCfg != nil {
+		backup = &backupEngine{st: st, dir: backupCfg.dir, retain: backupCfg.retain}
+		cfg.Backup = backup
+	}
+
 	limits, err := parseRiskLimits(os.Getenv("CONTROLPLANE_RISK_LIMITS"))
 	if err != nil {
 		return err
@@ -337,6 +353,34 @@ func serve(dbPath string) error {
 		}
 	}()
 
+	if backup != nil && backupCfg.interval > 0 {
+		// Start-anchored periodic backup loop (ops-backup.md OB-10):
+		// first run one interval after boot, cancelled with the serve
+		// context; failures log LOUDLY and the loop continues at cadence;
+		// an in-progress backup is skipped, never queued (OB-6a).
+		go func() {
+			ticker := time.NewTicker(backupCfg.interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					res, err := backup.Run(ctx)
+					switch {
+					case errors.Is(err, store.ErrBackupInProgress):
+						log.Printf("periodic backup: another backup in progress, skipping this tick")
+					case err != nil:
+						log.Printf("BACKUP FAILED: periodic backup: %v", err)
+					default:
+						log.Printf("periodic backup: artifact %s sha256 %s bytes %d duration %s",
+							res.Artifact, res.SHA256, res.Bytes, res.FinishedAt.Sub(res.StartedAt))
+					}
+				}
+			}
+		}()
+	}
+
 	addr := os.Getenv("CONTROLPLANE_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -362,6 +406,23 @@ func serve(dbPath string) error {
 		return err
 	}
 	return nil
+}
+
+// backupEngine adapts the store engine to api.BackupEngine (ops-backup.md
+// §Wiring seams): dir and retain are captured from the OB-8 env once here;
+// the api/store packages receive plain values (OB-8a).
+type backupEngine struct {
+	st     *store.Store
+	dir    string
+	retain int
+}
+
+func (b *backupEngine) Run(ctx context.Context) (store.BackupResult, error) {
+	return b.st.Backup(ctx, b.dir, b.retain)
+}
+
+func (b *backupEngine) List() ([]store.BackupInfo, error) {
+	return b.st.ListBackups(b.dir)
 }
 
 // parseAgentTokens parses "strategy_id=token,strategy_id=token". Values are

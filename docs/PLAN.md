@@ -173,6 +173,15 @@ Scope:
   (env-only global feed), and the web ops panel: safety card, alerts feed,
   paper-gate report, lifecycle controls, strategy-tier kill/clear via
   server-side OPERATOR_TOKEN proxies).
+- Ops readiness for the 30-day beta (2026-07-05: landed per
+  `docs/specs/ops-backup.md` — online `control.db` backup
+  (`POST /api/v1/ops/backups/run`: single-connection hold +
+  wal_checkpoint(TRUNCATE) + byte-copy + integrity/FK/count-parity
+  verification, rowid-preserving — VACUUM stays forbidden), retention,
+  periodic loop, `GET /api/v1/ops/backups`, offline `cmd/backupverify`,
+  the OB-12 restore procedure incl. the mandatory post-restore safety
+  diff, and the operator `docs/RUNBOOK.md` (OB-14). Live drill on the
+  soak deployment: backup verified + restored copy booted and served.)
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.

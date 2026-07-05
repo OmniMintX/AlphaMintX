@@ -371,6 +371,11 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		"ListNonTerminalLiveOrders": true, "GetOrderIntent": true, "ListFillsByOrder": true,
 		"ListFilledProtectiveEntries": true, "GetLiveOrderForFill": true,
 		"BreakerActiveToday": true,
+		// Ops backup surface (ops-backup.md OB-2..OB-9): Backup performs
+		// zero LOGICAL writes to the DB (OB-3; file-level snapshot +
+		// retention in the backup dir) and ListBackups is a readdir —
+		// neither adds an UPDATE/DELETE surface.
+		"Backup": true, "ListBackups": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

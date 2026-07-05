@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -244,6 +245,65 @@ func parseBreakerIntervals(activeRaw, idleRaw string) (time.Duration, time.Durat
 // it (no monitor runs, so setting it there is a no-op).
 func parseWatchdogDisabled(v string) bool {
 	return v == "1" || v == "true"
+}
+
+// backupConfig carries the parsed OB-8 backup settings (ops-backup.md):
+// all three variables are read in cmd wiring only (OB-8a); the api/store
+// packages receive plain values.
+type backupConfig struct {
+	dir      string
+	retain   int           // 0 = keep everything (OB-9 disabled)
+	interval time.Duration // 0 = manual only (OB-10 disabled)
+}
+
+// parseBackupConfig validates the OB-8 environment; dir "" yields nil (the
+// whole surface stays unregistered). The dir MUST exist and be a writable
+// directory at startup (fail-fast); retain and intervalHours are optional
+// ints >= 1 — 0/unset disables each, anything else refuses to start.
+func parseBackupConfig(dir, retainRaw, intervalRaw string) (*backupConfig, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("CONTROLPLANE_BACKUP_DIR %q: %w (must exist, ops-backup.md OB-8)", dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("CONTROLPLANE_BACKUP_DIR %q: not a directory (ops-backup.md OB-8)", dir)
+	}
+	probe, err := os.CreateTemp(dir, ".backup-writable-probe-*")
+	if err != nil {
+		return nil, fmt.Errorf("CONTROLPLANE_BACKUP_DIR %q: not writable: %w (ops-backup.md OB-8)", dir, err)
+	}
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probe.Name())
+		return nil, fmt.Errorf("CONTROLPLANE_BACKUP_DIR %q: %w", dir, err)
+	}
+	if err := os.Remove(probe.Name()); err != nil {
+		return nil, fmt.Errorf("CONTROLPLANE_BACKUP_DIR %q: %w", dir, err)
+	}
+	c := &backupConfig{dir: dir}
+	if retainRaw != "" {
+		n, err := strconv.Atoi(retainRaw)
+		if err != nil {
+			return nil, fmt.Errorf("CONTROLPLANE_BACKUP_RETAIN %q: %w", retainRaw, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("CONTROLPLANE_BACKUP_RETAIN %d: must be >= 0 (0/unset = keep everything)", n)
+		}
+		c.retain = n
+	}
+	if intervalRaw != "" {
+		n, err := strconv.Atoi(intervalRaw)
+		if err != nil {
+			return nil, fmt.Errorf("CONTROLPLANE_BACKUP_INTERVAL_HOURS %q: %w", intervalRaw, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("CONTROLPLANE_BACKUP_INTERVAL_HOURS %d: must be >= 0 (0/unset = manual only)", n)
+		}
+		c.interval = time.Duration(n) * time.Hour
+	}
+	return c, nil
 }
 
 // splitSymbols parses the CONTROLPLANE_SYMBOLS comma list of canonical

@@ -43,16 +43,20 @@ func (f *fakeReconStatus) TriggerRun(context.Context, bool) error { return f.run
 
 // rbacEnv is the FULLY-WIRED server of the RBAC matrix test: every optional
 // dependency set (gatedEnv wires limits + runtime state; the fake recon
-// provider registers the live-OMS routes), so every route in the permission
-// table is registered, plus tenant-1 with one strategy and a DB token per
-// role and a DB agent token.
+// provider registers the live-OMS routes; the fake backup engine registers
+// the ops-backup routes), so every route in the permission table is
+// registered, plus tenant-1 with one strategy and a DB token per role and a
+// DB agent token.
 type rbacPrincipals struct {
 	viewer, trader, admin, owner, agent string
 }
 
 func rbacEnv(t *testing.T) (*testEnv, rbacPrincipals) {
 	t.Helper()
-	e := gatedEnv(t, func(cfg *Config) { cfg.ReconStatus = &fakeReconStatus{} })
+	e := gatedEnv(t, func(cfg *Config) {
+		cfg.ReconStatus = &fakeReconStatus{}
+		cfg.Backup = &fakeBackupEngine{}
+	})
 	createTenant(t, e.store, "tenant-1")
 	createStrategy(t, e.store, strat1, "paper")
 	p := rbacPrincipals{
@@ -134,9 +138,10 @@ func TestRBACMatrix(t *testing.T) {
 // TestRBACMatrixPins spot-checks the PLAN.md exit-criterion rows so a table
 // edit cannot silently weaken them: Trader cannot change limits; agent
 // tokens are rejected by every endpoint outside their two ingestion routes;
-// env-admin's read surface is exactly the platform feeds (billing reads
-// plus GET /api/v1/alerts per operator-surface.md OS-19) — never the
-// tenant strategy reads.
+// env-admin's read surface is exactly the platform feeds (billing reads,
+// GET /api/v1/alerts per operator-surface.md OS-19, and GET
+// /api/v1/ops/backups per ops-backup.md OB-7) — never the tenant strategy
+// reads.
 func TestRBACMatrixPins(t *testing.T) {
 	e, dbToks := rbacEnv(t)
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/limits", dbToks.trader,
@@ -146,6 +151,11 @@ func TestRBACMatrixPins(t *testing.T) {
 	wantError(t, e.do(t, "POST", "/api/v1/tenants/tenant-1/kill", dbToks.agent, nil), 403, codeForbidden)
 	wantError(t, e.do(t, "GET", "/api/v1/strategies", adminTok, nil), 403, codeForbidden)
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/approvals", adminTok, nil), 403, codeForbidden)
+	// Positive half of the env-admin read-surface claim: the platform
+	// backup list (ops-backup.md OB-7) IS reachable for the env-admin.
+	if rec := e.do(t, "GET", "/api/v1/ops/backups", adminTok, nil); rec.Code != http.StatusOK {
+		t.Errorf("env-admin GET /api/v1/ops/backups = %d (body %q), want 200", rec.Code, rec.Body.String())
+	}
 }
 
 // TestReconStatusTenantFiltered: tenant principals receive ONLY the

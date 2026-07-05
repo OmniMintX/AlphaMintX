@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,6 +71,20 @@ var ErrPeriodOpen = errors.New("PERIOD_OPEN")
 // Store wraps the single control-plane SQLite file.
 type Store struct {
 	db *sql.DB
+	// path is the RAW configured DB file path recorded at Open (the DSN is
+	// URL-escaped); the backup copy reads this file directly
+	// (docs/specs/ops-backup.md OB-2 step 4).
+	path string
+
+	// backupMu is the OB-6a engine mutex: at most one backup at a time,
+	// covering retention and the `.tmp` cleanup too; a concurrent call
+	// fails immediately with ErrBackupInProgress, never queues.
+	backupMu sync.Mutex
+	// backupNow overrides the artifact-name clock in tests; nil = time.Now.
+	backupNow func() time.Time
+	// backupVerify overrides the OB-5 artifact verification in tests;
+	// nil = verifyBackupArtifact.
+	backupVerify func(artifactPath string, fingerprint []tableCount) error
 }
 
 // Open opens (creating if absent) the DB at path, applies the connection
@@ -106,7 +121,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("lifecycle bootstrap migration %s: %w", path, err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
 
 // migrateTenancy is the additive Phase-2 migration (multi-tenant-rbac.md

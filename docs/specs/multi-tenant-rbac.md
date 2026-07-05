@@ -204,6 +204,8 @@ DB principals:
 | `POST /api/v1/platform/kill/clear` (env-admin ONLY) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST/GET /api/v1/tokens`, `POST .../revoke` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/tenants` | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `POST /api/v1/ops/backups/run` (env-admin ONLY — ops-backup.md OB-6) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `GET /api/v1/ops/backups` (env-admin ONLY — ops-backup.md OB-7) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `GET /health` | unauthenticated | | | | |
 
 Env classes (platform-scoped, §Principals): read ⇒ all strategy-data GETs,

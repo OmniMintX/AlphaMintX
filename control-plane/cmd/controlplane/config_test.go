@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -160,4 +162,70 @@ func TestParseWatchdogDisabled(t *testing.T) {
 			t.Errorf("parseWatchdogDisabled(%q) = %v, want %v", v, got, want)
 		}
 	}
+}
+
+// TestParseBackupConfig pins the OB-8 fail-fast startup validation
+// (ops-backup.md): dir "" disables the surface (nil config), the dir must
+// exist and be a writable directory, and retain/interval are optional
+// ints >= 0 where 0/unset disables each.
+func TestParseBackupConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []struct {
+		name         string
+		dir          string
+		retain       string
+		interval     string
+		wantNil      bool
+		wantErr      string
+		wantRetain   int
+		wantInterval time.Duration
+	}{
+		{name: "unset dir disables", dir: "", retain: "5", interval: "6", wantNil: true},
+		{name: "dir only", dir: dir},
+		{name: "full config", dir: dir, retain: "5", interval: "3",
+			wantRetain: 5, wantInterval: 3 * time.Hour},
+		{name: "explicit zeros are unset", dir: dir, retain: "0", interval: "0"},
+		{name: "missing dir", dir: filepath.Join(dir, "absent"), wantErr: "must exist"},
+		{name: "dir is a file", dir: writeTempFile(t, dir), wantErr: "not a directory"},
+		{name: "negative retain", dir: dir, retain: "-1", wantErr: "CONTROLPLANE_BACKUP_RETAIN"},
+		{name: "garbage retain", dir: dir, retain: "many", wantErr: "CONTROLPLANE_BACKUP_RETAIN"},
+		{name: "negative interval", dir: dir, interval: "-1", wantErr: "CONTROLPLANE_BACKUP_INTERVAL_HOURS"},
+		{name: "garbage interval", dir: dir, interval: "daily", wantErr: "CONTROLPLANE_BACKUP_INTERVAL_HOURS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parseBackupConfig(tc.dir, tc.retain, tc.interval)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseBackupConfig: %v", err)
+			}
+			if tc.wantNil {
+				if cfg != nil {
+					t.Fatalf("cfg = %+v, want nil (surface disabled)", cfg)
+				}
+				return
+			}
+			if cfg == nil || cfg.dir != tc.dir || cfg.retain != tc.wantRetain || cfg.interval != tc.wantInterval {
+				t.Errorf("cfg = %+v, want dir=%q retain=%d interval=%v",
+					cfg, tc.dir, tc.wantRetain, tc.wantInterval)
+			}
+		})
+	}
+}
+
+// writeTempFile creates a plain file inside dir and returns its path (the
+// "dir is a file" case above).
+func writeTempFile(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "plain-file")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
 }
