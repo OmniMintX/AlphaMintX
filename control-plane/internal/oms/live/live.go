@@ -45,6 +45,12 @@ var (
 	// ErrKillEpochStale: a newer kill epoch arrived between journal and
 	// send; the order is dropped (risk-limits.md OMS kill re-check).
 	ErrKillEpochStale = errors.New("KILL_SWITCH_ACTIVE: kill-epoch stale at submission")
+	// ErrKillSwitchActive: a standing kill binds the strategy
+	// (GlobalMaxKillEpoch > 0) — fresh ENTRY submissions are rejected;
+	// safety-origin flatten/protective submissions are exempt and rely on
+	// the transmit-loop staleness comparison (safety-wiring.md
+	// invariant 15).
+	ErrKillSwitchActive = errors.New("KILL_SWITCH_ACTIVE: a standing kill binds the strategy; ENTRY submissions rejected")
 	// ErrBreakerActive: the circuit breaker binds the strategy on the
 	// current UTC day — ENTRY submissions halt (protectives and reduce-only
 	// continue); derived from kill_breaker_events, auto-reset at 00:00 UTC.
@@ -91,6 +97,11 @@ type Config struct {
 	Rand *mrand.Rand
 	// Logf defaults to log.Printf. MUST NOT be handed secrets or URLs.
 	Logf func(format string, args ...any)
+	// OnFill is an OPTIONAL hook invoked after booking ANY fill (stream
+	// and backfill alike) — the breaker monitor's Poke seam
+	// (safety-wiring.md §Evaluation loop). It MUST return promptly; a
+	// panic is recovered and logged, never propagated.
+	OnFill func(strategyID string)
 }
 
 // OMS is the live order manager. One mutex guards the gate state (startup
@@ -111,6 +122,7 @@ type OMS struct {
 	sleep     func(time.Duration)
 	rng       *mrand.Rand // jitter source; o.mu serializes draws
 	logf      func(format string, args ...any)
+	onFill    func(strategyID string)
 
 	mu sync.Mutex
 	// reconciled: the MANDATORY startup reconcile completed; until then
@@ -128,6 +140,10 @@ type OMS struct {
 	filtersStale bool
 	running      bool // one reconcile run at a time
 	reconFails   int  // consecutive startup-grade failures
+	// lastReconcileEnd: completion time of the last full reconcile run —
+	// the safety drive's served-marker gate (safety-wiring.md
+	// invariant 16).
+	lastReconcileEnd time.Time
 
 	// driveMu serializes protective drives: the reconcile-completion and
 	// stream-fill triggers may overlap (§Protective order lifecycle).
@@ -190,6 +206,7 @@ func newOMS(cfg Config) (*OMS, error) {
 		sleep:     cfg.Sleep,
 		rng:       cfg.Rand,
 		logf:      cfg.Logf,
+		onFill:    cfg.OnFill,
 	}
 	for _, sym := range o.symbols {
 		venue, err := marketdata.ToBinance(sym)

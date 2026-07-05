@@ -17,6 +17,10 @@ type Tuning struct {
 	RecvWindowMS               int `json:"recv_window_ms"`
 	SLPlacementDeadlineSeconds int `json:"sl_placement_deadline_seconds"`
 	ReconFailureAlertThreshold int `json:"recon_failure_alert_threshold"`
+	// SafetyEffectStallSeconds is the safety.Monitor stall-scan threshold
+	// (safety-wiring.md §Safety-effects driver step 5); the live OMS
+	// carries it only because it joins CONTROLPLANE_LIVE_OMS_TUNING.
+	SafetyEffectStallSeconds int `json:"safety_effect_stall_seconds"`
 }
 
 // DefaultTuning returns the normative defaults.
@@ -29,6 +33,7 @@ func DefaultTuning() Tuning {
 		RecvWindowMS:               5000,
 		SLPlacementDeadlineSeconds: 30,
 		ReconFailureAlertThreshold: 3,
+		SafetyEffectStallSeconds:   600,
 	}
 }
 
@@ -53,6 +58,7 @@ func ParseTuning(raw string) (Tuning, error) {
 		"recv_window_ms":                t.RecvWindowMS,
 		"sl_placement_deadline_seconds": t.SLPlacementDeadlineSeconds,
 		"recon_failure_alert_threshold": t.ReconFailureAlertThreshold,
+		"safety_effect_stall_seconds":   t.SafetyEffectStallSeconds,
 	} {
 		if v <= 0 {
 			return Tuning{}, fmt.Errorf("live: CONTROLPLANE_LIVE_OMS_TUNING: %s must be > 0", name)

@@ -31,6 +31,7 @@ import (
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/omsbridge"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/runstate"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/safety"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -107,11 +108,12 @@ func serve(dbPath string) error {
 		return err
 	}
 	var hydrator *runstate.Hydrator
+	var provider *api.LimitsProvider
 	if limits != nil {
 		// The provider hydrates the persisted risk_limit_changes overlay
 		// here, in the server layer after store.Open (multi-tenant-rbac.md
 		// §Runtime limit changes): the overlay always beats the env base.
-		provider, err := api.NewLimitsProvider(st, *limits)
+		provider, err = api.NewLimitsProvider(st, *limits)
 		if err != nil {
 			return err
 		}
@@ -148,6 +150,7 @@ func serve(dbPath string) error {
 
 	var bridge *omsbridge.Bridge
 	var liveOMS *live.OMS
+	var monitor *safety.Monitor
 	switch {
 	case liveCfg != nil:
 		if os.Getenv("CONTROLPLANE_FILL_MODEL") != "" {
@@ -163,6 +166,14 @@ func serve(dbPath string) error {
 			os.Getenv("CONTROLPLANE_BINANCE_REST_URL"), os.Getenv("CONTROLPLANE_BINANCE_WS_URL")); err != nil {
 			return err
 		}
+		// The breaker-monitor knobs are read only in live mode (paper
+		// deployments ignore them, safety-wiring.md §Config).
+		breakerActive, breakerIdle, err := parseBreakerIntervals(
+			os.Getenv("CONTROLPLANE_BREAKER_INTERVAL_ACTIVE"),
+			os.Getenv("CONTROLPLANE_BREAKER_INTERVAL_IDLE"))
+		if err != nil {
+			return err
+		}
 		ex := exchange.NewBinance(liveCfg.env, liveCfg.apiKey, liveCfg.apiSecret, nil)
 		ex.RecvWindow = time.Duration(liveCfg.tuning.RecvWindowMS) * time.Millisecond
 		liveOMS, err = live.New(live.Config{
@@ -173,12 +184,36 @@ func serve(dbPath string) error {
 			AllocatedCapitalQuote: limits.AllocatedCapitalQuote,
 			VenueEnv:              string(liveCfg.env),
 			Tuning:                liveCfg.tuning,
+			// OnFill is the breaker monitor's Poke seam (safety-wiring.md
+			// §Evaluation loop); the monitor is assigned right below,
+			// before any fill can flow (Run starts later).
+			OnFill: func(strategyID string) {
+				if monitor != nil {
+					monitor.Poke(strategyID)
+				}
+			},
+		})
+		if err != nil {
+			return err
+		}
+		monitor, err = safety.New(safety.Config{
+			Store:          st,
+			PnL:            hydrator,
+			Limits:         provider,
+			Marks:          marks,
+			Driver:         liveOMS,
+			Recon:          liveOMS,
+			ActiveInterval: breakerActive,
+			IdleInterval:   breakerIdle,
+			StallThreshold: time.Duration(liveCfg.tuning.SafetyEffectStallSeconds) * time.Second,
+			Logf:           log.Printf,
 		})
 		if err != nil {
 			return err
 		}
 		cfg.Submitter = liveOMS
 		cfg.ReconStatus = liveOMS
+		cfg.SafetyDriver = liveOMS
 	case os.Getenv("CONTROLPLANE_FILL_MODEL") != "":
 		raw := os.Getenv("CONTROLPLANE_FILL_MODEL")
 		if limits == nil {
@@ -213,6 +248,9 @@ func serve(dbPath string) error {
 				log.Printf("live OMS: %v", err)
 			}
 		}()
+		// The breaker monitor runs iff CONTROLPLANE_OMS_MODE=live and
+		// stops with server shutdown (safety-wiring.md §Lifecycle).
+		go monitor.Run(ctx)
 	}
 
 	if len(symbols) > 0 {

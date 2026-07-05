@@ -1,7 +1,9 @@
 package store
 
 // schemaDDL is the normative DDL from docs/specs/persistence-and-api.md
-// §Tables, made idempotent with IF NOT EXISTS so Open can always apply it.
+// §Tables (safety_effects and safety_alerts: docs/specs/safety-wiring.md
+// §Crash-resumable safety effects), made idempotent with IF NOT EXISTS so
+// Open can always apply it.
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS strategies (strategy_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
   name TEXT NOT NULL, lifecycle_state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -60,6 +62,8 @@ CREATE TABLE IF NOT EXISTS rejected_submissions (       -- append-only; malforme
   reason TEXT NOT NULL, payload_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS kill_breaker_events (event_id TEXT PRIMARY KEY,  -- append-only safety audit
   kind TEXT NOT NULL CHECK (kind IN ('kill','breaker')), scope TEXT NOT NULL, strategy_id TEXT,
+  -- tenant_id is NOT here: it arrives via migrateTenancy's guarded ALTER (store.go) so
+  -- pre-existing databases gain it too.
   kill_epoch INTEGER, flatten INTEGER, trigger_ref TEXT, actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS risk_limit_changes (change_id TEXT PRIMARY KEY,  -- append-only limit audit
   strategy_id TEXT NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT NOT NULL,
@@ -158,4 +162,12 @@ CREATE TABLE IF NOT EXISTS venue_epochs (               -- append-only; row inse
   started_at TEXT NOT NULL,                             -- R5 cold-start startTime bootstrap
   reason TEXT NOT NULL CHECK (reason IN ('initial','venue_reset_accepted')),
   details_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS safety_effects (             -- served markers: the insert IS completion
+  event_id TEXT PRIMARY KEY REFERENCES kill_breaker_events,
+  completed_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS safety_alerts (              -- append-only monitor/driver alerts
+  alert_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,                                   -- OPEN set (SS-25 pattern); registry in §Alerts
+  strategy_id TEXT, ref_id TEXT,                        -- ref_id: nullable dedupe key (§Alerts)
+  details_json TEXT NOT NULL, recorded_at TEXT NOT NULL);
 `

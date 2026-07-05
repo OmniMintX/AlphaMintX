@@ -185,7 +185,31 @@ Exit criteria:
       orders canceled, protective stops preserved (canceled only after flatten
       fills), optional reduce-only flatten, no auto-restart, effects resumable
       across a control-plane restart.
+      (2026-07-05: implementation complete per `docs/specs/safety-wiring.md`
+      — all 3 kill endpoints (strategy NEW, tenant extended with flatten,
+      platform NEW behind the `KILL-PLATFORM` ack literal), derive-from-state
+      `DriveSafetyEffects` re-driver (unserved kill/breaker rows re-drive
+      after every reconcile; served markers require a strictly-post-event
+      reconcile), standing-kill check in `submitEntry`
+      (`KILL_SWITCH_ACTIVE`), `AppendKillLifecycleLock` (live_* → killed,
+      in-tx), additive `safety_effects`/`safety_alerts` tables (soak
+      `control.db` copy opens unchanged, 590 runs intact). Fake-venue
+      drills KD1–KD10 green in CI incl. crash-resume restart, tenant
+      no-bleed, platform coverage, no-double-flatten, dust carve-out.
+      REMAINING: run `TestTestnetDrill_KillSwitch` against the REAL
+      Binance testnet (operator keys required; fails on vacuous evidence).)
 - [ ] Circuit breaker fires from the PnL monitor in a live-testnet scenario:
       reduce-only flatten + demote to L0 until next UTC day.
+      (2026-07-05: `internal/safety` breaker Monitor implemented — ≤10s
+      ticks with open exposure (`CONTROLPLANE_BREAKER_INTERVAL_ACTIVE`,
+      default 5s), `Poke` on every booked fill, fires at
+      `DailyPnL <= -daily_loss_limit_quote` exactly once per strategy per
+      UTC day (derived `BreakerActiveToday` latch — survives restart,
+      auto-re-arms at 00:00 UTC), persist-then-execute breaker row +
+      flatten via the shared safety driver; limit-unset guard,
+      not-reconciled skip, stale-mark fail-open-loud alerts, tick-panic
+      recovery. Breaker drills BD1–BD5 green in CI incl. latch-across-
+      restart and next-UTC-day re-arm. REMAINING: run
+      `TestTestnetDrill_Breaker` against the REAL Binance testnet.)
 - [ ] ≥1 design-partner tenant completes 30 days of live beta within limits with
       zero invariant violations in audit review.

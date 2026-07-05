@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -195,6 +197,44 @@ func validateVenuePairing(env exchange.Env, restURL, wsURL string) error {
 		}
 	}
 	return nil
+}
+
+// Breaker-monitor cadence defaults and bounds (safety-wiring.md §Config):
+// ACTIVE defaults to 5 s within the hard [1, 10] bound (risk-limits.md:
+// <= 10 s while positions are open); IDLE defaults to 60 s within
+// [ACTIVE, 600]. Out of bounds or non-integer refuses to start.
+const (
+	defaultBreakerActiveSeconds = 5
+	defaultBreakerIdleSeconds   = 60
+)
+
+// parseBreakerIntervals validates CONTROLPLANE_BREAKER_INTERVAL_ACTIVE and
+// _IDLE (integer seconds, fail-closed); "" means the normative default.
+// Read only in live mode — paper deployments ignore both.
+func parseBreakerIntervals(activeRaw, idleRaw string) (time.Duration, time.Duration, error) {
+	active := defaultBreakerActiveSeconds
+	if activeRaw != "" {
+		n, err := strconv.Atoi(activeRaw)
+		if err != nil {
+			return 0, 0, fmt.Errorf("CONTROLPLANE_BREAKER_INTERVAL_ACTIVE %q: %w", activeRaw, err)
+		}
+		active = n
+	}
+	if active < 1 || active > 10 {
+		return 0, 0, fmt.Errorf("CONTROLPLANE_BREAKER_INTERVAL_ACTIVE %d: bounds [1, 10] (risk-limits.md: <= 10 s while positions are open)", active)
+	}
+	idle := defaultBreakerIdleSeconds
+	if idleRaw != "" {
+		n, err := strconv.Atoi(idleRaw)
+		if err != nil {
+			return 0, 0, fmt.Errorf("CONTROLPLANE_BREAKER_INTERVAL_IDLE %q: %w", idleRaw, err)
+		}
+		idle = n
+	}
+	if idle < active || idle > 600 {
+		return 0, 0, fmt.Errorf("CONTROLPLANE_BREAKER_INTERVAL_IDLE %d: bounds [ACTIVE=%d, 600]", idle, active)
+	}
+	return time.Duration(active) * time.Second, time.Duration(idle) * time.Second, nil
 }
 
 // splitSymbols parses the CONTROLPLANE_SYMBOLS comma list of canonical

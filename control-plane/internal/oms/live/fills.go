@@ -304,7 +304,24 @@ func (o *OMS) bookVenueFill(f venueFill, runID *string) (bool, error) {
 		// likewise cancels its sibling TP once the position is closed).
 		o.cancelRestingProtectives(f.target.strategyID, f.target.symbol, f.target.orderID)
 	}
+	o.notifyFill(f.target.strategyID)
 	return true, o.appendFillEvents(f, conv, runID)
+}
+
+// notifyFill invokes the optional Config.OnFill hook after a booked fill
+// (the breaker monitor's Poke seam, safety-wiring.md §Evaluation loop): a
+// panicking hook is recovered and logged so it can never take down the
+// booking path.
+func (o *OMS) notifyFill(strategyID string) {
+	if o.onFill == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			o.logf("live: OnFill hook panic: %v", r)
+		}
+	}()
+	o.onFill(strategyID)
 }
 
 // deriveFillStatus computes the FSM status a backfilled fill implies:

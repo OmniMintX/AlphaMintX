@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
 )
@@ -43,6 +44,8 @@ func TestParseLiveOMS(t *testing.T) {
 			tuning: `{"bogus":1}`, wantErr: true},
 		{name: "tuning applies", mode: "live", key: key, secret: secret,
 			tuning: `{"recv_window_ms":9000}`, wantEnv: exchange.EnvTestnet},
+		{name: "nonpositive stall threshold refused", mode: "live", key: key, secret: secret,
+			tuning: `{"safety_effect_stall_seconds":0}`, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,6 +75,55 @@ func TestParseLiveOMS(t *testing.T) {
 			}
 			if tc.tuning != "" && c.tuning.RecvWindowMS != 9000 {
 				t.Fatalf("tuning.RecvWindowMS = %d, want 9000", c.tuning.RecvWindowMS)
+			}
+		})
+	}
+}
+
+// TestParseBreakerIntervals pins the breaker-monitor knobs
+// (safety-wiring.md §Config): ACTIVE defaults to 5 s within [1, 10], IDLE
+// to 60 s within [ACTIVE, 600]; out of bounds or non-integer refuses to
+// start (fail closed).
+func TestParseBreakerIntervals(t *testing.T) {
+	cases := []struct {
+		name       string
+		active     string
+		idle       string
+		wantActive time.Duration
+		wantIdle   time.Duration
+		wantErr    bool
+	}{
+		{name: "defaults", wantActive: 5 * time.Second, wantIdle: 60 * time.Second},
+		{name: "explicit values", active: "2", idle: "120",
+			wantActive: 2 * time.Second, wantIdle: 120 * time.Second},
+		{name: "active low bound", active: "1", wantActive: time.Second, wantIdle: 60 * time.Second},
+		{name: "active high bound", active: "10", idle: "10",
+			wantActive: 10 * time.Second, wantIdle: 10 * time.Second},
+		{name: "idle equals active", active: "5", idle: "5",
+			wantActive: 5 * time.Second, wantIdle: 5 * time.Second},
+		{name: "idle high bound", idle: "600",
+			wantActive: 5 * time.Second, wantIdle: 600 * time.Second},
+		{name: "active zero refused", active: "0", wantErr: true},
+		{name: "active above 10 refused", active: "11", wantErr: true},
+		{name: "active non-integer refused", active: "5s", wantErr: true},
+		{name: "idle below active refused", active: "5", idle: "4", wantErr: true},
+		{name: "idle above 600 refused", idle: "601", wantErr: true},
+		{name: "idle non-integer refused", idle: "sixty", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			active, idle, err := parseBreakerIntervals(tc.active, tc.idle)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseBreakerIntervals: %v", err)
+			}
+			if active != tc.wantActive || idle != tc.wantIdle {
+				t.Fatalf("intervals = %s/%s, want %s/%s", active, idle, tc.wantActive, tc.wantIdle)
 			}
 		})
 	}

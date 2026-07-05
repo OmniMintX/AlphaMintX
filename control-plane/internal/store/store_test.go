@@ -305,6 +305,20 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		"InsertOwnerRecoveryToken": true,
 		"AppendTenantKill":         true, "AppendRiskLimitChanges": true, "RiskLimitChanges": true,
 		"GetStrategyInTenant": true, "ListStrategiesByTenant": true,
+		// Safety-wiring surface (safety-wiring.md §Store-surface amendment):
+		// the strategy/platform kill appenders, the INSERT-only served-effect
+		// marker and alert journal, the driver's lifecycle lock (transition
+		// append + the strategies snapshot update, like
+		// AppendLifecycleTransition), and the safety-engine reads.
+		"AppendStrategyKill":       true,
+		"AppendPlatformKill":       true,
+		"AppendSafetyEffectDone":   true,
+		"AppendSafetyAlert":        true,
+		"AppendKillLifecycleLock":  true,
+		"ListUnservedSafetyEvents": true,
+		"ListSafetyAlerts":         true,
+		"HasSafetyAlertToday":      true,
+		"HasSafetyAlert":           true,
 		// Billing and metering surface (billing-and-metering.md): all six
 		// tables are INSERT-only — imports, closes, and reconciliation
 		// runs append; invoices and runs are read back, never mutated.

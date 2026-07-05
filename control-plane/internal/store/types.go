@@ -157,6 +157,18 @@ type KillBreakerEvent struct {
 	RecordedAt string  `json:"recorded_at"`
 }
 
+// SafetyAlert mirrors the append-only safety_alerts table
+// (safety-wiring.md §Alerts): kind is an OPEN set (no CHECK); StrategyID
+// and RefID are the nullable dedupe keys.
+type SafetyAlert struct {
+	AlertID     string  `json:"alert_id"`
+	Kind        string  `json:"kind"`
+	StrategyID  *string `json:"strategy_id"`
+	RefID       *string `json:"ref_id"`
+	DetailsJSON string  `json:"details_json"`
+	RecordedAt  string  `json:"recorded_at"`
+}
+
 // Tenant mirrors the tenants table (multi-tenant-rbac.md §Tables).
 type Tenant struct {
 	TenantID  string `json:"tenant_id"`

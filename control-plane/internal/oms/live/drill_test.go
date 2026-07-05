@@ -5,10 +5,13 @@ import (
 	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/safety"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -470,4 +474,375 @@ func waitVenueFilled(t *testing.T, ctx context.Context, ex exchange.Exchange, cl
 	}
 	t.Fatalf("order %s never reached FILLED on testnet (last status %s): no executions means a vacuous drill",
 		clientOrderID, status)
+}
+
+// lockedTokens is recordingTokens with a mutex: the safety drives mint
+// intent tokens from detached goroutines (the monitor's fire, the R7
+// hook), so the drills read the record under a lock.
+type lockedTokens struct {
+	mu     sync.Mutex
+	minted []string
+}
+
+func (r *lockedTokens) Read(p []byte) (int, error) {
+	if _, err := io.ReadFull(crand.Reader, p); err != nil {
+		return 0, err
+	}
+	tok := base64.RawURLEncoding.EncodeToString(p)
+	r.mu.Lock()
+	r.minted = append(r.minted, tok)
+	r.mu.Unlock()
+	return len(p), nil
+}
+
+func (r *lockedTokens) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.minted)
+}
+
+func (r *lockedTokens) at(t *testing.T, i int) string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i >= len(r.minted) {
+		t.Fatalf("intent token %d never minted (have %d)", i, len(r.minted))
+	}
+	return r.minted[i]
+}
+
+// testnetDrill is the shared world of the safety-wiring testnet drills
+// (safety-wiring.md §Test obligations, "Non-vacuous testnet evidence"):
+// the venue client, a fresh store with one live strategy, fresh marks,
+// the BTCUSDT filters, and a marketable sizing per the
+// live-oms-and-reconciler.md §Config testnet tolerances.
+type testnetDrill struct {
+	bn     exchange.Exchange
+	st     *store.Store
+	marks  *marketdata.Store
+	last   decimal.Decimal
+	sf     symbolFilters
+	size   decimal.Decimal
+	tokens *lockedTokens
+	newOMS func() *OMS
+}
+
+func newTestnetDrill(t *testing.T, ctx context.Context) *testnetDrill {
+	t.Helper()
+	apiKey := os.Getenv("CONTROLPLANE_BINANCE_API_KEY")
+	apiSecret := os.Getenv("CONTROLPLANE_BINANCE_API_SECRET")
+	if apiKey == "" || apiSecret == "" {
+		t.Skip("testnet drill: CONTROLPLANE_BINANCE_API_KEY and CONTROLPLANE_BINANCE_API_SECRET not set")
+	}
+	if env := os.Getenv("CONTROLPLANE_BINANCE_ENV"); env != "" && env != "testnet" {
+		t.Skipf("testnet drill: CONTROLPLANE_BINANCE_ENV=%q (the drill trades against testnet only)", env)
+	}
+	bn := exchange.NewBinance(exchange.EnvTestnet, apiKey, apiSecret, nil)
+	st, err := store.Open(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	nowStr := formatTime(time.Now())
+	if err := st.CreateStrategy(store.Strategy{
+		StrategyID: uid(1), TenantID: "tenant-1", Name: "drill",
+		LifecycleState: "live_l1", CreatedAt: nowStr, UpdatedAt: nowStr,
+	}); err != nil {
+		t.Fatalf("CreateStrategy: %v", err)
+	}
+	last := testnetLastPrice(t, ctx)
+	marks, err := marketdata.NewStore(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("marketdata.NewStore: %v", err)
+	}
+	marks.Put(marketdata.Tick{Symbol: "BTC/USDT", Mark: last, TS: time.Now().UTC()})
+	raw, err := bn.ExchangeInfo(ctx, []string{"BTCUSDT"})
+	if err != nil {
+		t.Fatalf("ExchangeInfo: %v", err)
+	}
+	sf, err := parseFilters("BTCUSDT", raw["BTCUSDT"])
+	if err != nil {
+		t.Fatalf("parseFilters: %v", err)
+	}
+	size := sf.minNotional.Mul(decimal.NewFromInt(3))
+	if floor := decimal.NewFromInt(20); size.LessThan(floor) {
+		size = floor
+	}
+	d := &testnetDrill{bn: bn, st: st, marks: marks, last: last, sf: sf,
+		size: size, tokens: &lockedTokens{}}
+	d.newOMS = func() *OMS {
+		t.Helper()
+		o, err := New(Config{
+			Store: st, Exchange: bn, Symbols: []string{"BTC/USDT"}, Marks: marks,
+			AllocatedCapitalQuote: decimal.NewFromInt(10000), VenueEnv: "testnet",
+			TokenReader: d.tokens, Logf: t.Logf,
+		})
+		if err != nil {
+			t.Fatalf("live.New: %v", err)
+		}
+		return o
+	}
+	return d
+}
+
+// submitDrillEntry submits one gate-approved limit entry through the FULL
+// journal path (base numbers the chain's ids) at the given limit,
+// optionally with a stop-loss, and returns its latest attempt id.
+func (d *testnetDrill) submitDrillEntry(t *testing.T, o *OMS, base int, limit decimal.Decimal, stop *decimal.Decimal) string {
+	t.Helper()
+	before := d.tokens.count()
+	p := testProposal(t, uid(base), uid(1), uid(base+1))
+	p.SizeQuote = mustDec(t, d.size.String())
+	lp := mustDec(t, limit.String())
+	p.Entry.LimitPrice = &lp
+	if stop != nil {
+		sp := mustDec(t, stop.String())
+		p.StopLoss = &sp
+	}
+	if err := o.SubmitApproved(insertChain(t, d.st, base, p)); err != nil {
+		t.Fatalf("SubmitApproved(%d): %v", base, err)
+	}
+	return latestAttemptID(t, d.st, d.tokens.at(t, before))
+}
+
+// waitServed polls reconcile passes until every kill/breaker row is served
+// (the restart-resume evidence): the flatten fill books, residuals clear,
+// and the served marker lands. Never satisfied vacuously — timeout FAILS.
+func waitServed(t *testing.T, ctx context.Context, st *store.Store, o *OMS) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := o.TriggerRun(ctx, false); err != nil && !errors.Is(err, ErrReconRunning) {
+			t.Fatalf("TriggerRun: %v", err)
+		}
+		events, err := st.ListUnservedSafetyEvents()
+		if err != nil {
+			t.Fatalf("ListUnservedSafetyEvents: %v", err)
+		}
+		if len(events) == 0 {
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+	t.Fatal("safety row never served on testnet: the restart did not resume to completion")
+}
+
+// TestTestnetDrill_KillSwitch is the real-venue kill drill
+// (safety-wiring.md §Test obligations): REAL resting entries plus a
+// protective on the testnet; a kill with flatten=true; the restart resumes
+// mid-effects and serves the row. Non-vacuity by construction: >= 1 REAL
+// venue cancel and >= 1 REAL flatten fill matched by venue trade id —
+// zero fails. The "kills the process" steps use the in-proc restart
+// equivalent (close the OMS, reopen over the SAME store): the resumability
+// under test derives from the store, not from process identity.
+func TestTestnetDrill_KillSwitch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	drillStart := time.Now().UTC().Add(-time.Minute) // venue-clock margin
+	d := newTestnetDrill(t, ctx)
+
+	oms1 := d.newOMS()
+	if err := oms1.TriggerRun(ctx, false); err != nil {
+		t.Fatalf("startup TriggerRun: %v", err)
+	}
+	// Entry #1 (marketable, 2% through the book, WITH a stop): fills; the
+	// post-run protective drive places the REAL SL.
+	marketable := floorToStep(d.last.Mul(decimal.RequireFromString("1.02")), d.sf.tick)
+	stop := floorToStep(d.last.Mul(decimal.RequireFromString("0.9")), d.sf.tick)
+	entry1 := d.submitDrillEntry(t, oms1, 10, marketable, &stop)
+	waitVenueFilled(t, ctx, d.bn, entry1)
+	slBefore := d.tokens.count()
+	if err := oms1.TriggerRun(ctx, false); err != nil {
+		t.Fatalf("post-fill TriggerRun: %v", err)
+	}
+	slID := latestAttemptID(t, d.st, d.tokens.at(t, slBefore))
+	if state, err := d.bn.QueryOrder(ctx, "BTCUSDT", slID); err != nil || state.Status != "NEW" {
+		t.Fatalf("protective %s = %+v (err %v), want resting NEW at the venue", slID, state, err)
+	}
+	// Entry #2 (2% below the book): a REAL resting entry for the sweep.
+	resting := floorToStep(d.last.Mul(decimal.RequireFromString("0.98")), d.sf.tick)
+	entry2 := d.submitDrillEntry(t, oms1, 20, resting, nil)
+	if state, err := d.bn.QueryOrder(ctx, "BTCUSDT", entry2); err != nil || state.Status != "NEW" {
+		t.Fatalf("resting entry %s = %+v (err %v), want NEW", entry2, state, err)
+	}
+
+	// Kill with flatten=true; oms1 "dies" BEFORE any effect ran.
+	if _, err := d.st.AppendStrategyKill(uid(90), uid(1), "drill-operator",
+		formatTime(time.Now()), true); err != nil {
+		t.Fatalf("AppendStrategyKill: %v", err)
+	}
+
+	// Restart #1: the startup reconcile + R7 drive cancel the REAL entry
+	// and journal the REAL reduce-only flatten — then "die" again
+	// mid-effects (the flatten fill is not yet booked; the row is
+	// unserved).
+	flattenBefore := d.tokens.count()
+	oms2 := d.newOMS()
+	if err := oms2.TriggerRun(ctx, false); err != nil {
+		t.Fatalf("restart TriggerRun: %v", err)
+	}
+	if state, err := d.bn.QueryOrder(ctx, "BTCUSDT", entry2); err != nil || state.Status != "CANCELED" {
+		t.Fatalf("resting entry %s = %+v (err %v), want a REAL venue CANCELED (>= 1 real cancel)",
+			entry2, state, err)
+	}
+	flattenID := latestAttemptID(t, d.st, d.tokens.at(t, flattenBefore))
+
+	// Restart #2: resume over the same store until the row serves — the
+	// flatten fill books flat and stops-after-flatten cancels the SL.
+	oms3 := d.newOMS()
+	waitServed(t, ctx, d.st, oms3)
+
+	// Non-vacuity: >= 1 REAL flatten fill matched by venue trade id.
+	fills := fillsOf(t, d.st, flattenID)
+	if len(fills) == 0 {
+		t.Fatal("flatten fills = 0: zero real flatten fills cannot satisfy the drill")
+	}
+	venueTrades, err := d.bn.MyTrades(ctx, "BTCUSDT", 0, drillStart, 0)
+	if err != nil {
+		t.Fatalf("MyTrades: %v", err)
+	}
+	venueIDs := make(map[int64]bool, len(venueTrades))
+	for _, tr := range venueTrades {
+		venueIDs[tr.ID] = true
+	}
+	for _, f := range fills {
+		if !venueIDs[f.ExchangeTradeID] {
+			t.Errorf("flatten fill %s: exchange_trade_id %d is not a real venue trade id",
+				f.FillID, f.ExchangeTradeID)
+		}
+	}
+	// The protective was preserved until the covering fill and canceled
+	// only AFTER it — by stops-after-flatten, never the kill sweep: its
+	// cancel journals orphan_canceled reason stops_after_flatten.
+	if state, err := d.bn.QueryOrder(ctx, "BTCUSDT", slID); err != nil || state.Status != "CANCELED" {
+		t.Errorf("protective %s = %+v (err %v), want CANCELED after the flatten fill", slID, state, err)
+	}
+	stopsAfter := 0
+	for _, ev := range listEvents(t, d.st, "orphan_canceled") {
+		if ev.ClientOrderID != nil && *ev.ClientOrderID == slID &&
+			strings.Contains(ev.DetailsJSON, `"reason":"stops_after_flatten"`) {
+			stopsAfter++
+		}
+	}
+	if stopsAfter == 0 {
+		t.Error("no orphan_canceled (stops_after_flatten) row for the SL: its cancel must follow the flatten fill")
+	}
+	// Zero of the drill's ENTRY orders (or its protective/flatten) remain
+	// open at the venue; the lifecycle locked.
+	open, err := d.bn.OpenOrders(ctx, "BTCUSDT")
+	if err != nil {
+		t.Fatalf("OpenOrders: %v", err)
+	}
+	ours := map[string]bool{entry1: true, entry2: true, slID: true, flattenID: true}
+	for _, o := range open {
+		if ours[o.ClientOrderID] {
+			t.Errorf("order %s still open at the venue after the served kill", o.ClientOrderID)
+		}
+	}
+	if s, err := d.st.GetStrategy(uid(1)); err != nil || s.LifecycleState != "killed" {
+		t.Errorf("lifecycle = %q (err %v), want killed", s.LifecycleState, err)
+	}
+}
+
+// TestTestnetDrill_Breaker is the real-venue breaker drill
+// (safety-wiring.md §Test obligations): an injected tiny
+// daily_loss_limit_quote forces the breach against a REAL testnet
+// position; the monitor fires (breaker row with the monitor-sample
+// trigger_ref), the venue shows the reduce-only flatten fill (by trade
+// id), and same-day entries are halted. Zero real flatten fills FAIL. The
+// PnL sample is injected alongside the limit — the drill's non-vacuous
+// evidence is the REAL venue flatten, not the fold.
+func TestTestnetDrill_Breaker(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	drillStart := time.Now().UTC().Add(-time.Minute) // venue-clock margin
+	d := newTestnetDrill(t, ctx)
+
+	oms := d.newOMS()
+	if err := oms.TriggerRun(ctx, false); err != nil {
+		t.Fatalf("startup TriggerRun: %v", err)
+	}
+	// A REAL position: marketable-limit entry, filled, booked.
+	marketable := floorToStep(d.last.Mul(decimal.RequireFromString("1.02")), d.sf.tick)
+	entryID := d.submitDrillEntry(t, oms, 10, marketable, nil)
+	waitVenueFilled(t, ctx, d.bn, entryID)
+	if err := oms.TriggerRun(ctx, false); err != nil {
+		t.Fatalf("post-fill TriggerRun: %v", err)
+	}
+
+	// The injected tiny limit forces the breach on the startup tick; the
+	// monitor's fire appends the breaker row and drives effects async.
+	flattenTokenIdx := d.tokens.count() // the drive's flatten mints the next token
+	m, err := safety.New(safety.Config{
+		Store: d.st, PnL: stubPnL{decimal.NewFromInt(-1)},
+		Limits: stubLimits{decimal.RequireFromString("0.00000001")},
+		Marks:  d.marks, Driver: oms, Recon: oms,
+		ActiveInterval: time.Hour, IdleInterval: time.Hour,
+		Logf: func(string, ...any) {}, // never log after the test ends
+	})
+	if err != nil {
+		t.Fatalf("safety.New: %v", err)
+	}
+	mctx, mcancel := context.WithCancel(ctx)
+	monitorDone := make(chan struct{})
+	go func() { defer close(monitorDone); m.Run(mctx) }()
+	var row store.KillBreakerEvent
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && row.EventID == "" {
+		events, err := d.st.ListUnservedSafetyEvents()
+		if err != nil {
+			t.Fatalf("ListUnservedSafetyEvents: %v", err)
+		}
+		for _, ev := range events {
+			if ev.Kind == "breaker" {
+				row = ev
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	mcancel()
+	<-monitorDone
+	if row.EventID == "" {
+		t.Fatal("the monitor never fired the breaker row")
+	}
+	if row.ActorID != "breaker-monitor" || row.TriggerRef == nil ||
+		!strings.Contains(*row.TriggerRef, "daily_pnl") {
+		t.Fatalf("breaker row = %+v, want actor breaker-monitor with the monitor-sample trigger_ref", row)
+	}
+
+	// Resume reconcile passes until the row serves: the REAL reduce-only
+	// flatten fill books the position flat.
+	waitServed(t, ctx, d.st, oms)
+	flattenID := latestAttemptID(t, d.st, d.tokens.at(t, flattenTokenIdx))
+	if ord, err := d.st.GetLiveOrderByClientOrderID(flattenID); err != nil ||
+		ord.Origin != "breaker" || !ord.ReduceOnly || ord.Type != "market" {
+		t.Errorf("flatten order = %+v (err %v), want reduce-only market origin breaker", ord.Order, err)
+	}
+	// Non-vacuity: >= 1 REAL flatten fill matched by venue trade id.
+	fills := fillsOf(t, d.st, flattenID)
+	if len(fills) == 0 {
+		t.Fatal("flatten fills = 0: zero real flatten fills cannot satisfy the drill")
+	}
+	venueTrades, err := d.bn.MyTrades(ctx, "BTCUSDT", 0, drillStart, 0)
+	if err != nil {
+		t.Fatalf("MyTrades: %v", err)
+	}
+	venueIDs := make(map[int64]bool, len(venueTrades))
+	for _, tr := range venueTrades {
+		venueIDs[tr.ID] = true
+	}
+	for _, f := range fills {
+		if !venueIDs[f.ExchangeTradeID] {
+			t.Errorf("flatten fill %s: exchange_trade_id %d is not a real venue trade id",
+				f.FillID, f.ExchangeTradeID)
+		}
+	}
+	// Same-day ENTRY halt.
+	p := testProposal(t, uid(30), uid(1), uid(31))
+	p.SizeQuote = mustDec(t, d.size.String())
+	lp := mustDec(t, marketable.String())
+	p.Entry.LimitPrice = &lp
+	if err := oms.SubmitApproved(insertChain(t, d.st, 30, p)); !errors.Is(err, ErrBreakerActive) {
+		t.Errorf("same-day entry err = %v, want ErrBreakerActive", err)
+	}
 }

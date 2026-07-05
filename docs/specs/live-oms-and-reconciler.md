@@ -835,7 +835,10 @@ wired in the test env).
 16. Destructive actions (cancels, flatten submissions) append their
     `oms_recon_events` row BEFORE the side effect executes;
     observational events may follow their observation; runs are
-    bracketed by `run_started`/`run_completed|run_failed`.
+    bracketed by `run_started`/`run_completed|run_failed`. Exception:
+    the safety driver's ENTRY-cancel sweep is write-ahead-journaled by
+    the kill/breaker event row itself (docs/specs/safety-wiring.md
+    §Driver step 3a); no per-order event is required there.
 17. Paper mode is the default and behaviorally unchanged: additive
     schema only, live routes unregistered, paper rows carry NULL in
     every new column; live-column mutations go ONLY through the

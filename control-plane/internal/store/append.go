@@ -72,9 +72,10 @@ func (s *Store) AppendKillBreakerEvent(e KillBreakerEvent) error {
 // kill_epoch = MAX(kill_epoch) over the WHOLE table + 1, computed inside
 // the insert transaction (multi-tenant-rbac.md §Tenant kill-switch: one
 // global epoch counter, race-free under the single-connection invariant).
-// strategy_id is NULL and flatten is 0 (v1 is gate-block only). Returns the
-// recorded epoch.
-func (s *Store) AppendTenantKill(eventID, tenantID, actorID, recordedAt string) (int64, error) {
+// strategy_id is NULL; flatten is the operator's trigger-time choice
+// (safety-wiring.md §Kill endpoints — an absent wire field means false).
+// Returns the recorded epoch.
+func (s *Store) AppendTenantKill(eventID, tenantID, actorID, recordedAt string, flatten bool) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -87,8 +88,8 @@ func (s *Store) AppendTenantKill(eventID, tenantID, actorID, recordedAt string) 
 	}
 	if _, err := tx.Exec(`INSERT INTO kill_breaker_events
 		(event_id, kind, scope, strategy_id, tenant_id, kill_epoch, flatten, trigger_ref, actor_id, recorded_at)
-		VALUES (?, 'kill', 'tenant', NULL, ?, ?, 0, NULL, ?, ?)`,
-		eventID, tenantID, epoch, actorID, recordedAt); err != nil {
+		VALUES (?, 'kill', 'tenant', NULL, ?, ?, ?, NULL, ?, ?)`,
+		eventID, tenantID, epoch, flatten, actorID, recordedAt); err != nil {
 		return 0, err
 	}
 	return epoch, tx.Commit()

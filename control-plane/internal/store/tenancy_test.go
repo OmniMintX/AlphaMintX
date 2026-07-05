@@ -48,7 +48,7 @@ func TestOpenMigratesTenancy(t *testing.T) {
 		}
 	}
 	// The migrated tenant_id column is live: a tenant kill persists.
-	if _, err := s.AppendTenantKill(uid(90), "grandfathered", "env-admin", formatTime(testNow)); err != nil {
+	if _, err := s.AppendTenantKill(uid(90), "grandfathered", "env-admin", formatTime(testNow), false); err != nil {
 		t.Fatalf("AppendTenantKill on migrated DB: %v", err)
 	}
 }
@@ -62,7 +62,7 @@ func TestTenantKillScoping(t *testing.T) {
 	createTenantStrategy(t, s, uid(2), "tenant-b")
 	cutoff := "2026-07-04T11:00:00Z"
 
-	epoch, err := s.AppendTenantKill(uid(80), "tenant-a", "admin-1", formatTime(testNow))
+	epoch, err := s.AppendTenantKill(uid(80), "tenant-a", "admin-1", formatTime(testNow), false)
 	if err != nil || epoch != 1 {
 		t.Fatalf("AppendTenantKill: epoch=%d err=%v, want 1, nil", epoch, err)
 	}
@@ -90,7 +90,7 @@ func TestTenantKillScoping(t *testing.T) {
 	assertEpoch("global row binds tenant-b", uid(2), 5)
 
 	// Epoch monotonicity across scopes: MAX over the WHOLE table + 1.
-	epoch, err = s.AppendTenantKill(uid(82), "tenant-b", "admin-2", formatTime(testNow))
+	epoch, err = s.AppendTenantKill(uid(82), "tenant-b", "admin-2", formatTime(testNow), false)
 	if err != nil || epoch != 6 {
 		t.Fatalf("second AppendTenantKill: epoch=%d err=%v, want 6 (strictly above every prior)", epoch, err)
 	}

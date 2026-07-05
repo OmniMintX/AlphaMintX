@@ -28,7 +28,14 @@ AlphaMintX/
   transactional send claims, Reconciler (exchange-is-truth), venue epochs,
   and the protective SL/TP lifecycle (`docs/specs/live-oms-and-reconciler.md`).
 - Exchange credential storage: field-level encrypted, write-only (invariant 6).
-- Kill-switch endpoints (strategy / tenant / platform) and watchdog.
+- Kill-switch endpoints at all 3 tiers (strategy / tenant / platform, the
+  platform tier behind an explicit ack literal) with crash-resumable
+  effects: the live OMS `DriveSafetyEffects` re-driver converges unserved
+  kill/breaker rows (ENTRY cancels, lifecycle lock, reduce-only flatten;
+  protective stops preserved until flatten fills) after every reconcile.
+  Live PnL circuit breaker (`internal/safety` Monitor): fires once per
+  strategy per UTC day, flatten + ENTRY halt until 00:00 UTC
+  (`docs/specs/safety-wiring.md`). Watchdog deferred.
 - Multi-tenant RBAC (`docs/specs/multi-tenant-rbac.md`): fixed roles
   viewer/trader/admin/owner on DB-issued hashed tokens, tenant isolation
   (foreign = 404, no existence oracle), runtime limit changes behind a

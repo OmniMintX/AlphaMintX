@@ -61,6 +61,13 @@ func Permissions() []RoutePermission {
 		{Method: "POST", Path: "/api/v1/strategies/{id}/limits", Roles: admins, Classes: []string{classEnvAdmin}, Requires: requiresLimits},
 		{Method: "POST", Path: "/api/v1/tenants", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tenants/{tenant_id}/kill", Roles: admins, Classes: []string{classEnvAdmin}},
+		// Kill tiers (safety-wiring.md §Kill endpoints): the strategy tier
+		// is trader+ own tenant plus env-admin (any strategy); the platform
+		// tier is env-admin ONLY — no tenant role may kill the platform.
+		// Both are always registered: the gate-block half of a kill is
+		// mode-independent.
+		{Method: "POST", Path: "/api/v1/strategies/{id}/kill", Roles: approvers, Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/platform/kill", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tokens/{token_id}/revoke", Roles: admins, Classes: []string{classEnvAdmin}},

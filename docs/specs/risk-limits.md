@@ -197,10 +197,15 @@ Procedure (normative):
   and resumable: after a control-plane restart, incomplete effects are
   re-driven from the persisted intent; completion is recorded per
   order/position.
-- Effects, in order: cancel all ENTRY orders in scope; if flatten was selected
-  (operator choice at trigger time, default on for live), flatten per the
-  circuit-breaker procedure (reduce-only market orders, SL/TP canceled only
-  after flatten fills confirm); lock affected strategies in `killed`.
+- Effects: cancel all ENTRY orders in scope; if flatten was selected
+  (operator choice at trigger time; the WIRE default is flatten=false — the
+  operator UI and live-deployment runbooks are expected to pass flatten=true
+  for live books, see `docs/specs/safety-wiring.md` §Kill endpoints), flatten
+  per the circuit-breaker procedure (reduce-only market orders, SL/TP
+  canceled only after flatten fills confirm); lock affected strategies in
+  `killed`. The effect ORDER and the lifecycle-lock scope are normatively
+  defined in `docs/specs/safety-wiring.md` (single ownership; it locks
+  lifecycle before flatten and narrows the lock to `live_*` states).
   PROTECTIVE stops are NEVER canceled while a position remains open unless
   the action flattens it. **No auto-restart** — recovery only via explicit
   human unlock (`docs/specs/strategy-lifecycle.md`).

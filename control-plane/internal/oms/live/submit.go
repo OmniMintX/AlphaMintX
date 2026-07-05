@@ -86,6 +86,14 @@ func (o *OMS) SubmitApproved(meta store.VerdictMeta) error {
 		if err := o.preflightGate(meta.StrategyID, rawP); err != nil {
 			return err // recorded drop (RECONCILE_PENDING bookkeeping)
 		}
+		// The close serializes on the SAME driveMu as DriveSafetyEffects:
+		// the drive's double-flatten skip snapshots live orders before it
+		// flattens, so an unserialized close journaled between snapshot
+		// and flatten could stack a second market sell for the same
+		// (strategy, symbol) (invariant 6). Lock order stays
+		// driveMu -> o.mu.
+		o.driveMu.Lock()
+		defer o.driveMu.Unlock()
 		return o.Flatten(ctx, meta.StrategyID, p.Symbol, "proposal", &meta.ProposalID)
 	default:
 		return fmt.Errorf("live: action %q never submits an order", p.Action)
@@ -135,6 +143,14 @@ func (o *OMS) submitEntry(ctx context.Context, sub submission, sizeQuote decimal
 	epoch, err := o.st.GlobalMaxKillEpoch(sub.strategyID)
 	if err != nil {
 		return err
+	}
+	// Standing-kill check (safety-wiring.md invariant 15): a fresh ENTRY
+	// submission would stamp the post-kill epoch and pass the transmit
+	// staleness re-check, so the standing condition rejects it here;
+	// safety-origin flatten/protective submissions bypass this path and
+	// rely on the transmit-loop comparison alone.
+	if epoch > 0 {
+		return ErrKillSwitchActive
 	}
 	sub.killEpoch = epoch
 	venueSym, ok := o.venueOf[sub.symbol]

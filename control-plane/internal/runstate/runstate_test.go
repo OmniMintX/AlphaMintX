@@ -168,7 +168,7 @@ func TestStateTenantKillScoped(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateStrategy: %v", err)
 	}
-	epoch, err := s.AppendTenantKill(uid(70), "tenant-1", "admin-1", formatTime(testNow))
+	epoch, err := s.AppendTenantKill(uid(70), "tenant-1", "admin-1", formatTime(testNow), false)
 	if err != nil {
 		t.Fatalf("AppendTenantKill: %v", err)
 	}

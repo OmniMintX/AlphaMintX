@@ -43,6 +43,15 @@ type RuntimeStateSource interface {
 	State(strategyID, lifecycleState, symbol string, now time.Time) (riskgate.RuntimeState, error)
 }
 
+// SafetyDriver is the live-OMS safety-effects seam (safety-wiring.md §API
+// surface): DriveSafetyEffects re-drives unserved kill/breaker effects.
+// Kill handlers invoke it in a detached goroutine AFTER the 200 response;
+// errors are logged, never surfaced — the persisted row guarantees eventual
+// effects via the reconcile cadence.
+type SafetyDriver interface {
+	DriveSafetyEffects(ctx context.Context) error
+}
+
 // ReconStatusProvider is the live-OMS reconciliation seam
 // (live-oms-and-reconciler.md §API surface): Status is tenant-filtered by
 // the principal's tenant scope ("" = platform view) and TriggerRun runs
@@ -81,6 +90,11 @@ type Config struct {
 	// deployments) leaves them unregistered (404), preserving the
 	// Phase 1/2 surface exactly (live-oms-and-reconciler.md §API surface).
 	ReconStatus ReconStatusProvider
+	// SafetyDriver is the OPTIONAL on-demand effects drive invoked by the
+	// kill handlers after their row is acknowledged (safety-wiring.md
+	// §API surface); nil in paper mode — no drive runs, the persisted row
+	// alone gate-blocks.
+	SafetyDriver SafetyDriver
 
 	// ReadToken authorizes GETs ONLY (web dashboard), every tenant.
 	ReadToken string
@@ -155,8 +169,10 @@ func New(cfg Config) *Server {
 		"POST /api/v1/strategies/{id}/traces":            s.handlePostTrace,
 		"POST /api/v1/strategies/{id}/proposals":         s.handlePostProposal,
 		"POST /api/v1/strategies/{id}/limits":            s.handlePostLimits,
+		"POST /api/v1/strategies/{id}/kill":              s.handleStrategyKill,
 		"POST /api/v1/tenants":                           s.handleCreateTenant,
 		"POST /api/v1/tenants/{tenant_id}/kill":          s.handleTenantKill,
+		"POST /api/v1/platform/kill":                     s.handlePlatformKill,
 		"POST /api/v1/tokens":                            s.handleMintToken,
 		"GET /api/v1/tokens":                             s.handleListTokens,
 		"POST /api/v1/tokens/{token_id}/revoke":          s.handleRevokeToken,

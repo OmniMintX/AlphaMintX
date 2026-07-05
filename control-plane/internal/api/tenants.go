@@ -89,14 +89,17 @@ type tenantKillResponse struct {
 	TenantID   string `json:"tenant_id"`
 	KillEpoch  int64  `json:"kill_epoch"`
 	RecordedAt string `json:"recorded_at"`
+	Flatten    bool   `json:"flatten"`
 }
 
 // handleTenantKill is the tenant-tier kill switch (multi-tenant-rbac.md
-// §Tenant kill-switch): admin/owner OWN tenant only (a foreign tenant path
-// is 404, no existence oracle); env-admin any existing tenant. v1 is
-// gate-block only and irreversible: the event is persisted and acknowledged
-// BEFORE any side effect, and the kill predicate then fires for every
-// strategy of the tenant.
+// §Tenant kill-switch, EXTENDED per safety-wiring.md §Kill endpoints):
+// admin/owner OWN tenant only (a foreign tenant path is 404, no existence
+// oracle); env-admin any existing tenant. The event is persisted and
+// acknowledged BEFORE any side effect; the optional flatten field defaults
+// to false (the v1 empty body stays valid — backward compatible) and
+// effects run asynchronously through the SafetyDriver seam (the v1
+// gate-block-only restriction is lifted).
 func (s *Server) handleTenantKill(w http.ResponseWriter, r *http.Request) {
 	pr := principalFrom(r)
 	tenantID := r.PathValue("tenant_id")
@@ -113,13 +116,13 @@ func (s *Server) handleTenantKill(w http.ResponseWriter, r *http.Request) {
 		s.writeInternal(w, r, err)
 		return
 	}
-	var body struct{}
-	if !decodeStrict(w, r, &body) {
+	var req killRequest
+	if !decodeStrictOptional(w, r, &req) {
 		return
 	}
 	now := s.cfg.Now()
 	eventID := uuid.NewString()
-	epoch, err := s.cfg.Store.AppendTenantKill(eventID, tenantID, s.actorID(pr), formatTime(now))
+	epoch, err := s.cfg.Store.AppendTenantKill(eventID, tenantID, s.actorID(pr), formatTime(now), req.Flatten)
 	if err != nil {
 		s.writeInternal(w, r, err)
 		return
@@ -129,5 +132,7 @@ func (s *Server) handleTenantKill(w http.ResponseWriter, r *http.Request) {
 		TenantID:   tenantID,
 		KillEpoch:  epoch,
 		RecordedAt: formatTime(now),
+		Flatten:    req.Flatten,
 	})
+	s.driveSafety()
 }

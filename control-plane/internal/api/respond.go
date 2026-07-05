@@ -55,6 +55,10 @@ const (
 	codeFilterUnavailable = "FILTER_UNAVAILABLE"
 	codeFilterRejected    = "FILTER_REJECTED"
 	codeExchangeRejected  = "EXCHANGE_REJECTED"
+	// Safety-wiring code (safety-wiring.md §API surface): the platform
+	// kill body must carry the explicit ack literal; missing/wrong is 400
+	// and NO row is written.
+	codePlatformKillAckRequired = "PLATFORM_KILL_ACK_REQUIRED"
 )
 
 // Preflight reason codes (persistence-and-api.md §Approval preflight).

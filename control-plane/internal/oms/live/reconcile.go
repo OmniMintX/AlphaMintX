@@ -136,12 +136,18 @@ func (o *OMS) reconcile(ctx context.Context) error {
 	o.reconFails = 0
 	if !o.resetPending {
 		o.reconciled = true
+		o.lastReconcileEnd = o.now()
 	}
 	o.mu.Unlock()
 	if o.Reconciled() {
 		// R7: the OMS now accepts submissions, then immediately re-drives
-		// pending protective obligations (startup re-arm; periodic runs
-		// double as the deadline/retry cadence).
+		// pending safety effects BEFORE the protective drive
+		// (safety-wiring.md §DriveSafetyEffects cadence) and finally the
+		// protective obligations (startup re-arm; periodic runs double as
+		// the deadline/retry cadence).
+		if err := o.DriveSafetyEffects(ctx); err != nil {
+			o.logf("live: safety drive: %v", err)
+		}
 		if err := o.driveProtectives(ctx); err != nil {
 			o.logf("live: protective drive: %v", err)
 		}
