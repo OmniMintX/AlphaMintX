@@ -84,7 +84,8 @@ func TestBreakerDrill_FiresOnceWithEffects(t *testing.T) {
 		Store: cst, PnL: stubPnL{decimal.NewFromInt(-600)},
 		Limits: stubLimits{decimal.NewFromInt(500)},
 		Marks:  e.marks, Driver: e.oms, Recon: e.oms,
-		ActiveInterval: time.Hour, IdleInterval: time.Hour,
+		WatchdogDisabled: true, // the breaker drill isolates the breaker
+		ActiveInterval:   time.Hour, IdleInterval: time.Hour,
 		Now:  func() time.Time { return e.now },
 		Logf: func(string, ...any) {}, // never log after the test ends
 	})

@@ -116,8 +116,10 @@ func (m *Monitor) alertDaily(kind, strategyID, refID, detailsJSON string, now ti
 }
 
 // appendAlert appends one safety_alerts row; an empty strategyID/refID
-// persists NULL.
-func (m *Monitor) appendAlert(kind, strategyID, refID, detailsJSON string, now time.Time) {
+// persists NULL. The error return (already logged) lets the watchdog's
+// alert-before-effect rule fail closed for the tick (WD-17); other
+// callers ignore it.
+func (m *Monitor) appendAlert(kind, strategyID, refID, detailsJSON string, now time.Time) error {
 	a := store.SafetyAlert{
 		AlertID: uuid.NewString(), Kind: kind,
 		DetailsJSON: detailsJSON, RecordedAt: formatTime(now),
@@ -130,7 +132,9 @@ func (m *Monitor) appendAlert(kind, strategyID, refID, detailsJSON string, now t
 	}
 	if err := m.st.AppendSafetyAlert(a); err != nil {
 		m.logf("safety: monitor: append alert (%s): %v", kind, err)
+		return err
 	}
+	return nil
 }
 
 // formatTime renders RFC 3339 UTC with Z suffix (store column convention).

@@ -148,3 +148,16 @@ func TestValidateVenuePairing(t *testing.T) {
 		t.Fatalf("testnet pairing: %v", err)
 	}
 }
+
+// TestParseWatchdogDisabled pins the escape hatch (watchdog.md §Config):
+// "1"/"true" disable; anything else, including unset, enables.
+func TestParseWatchdogDisabled(t *testing.T) {
+	for v, want := range map[string]bool{
+		"1": true, "true": true,
+		"": false, "0": false, "false": false, "TRUE": false, "yes": false,
+	} {
+		if got := parseWatchdogDisabled(v); got != want {
+			t.Errorf("parseWatchdogDisabled(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

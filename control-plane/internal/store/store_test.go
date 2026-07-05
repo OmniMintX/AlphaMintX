@@ -319,6 +319,9 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		"ListSafetyAlerts":         true,
 		"HasSafetyAlertToday":      true,
 		"HasSafetyAlert":           true,
+		// LatestStrategyKillEvent is the read-only WD-16 back-fill accessor
+		// (docs/specs/watchdog.md §Wiring seams).
+		"LatestStrategyKillEvent": true,
 		// Billing and metering surface (billing-and-metering.md): all six
 		// tables are INSERT-only — imports, closes, and reconciliation
 		// runs append; invoices and runs are read back, never mutated.

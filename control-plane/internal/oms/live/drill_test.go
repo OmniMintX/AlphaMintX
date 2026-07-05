@@ -777,7 +777,8 @@ func TestTestnetDrill_Breaker(t *testing.T) {
 		Store: d.st, PnL: stubPnL{decimal.NewFromInt(-1)},
 		Limits: stubLimits{decimal.RequireFromString("0.00000001")},
 		Marks:  d.marks, Driver: oms, Recon: oms,
-		ActiveInterval: time.Hour, IdleInterval: time.Hour,
+		WatchdogDisabled: true, // the breaker drill isolates the breaker
+		ActiveInterval:   time.Hour, IdleInterval: time.Hour,
 		Logf: func(string, ...any) {}, // never log after the test ends
 	})
 	if err != nil {

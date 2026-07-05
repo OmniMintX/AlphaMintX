@@ -90,6 +90,23 @@ func (o *OMS) symbolFiltersFor(venueSymbol string) (symbolFilters, error) {
 	return sf, nil
 }
 
+// MinFilters is the safety.FiltersProvider seam (watchdog.md WD-20): one
+// canonical symbol's venue minimums for the watchdog's dust carve-out.
+// ok=false for an unconfigured symbol or when filters are unloaded or
+// expired (the ErrFilterUnavailable condition) — the watchdog EXCLUDES
+// the position, failing toward PROTECTED.
+func (o *OMS) MinFilters(symbol string) (minQty, minNotional decimal.Decimal, ok bool) {
+	venueSymbol, found := o.venueOf[symbol]
+	if !found {
+		return decimal.Decimal{}, decimal.Decimal{}, false
+	}
+	sf, err := o.symbolFiltersFor(venueSymbol)
+	if err != nil {
+		return decimal.Decimal{}, decimal.Decimal{}, false
+	}
+	return sf.minQty, sf.minNotional, true
+}
+
 // floorToStep rounds d DOWN to a multiple of step (step > 0).
 func floorToStep(d, step decimal.Decimal) decimal.Decimal {
 	return d.Div(step).Floor().Mul(step)

@@ -310,3 +310,188 @@ func TestMonitorPokeTriggersImmediateEval(t *testing.T) {
 		t.Fatalf("breaker events = %d, want 1 (poked evaluation fired)", len(events))
 	}
 }
+
+// New rejects nil watchdog seams unless the watchdog is disabled
+// (watchdog.md §Wiring seams: since the Monitor is constructed only in
+// live mode, the check reduces to !WatchdogDisabled); Beat never regresses
+// lastSeen on an out-of-order receipt (WD-8).
+func TestNewRequiresWatchdogSeams(t *testing.T) {
+	h := newHarness(t)
+	cfg := Config{
+		Store: h.st, PnL: h.pnl, Limits: h.limits, Marks: h.marks,
+		Driver: h.driver, Recon: h.recon,
+	}
+	if _, err := New(cfg); err == nil {
+		t.Fatal("New without Entries/Filters succeeded, want an error (watchdog enabled)")
+	}
+	cfg.WatchdogDisabled = true
+	if _, err := New(cfg); err != nil {
+		t.Fatalf("New with WatchdogDisabled and nil seams: %v", err)
+	}
+
+	h.m.Beat(sid, testNow.Add(30*time.Second))
+	h.m.Beat(sid, testNow.Add(10*time.Second)) // out of order: never regresses
+	h.m.hbMu.Lock()
+	got := h.m.lastSeen[sid]
+	h.m.hbMu.Unlock()
+	if !got.Equal(testNow.Add(30 * time.Second)) {
+		t.Errorf("lastSeen = %v, want the newer beat kept", got)
+	}
+}
+
+// The WD-20 fast-path fail-safe branches each fail toward PROTECTED: a
+// Filters miss excludes the position from the unprotected-exposure test,
+// so a 2-minute silence takes rung 1 (ENTRY sweep) and NOT rung 2 (kill).
+// The control tick — same book, filters restored — escalates, proving the
+// exclusion (not some other gate) held the kill back.
+func TestWatchdogFiltersMissFailsProtected(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "1") // open position, no protective order
+	h.filters.mu.Lock()
+	h.filters.miss = true
+	h.filters.mu.Unlock()
+
+	h.tick()                     // stamp firstWatched (WD-11 baseline)
+	h.advance(120 * time.Second) // silence 120 s: rung-1 window
+	h.tick()
+
+	if kills := h.st.killEvents(); len(kills) != 0 {
+		t.Fatalf("kill events = %d, want 0 (filters miss excludes: PROTECTED)", len(kills))
+	}
+	if n := h.entries.sweeps(sid); n != 1 {
+		t.Errorf("entry sweeps = %d, want 1 (rung 1 still runs)", n)
+	}
+
+	h.filters.mu.Lock()
+	h.filters.miss = false
+	h.filters.mu.Unlock()
+	h.tick()
+	if kills := h.st.killEvents(); len(kills) != 1 {
+		t.Fatalf("kill events after filters restored = %d, want 1 (control)", len(kills))
+	}
+	h.driver.waitDrive(t)
+}
+
+// A stale mark leaves the WD-20 notional test unpriceable: the position
+// is excluded (fail toward PROTECTED) and rung 1 runs instead of rung 2.
+// The control tick with the mark fresh again escalates.
+func TestWatchdogStaleMarkFailsProtected(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "1")
+	h.marks.mu.Lock()
+	h.marks.stale["BTC/USDT"] = true
+	h.marks.mu.Unlock()
+
+	h.tick() // stamp firstWatched (WD-11 baseline)
+	h.advance(120 * time.Second)
+	h.tick()
+
+	if kills := h.st.killEvents(); len(kills) != 0 {
+		t.Fatalf("kill events = %d, want 0 (no fresh mark: PROTECTED)", len(kills))
+	}
+	if n := h.entries.sweeps(sid); n != 1 {
+		t.Errorf("entry sweeps = %d, want 1 (rung 1 still runs)", n)
+	}
+
+	h.marks.mu.Lock()
+	h.marks.stale["BTC/USDT"] = false
+	h.marks.mu.Unlock()
+	h.tick()
+	if kills := h.st.killEvents(); len(kills) != 1 {
+		t.Fatalf("kill events after mark refreshed = %d, want 1 (control)", len(kills))
+	}
+	h.driver.waitDrive(t)
+}
+
+// A ListNonTerminalLiveOrders error makes the protective scan impossible:
+// the predicate returns false (fail toward PROTECTED), rung 1 runs, no
+// kill. The control tick with the read restored escalates.
+func TestWatchdogOrderListErrorFailsProtected(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "1")
+	h.st.mu.Lock()
+	h.st.ordersErr = errors.New("orders read exploded")
+	h.st.mu.Unlock()
+
+	h.tick() // stamp firstWatched (WD-11 baseline)
+	h.advance(120 * time.Second)
+	h.tick()
+
+	if kills := h.st.killEvents(); len(kills) != 0 {
+		t.Fatalf("kill events = %d, want 0 (order list error: PROTECTED)", len(kills))
+	}
+	if n := h.entries.sweeps(sid); n != 1 {
+		t.Errorf("entry sweeps = %d, want 1 (rung 1 still runs)", n)
+	}
+
+	h.st.mu.Lock()
+	h.st.ordersErr = nil
+	h.st.mu.Unlock()
+	h.tick()
+	if kills := h.st.killEvents(); len(kills) != 1 {
+		t.Fatalf("kill events after read restored = %d, want 1 (control)", len(kills))
+	}
+	h.driver.waitDrive(t)
+}
+
+// WD-17 alert-before-effect under an alert APPEND failure: the rung-1
+// sweep is skipped for the tick (fail closed, the breaker fire precedent);
+// the next tick with the store healthy appends the alert and sweeps.
+func TestWatchdogAlertAppendFailureSkipsSweep(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "") // flat book: rung 1 only
+	h.st.mu.Lock()
+	h.st.alertErr = errors.New("alert append exploded")
+	h.st.mu.Unlock()
+
+	h.tick() // stamp firstWatched (WD-11 baseline)
+	h.advance(120 * time.Second)
+	h.tick()
+
+	if n := h.entries.sweeps(sid); n != 0 {
+		t.Fatalf("entry sweeps = %d, want 0 (no alert row ⇒ no sweep this tick)", n)
+	}
+
+	h.st.mu.Lock()
+	h.st.alertErr = nil
+	h.st.mu.Unlock()
+	h.tick()
+	if n := h.entries.sweeps(sid); n != 1 {
+		t.Errorf("entry sweeps after store healed = %d, want 1", n)
+	}
+	if alerts := h.st.alertsOf("watchdog_silence", "silence"); len(alerts) != 1 {
+		t.Errorf("watchdog_silence alerts = %d, want 1", len(alerts))
+	}
+}
+
+// WD-17 under an alert dedupe-READ failure: fail closed for the tick — no
+// alert, no sweep; the next healthy tick retries alert-then-sweep.
+func TestWatchdogDedupeReadErrorSkipsSweep(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "")
+	h.st.mu.Lock()
+	h.st.alertTodayErr = errors.New("dedupe read exploded")
+	h.st.mu.Unlock()
+
+	h.tick() // stamp firstWatched (WD-11 baseline)
+	h.advance(120 * time.Second)
+	h.tick()
+
+	if n := h.entries.sweeps(sid); n != 0 {
+		t.Fatalf("entry sweeps = %d, want 0 (dedupe unreadable ⇒ fail closed)", n)
+	}
+	if alerts := h.st.alertsOf("watchdog_silence", "silence"); len(alerts) != 0 {
+		t.Fatalf("watchdog_silence alerts = %d, want 0", len(alerts))
+	}
+
+	h.st.mu.Lock()
+	h.st.alertTodayErr = nil
+	h.st.mu.Unlock()
+	h.tick()
+	if n := h.entries.sweeps(sid); n != 1 {
+		t.Errorf("entry sweeps after store healed = %d, want 1", n)
+	}
+	if alerts := h.st.alertsOf("watchdog_silence", "silence"); len(alerts) != 1 {
+		t.Errorf("watchdog_silence alerts = %d, want 1", len(alerts))
+	}
+}

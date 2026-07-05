@@ -161,6 +161,13 @@ Scope:
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.
+  (2026-07-05: watchdog landed per `docs/specs/watchdog.md` — heartbeat
+  receiver `POST /api/v1/strategies/{id}/heartbeat`, in-memory liveness
+  (no per-beat persistence), escalation ladder (90 s ⇒ ENTRY sweep +
+  `watchdog_silence` alert; 10 min or unprotected exposure ⇒ strategy-tier
+  kill by actor `watchdog`), agent-plane 30 s start-anchored sender task;
+  drills WD1–WD12 green. REMAINING: `TestTestnetDrill_Watchdog` against
+  the REAL Binance testnet.)
 
 Exit criteria:
 - [ ] Reconciler proves exchange-is-truth: orphan adoption and gap detection

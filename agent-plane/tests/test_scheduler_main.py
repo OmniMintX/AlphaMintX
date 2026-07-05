@@ -11,6 +11,7 @@ from alphamintx_agent_plane.client.http import ENV_BASE_URL
 from alphamintx_agent_plane.scheduler.__main__ import acquire_instance_lock, build_scheduler
 from alphamintx_agent_plane.scheduler.checkpoint import ENV_CHECKPOINT_DB
 from alphamintx_agent_plane.scheduler.loop import (
+    ENV_HEARTBEAT_INTERVAL_SECONDS,
     ENV_STRATEGY_ID,
     ENV_SYMBOL,
     ENV_TICK_INTERVAL_SECONDS,
@@ -57,6 +58,27 @@ def test_invalid_tick_interval_fails_fast(tmp_path: Path, raw: str) -> None:
     env = _env(tmp_path)
     env[ENV_TICK_INTERVAL_SECONDS] = raw
     with pytest.raises(RuntimeError, match=ENV_TICK_INTERVAL_SECONDS):
+        build_scheduler(env)
+
+
+def test_heartbeat_interval_defaults_to_30_seconds(tmp_path: Path) -> None:
+    scheduler = build_scheduler(_env(tmp_path))
+    assert scheduler._heartbeat_interval == 30.0
+
+
+def test_heartbeat_interval_env_override(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    env[ENV_HEARTBEAT_INTERVAL_SECONDS] = "45"
+    scheduler = build_scheduler(env)
+    assert scheduler._heartbeat_interval == 45.0
+
+
+@pytest.mark.parametrize("raw", ["zero", "0", "-5", "45.1", "46"])
+def test_invalid_heartbeat_interval_fails_fast(tmp_path: Path, raw: str) -> None:
+    # WD-25: bounds (0, 45] — 45 is half the watchdog's 90 s silence threshold.
+    env = _env(tmp_path)
+    env[ENV_HEARTBEAT_INTERVAL_SECONDS] = raw
+    with pytest.raises(RuntimeError, match=ENV_HEARTBEAT_INTERVAL_SECONDS):
         build_scheduler(env)
 
 

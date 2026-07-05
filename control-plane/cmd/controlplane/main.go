@@ -174,6 +174,12 @@ func serve(dbPath string) error {
 		if err != nil {
 			return err
 		}
+		// The watchdog escape hatch is read only in live mode too
+		// (watchdog.md §Config): startup logs LOUDLY when set.
+		watchdogDisabled := parseWatchdogDisabled(os.Getenv("CONTROLPLANE_WATCHDOG_DISABLED"))
+		if watchdogDisabled {
+			log.Printf("WARNING: CONTROLPLANE_WATCHDOG_DISABLED is set: watchdog EVALUATION is OFF — silent agents will NOT be swept or killed (heartbeats are still accepted)")
+		}
 		ex := exchange.NewBinance(liveCfg.env, liveCfg.apiKey, liveCfg.apiSecret, nil)
 		ex.RecvWindow = time.Duration(liveCfg.tuning.RecvWindowMS) * time.Millisecond
 		liveOMS, err = live.New(live.Config{
@@ -197,16 +203,22 @@ func serve(dbPath string) error {
 			return err
 		}
 		monitor, err = safety.New(safety.Config{
-			Store:          st,
-			PnL:            hydrator,
-			Limits:         provider,
-			Marks:          marks,
-			Driver:         liveOMS,
-			Recon:          liveOMS,
-			ActiveInterval: breakerActive,
-			IdleInterval:   breakerIdle,
-			StallThreshold: time.Duration(liveCfg.tuning.SafetyEffectStallSeconds) * time.Second,
-			Logf:           log.Printf,
+			Store:  st,
+			PnL:    hydrator,
+			Limits: provider,
+			Marks:  marks,
+			Driver: liveOMS,
+			Recon:  liveOMS,
+			// The watchdog seams (watchdog.md §Wiring seams): the live
+			// OMS's CancelOpenEntries and MinFilters, wired exactly like
+			// Driver/Recon.
+			Entries:          liveOMS,
+			Filters:          liveOMS,
+			WatchdogDisabled: watchdogDisabled,
+			ActiveInterval:   breakerActive,
+			IdleInterval:     breakerIdle,
+			StallThreshold:   time.Duration(liveCfg.tuning.SafetyEffectStallSeconds) * time.Second,
+			Logf:             log.Printf,
 		})
 		if err != nil {
 			return err
@@ -214,6 +226,9 @@ func serve(dbPath string) error {
 		cfg.Submitter = liveOMS
 		cfg.ReconStatus = liveOMS
 		cfg.SafetyDriver = liveOMS
+		// Heartbeat receipt lands on the Monitor in live mode (watchdog.md
+		// WD-8); paper deployments leave the sink nil (WD-3).
+		cfg.Heartbeats = monitor
 	case os.Getenv("CONTROLPLANE_FILL_MODEL") != "":
 		raw := os.Getenv("CONTROLPLANE_FILL_MODEL")
 		if limits == nil {

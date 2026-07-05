@@ -40,7 +40,7 @@ def traces_path(strategy_id: str) -> str:
 
 
 def heartbeat_path(strategy_id: str) -> str:
-    return f"/v1/strategies/{strategy_id}/heartbeat"
+    return f"/api/v1/strategies/{strategy_id}/heartbeat"
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,8 @@ class DryRunTransport:
         if path.endswith("/traces"):
             return {"status": "ok"}
         if path.endswith("/heartbeat"):
-            return {"status": "ok"}
+            # The WD-5 receipt envelope (docs/specs/watchdog.md).
+            return {"received_at": utc_now_rfc3339()}
         raise ValueError(f"DryRunTransport does not know path {path!r}")
 
     @staticmethod
@@ -223,11 +224,19 @@ class ControlPlaneClient:
         )
 
     def heartbeat(self) -> None:
-        """POST the per-strategy heartbeat; call every ``HEARTBEAT_INTERVAL_SECONDS``.
+        """POST the per-strategy heartbeat ``{}``; call every ``HEARTBEAT_INTERVAL_SECONDS``.
 
-        Endpoint deferred; watchdog reaction is Phase 3 (ARCHITECTURE.md §Plane
-        authentication keeps the 30 s heartbeat normative).
+        The control-plane answers 200 ``{"received_at": "<RFC 3339 UTC Z>"}``
+        (docs/specs/watchdog.md WD-5/WD-26). Exactly 200 is success; per WD-26
+        the client MUST NOT require more than a JSON object — ``received_at``
+        is informational and never validated (the beat was recorded server-side
+        the moment the POST returned 200).
         """
-        self._transport.post(
+        response = self._transport.post(
             self._base_url + heartbeat_path(self._auth.strategy_id), self._headers(), {}
         )
+        if not isinstance(response, Mapping):
+            raise ControlPlaneContractError(
+                "heartbeat response violates the cross-plane contract: expected a "
+                'JSON object like {"received_at": ...}'
+            )

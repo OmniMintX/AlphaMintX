@@ -238,6 +238,24 @@ func (s *Store) HasSafetyAlertToday(kind, strategyID, refID, utcDate string) (bo
 	return n > 0, err
 }
 
+// LatestStrategyKillEvent returns the NEWEST kind='kill', scope='strategy'
+// row for the strategy — served or not (watchdog.md WD-16: the
+// escalation-alert back-fill needs the row's event_id and actor_id, which
+// neither GlobalMaxKillEpoch nor ListUnservedSafetyEvents exposes);
+// ok=false when no such row exists. Read-only.
+func (s *Store) LatestStrategyKillEvent(strategyID string) (eventID, actorID string, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT event_id, actor_id FROM kill_breaker_events
+		WHERE kind = 'kill' AND scope = 'strategy' AND strategy_id = ?
+		ORDER BY rowid DESC LIMIT 1`, strategyID).Scan(&eventID, &actorID)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return eventID, actorID, true, nil
+}
+
 // HasSafetyAlert is the any-age alert dedupe read for the one-time
 // safety_residue_abandoned rows, keyed (kind, strategy_id, ref_id); same
 // empty-matches-NULL rule as HasSafetyAlertToday.

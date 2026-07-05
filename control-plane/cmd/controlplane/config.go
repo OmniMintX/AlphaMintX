@@ -237,6 +237,15 @@ func parseBreakerIntervals(activeRaw, idleRaw string) (time.Duration, time.Durat
 	return time.Duration(active) * time.Second, time.Duration(idle) * time.Second, nil
 }
 
+// parseWatchdogDisabled parses CONTROLPLANE_WATCHDOG_DISABLED
+// (watchdog.md §Config): "1"/"true" disables watchdog EVALUATION (the
+// heartbeat endpoint still accepts beats); anything else, including
+// unset, enables. Read only in live mode — paper deployments never read
+// it (no monitor runs, so setting it there is a no-op).
+func parseWatchdogDisabled(v string) bool {
+	return v == "1" || v == "true"
+}
+
 // splitSymbols parses the CONTROLPLANE_SYMBOLS comma list of canonical
 // BASE/QUOTE symbols; "" yields nil (no market-data feed).
 func splitSymbols(v string) []string {

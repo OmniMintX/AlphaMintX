@@ -25,6 +25,11 @@ type fakeStore struct {
 	orders     []store.LiveOrder
 	events     []store.KillBreakerEvent
 	alerts     []store.SafetyAlert
+	// Error injection for the watchdog fail-safe branch tests
+	// (watchdog.md WD-17/WD-20): each, when set, fails the matching call.
+	ordersErr     error
+	alertErr      error
+	alertTodayErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -54,6 +59,9 @@ func (f *fakeStore) ListPositions(strategyID string) ([]store.Position, error) {
 func (f *fakeStore) ListNonTerminalLiveOrders() ([]store.LiveOrder, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.ordersErr != nil {
+		return nil, f.ordersErr
+	}
 	return append([]store.LiveOrder(nil), f.orders...), nil
 }
 
@@ -79,6 +87,9 @@ func (f *fakeStore) AppendKillBreakerEvent(e store.KillBreakerEvent) error {
 func (f *fakeStore) AppendSafetyAlert(a store.SafetyAlert) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.alertErr != nil {
+		return f.alertErr
+	}
 	f.alerts = append(f.alerts, a)
 	return nil
 }
@@ -86,6 +97,9 @@ func (f *fakeStore) AppendSafetyAlert(a store.SafetyAlert) error {
 func (f *fakeStore) HasSafetyAlertToday(kind, strategyID, refID, utcDate string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.alertTodayErr != nil {
+		return false, f.alertTodayErr
+	}
 	for _, a := range f.alerts {
 		if a.Kind == kind && strings.HasPrefix(a.RecordedAt, utcDate) &&
 			matchNullable(a.StrategyID, strategyID) && matchNullable(a.RefID, refID) {
@@ -99,6 +113,65 @@ func (f *fakeStore) ListUnservedSafetyEvents() ([]store.KillBreakerEvent, error)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]store.KillBreakerEvent(nil), f.events...), nil
+}
+
+func (f *fakeStore) GlobalMaxKillEpoch(strategyID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var max int64
+	for _, e := range f.events {
+		if e.Kind != "kill" || e.KillEpoch == nil {
+			continue
+		}
+		global := e.StrategyID == nil && e.TenantID == nil
+		if (global || (e.StrategyID != nil && *e.StrategyID == strategyID)) && *e.KillEpoch > max {
+			max = *e.KillEpoch
+		}
+	}
+	return max, nil
+}
+
+func (f *fakeStore) AppendStrategyKill(eventID, strategyID, actorID, recordedAt string, flatten bool) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var epoch int64
+	for _, e := range f.events {
+		if e.KillEpoch != nil && *e.KillEpoch > epoch {
+			epoch = *e.KillEpoch
+		}
+	}
+	epoch++
+	sid, tid := strategyID, "tenant-1"
+	f.events = append(f.events, store.KillBreakerEvent{
+		EventID: eventID, Kind: "kill", Scope: "strategy",
+		StrategyID: &sid, TenantID: &tid, KillEpoch: &epoch,
+		Flatten: &flatten, ActorID: actorID, RecordedAt: recordedAt,
+	})
+	return epoch, nil
+}
+
+func (f *fakeStore) HasSafetyAlert(kind, strategyID, refID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.alerts {
+		if a.Kind == kind && matchNullable(a.StrategyID, strategyID) && matchNullable(a.RefID, refID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeStore) LatestStrategyKillEvent(strategyID string) (string, string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.events) - 1; i >= 0; i-- {
+		e := f.events[i]
+		if e.Kind == "kill" && e.Scope == "strategy" &&
+			e.StrategyID != nil && *e.StrategyID == strategyID {
+			return e.EventID, e.ActorID, true, nil
+		}
+	}
+	return "", "", false, nil
 }
 
 // matchNullable is the store's empty-matches-NULL dedupe rule.
@@ -116,6 +189,19 @@ func (f *fakeStore) breakerEvents() []store.KillBreakerEvent {
 	var out []store.KillBreakerEvent
 	for _, e := range f.events {
 		if e.Kind == "breaker" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// killEvents returns the appended kind='kill' rows.
+func (f *fakeStore) killEvents() []store.KillBreakerEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []store.KillBreakerEvent
+	for _, e := range f.events {
+		if e.Kind == "kill" {
 			out = append(out, e)
 		}
 	}
@@ -252,33 +338,90 @@ func (f *fakeRecon) set(v bool) {
 	f.ok = v
 }
 
-// harness wires a Monitor over the fakes with a fixed injected clock.
+// fakeEntries records the watchdog's CancelOpenEntries sweeps; err (when
+// set) is returned on every call.
+type fakeEntries struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (f *fakeEntries) CancelOpenEntries(_ context.Context, strategyID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, strategyID)
+	return f.err
+}
+
+func (f *fakeEntries) sweeps(strategyID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, id := range f.calls {
+		if id == strategyID {
+			n++
+		}
+	}
+	return n
+}
+
+// fakeFilters yields fixed venue minimums; ok=false simulates the
+// ErrFilterUnavailable condition (WD-20 exclusion).
+type fakeFilters struct {
+	mu                  sync.Mutex
+	minQty, minNotional decimal.Decimal
+	miss                bool
+}
+
+func (f *fakeFilters) MinFilters(string) (decimal.Decimal, decimal.Decimal, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.miss {
+		return decimal.Decimal{}, decimal.Decimal{}, false
+	}
+	return f.minQty, f.minNotional, true
+}
+
+// harness wires a Monitor over the fakes with an injected clock that
+// starts at testNow and only moves when a test calls advance.
 type harness struct {
-	t      *testing.T
-	st     *fakeStore
-	pnl    *fakePnL
-	limits *fakeLimits
-	marks  *fakeMarks
-	driver *fakeDriver
-	recon  *fakeRecon
-	m      *Monitor
+	t       *testing.T
+	st      *fakeStore
+	pnl     *fakePnL
+	limits  *fakeLimits
+	marks   *fakeMarks
+	driver  *fakeDriver
+	recon   *fakeRecon
+	entries *fakeEntries
+	filters *fakeFilters
+	clockMu sync.Mutex
+	clock   time.Time
+	m       *Monitor
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
-		t:      t,
-		st:     newFakeStore(),
-		pnl:    &fakePnL{pnl: map[string]decimal.Decimal{}},
-		limits: &fakeLimits{limits: map[string]decimal.Decimal{}},
-		marks:  &fakeMarks{stale: map[string]bool{}},
-		driver: newFakeDriver(),
-		recon:  &fakeRecon{ok: true},
+		t:       t,
+		st:      newFakeStore(),
+		pnl:     &fakePnL{pnl: map[string]decimal.Decimal{}},
+		limits:  &fakeLimits{limits: map[string]decimal.Decimal{}},
+		marks:   &fakeMarks{stale: map[string]bool{}},
+		driver:  newFakeDriver(),
+		recon:   &fakeRecon{ok: true},
+		entries: &fakeEntries{},
+		filters: &fakeFilters{minQty: decimal.RequireFromString("0.00001"), minNotional: decimal.NewFromInt(5)},
+		clock:   testNow,
 	}
 	m, err := New(Config{
 		Store: h.st, PnL: h.pnl, Limits: h.limits, Marks: h.marks,
 		Driver: h.driver, Recon: h.recon,
-		Now:  func() time.Time { return testNow },
+		Entries: h.entries, Filters: h.filters,
+		Now: func() time.Time {
+			h.clockMu.Lock()
+			defer h.clockMu.Unlock()
+			return h.clock
+		},
 		Logf: t.Logf,
 	})
 	if err != nil {
@@ -286,6 +429,13 @@ func newHarness(t *testing.T) *harness {
 	}
 	h.m = m
 	return h
+}
+
+// advance moves the injected clock forward (the watchdog silence tests).
+func (h *harness) advance(d time.Duration) {
+	h.clockMu.Lock()
+	h.clock = h.clock.Add(d)
+	h.clockMu.Unlock()
 }
 
 // addStrategy registers one strategy; posQty != "" opens a BTC/USDT

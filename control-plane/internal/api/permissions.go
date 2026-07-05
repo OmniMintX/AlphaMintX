@@ -58,6 +58,10 @@ func Permissions() []RoutePermission {
 		{Method: "POST", Path: "/api/v1/strategies/{id}/approvals", Roles: approvers, Classes: []string{classOperator}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/traces", Classes: []string{classAgent}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/proposals", Classes: []string{classAgent}, Requires: requiresIngestion},
+		// Heartbeat receiver (watchdog.md WD-2/WD-3): agent tokens only,
+		// own strategy (guard-enforced), ALWAYS registered — receipt is
+		// mode-independent and paper-mode agents must not 404 per 30 s.
+		{Method: "POST", Path: "/api/v1/strategies/{id}/heartbeat", Classes: []string{classAgent}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/limits", Roles: admins, Classes: []string{classEnvAdmin}, Requires: requiresLimits},
 		{Method: "POST", Path: "/api/v1/tenants", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tenants/{tenant_id}/kill", Roles: admins, Classes: []string{classEnvAdmin}},

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
 import pytest
 
-from alphamintx_agent_plane.client.controlplane import ControlPlaneClient, StrategyAuth
+from alphamintx_agent_plane.client.controlplane import (
+    ControlPlaneClient,
+    DryRunTransport,
+    StrategyAuth,
+    heartbeat_path,
+)
 from alphamintx_agent_plane.client.errors import (
     ControlPlaneAuthError,
     ControlPlaneConflictError,
@@ -270,3 +277,61 @@ def test_trace_ingest_201_fails_loudly() -> None:
     recorder = _Recorder([resp])
     with pytest.raises(ControlPlaneRequestError):
         _client(recorder).submit_trace(_trace_envelope())
+
+
+# --- Heartbeat contract (docs/specs/watchdog.md WD-1/WD-5/WD-26) --------------
+
+
+def test_heartbeat_path_is_api_v1() -> None:
+    # Pins the WD-1 stub fix: the repo-wide path convention is /api/v1/...
+    assert heartbeat_path(SID) == f"/api/v1/strategies/{SID}/heartbeat"
+
+
+def test_heartbeat_go_envelope_parses_end_to_end() -> None:
+    # A verbatim Go-shaped receipt body as the control-plane handler emits it.
+    body = '{"received_at":"2026-07-04T12:00:01Z"}'
+    recorder = _Recorder([_json_response(body)])
+    _client(recorder).heartbeat()
+    assert len(recorder.requests) == 1
+    assert recorder.requests[0].url.path == f"/api/v1/strategies/{SID}/heartbeat"
+    assert json.loads(recorder.requests[0].content) == {}  # WD-4: body is {}
+
+
+def test_heartbeat_requires_no_more_than_a_json_object() -> None:
+    # WD-26: the client MAY ignore received_at — a bare {} 200 is success.
+    recorder = _Recorder([_json_response("{}")])
+    _client(recorder).heartbeat()
+    assert len(recorder.requests) == 1
+
+
+def test_heartbeat_ignores_received_at_type_drift() -> None:
+    # WD-26: the client MUST NOT require more than a JSON object; a drifted
+    # received_at type never turns a recorded beat into a per-30s error storm.
+    recorder = _Recorder([_json_response('{"received_at":1234567890}')])
+    _client(recorder).heartbeat()
+    assert len(recorder.requests) == 1
+
+
+def test_heartbeat_non_object_response_is_a_contract_error() -> None:
+    class ListTransport:
+        def post(
+            self, path: str, headers: Mapping[str, str], body: Mapping[str, Any]
+        ) -> Any:
+            return ["not", "an", "object"]
+
+    client = ControlPlaneClient(
+        ListTransport(), StrategyAuth(strategy_id=SID, bearer_token="tok")
+    )
+    with pytest.raises(ControlPlaneContractError):
+        client.heartbeat()
+
+
+def test_dry_run_heartbeat_stub_matches_the_wd5_envelope() -> None:
+    response = DryRunTransport().post(
+        heartbeat_path(SID), {"Authorization": "Bearer tok"}, {}
+    )
+    assert set(response) == {"received_at"}
+    assert re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+        response["received_at"],
+    )

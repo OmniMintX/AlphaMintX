@@ -166,6 +166,56 @@ func TestAppendKillLifecycleLock(t *testing.T) {
 	}
 }
 
+// TestLatestStrategyKillEvent pins the WD-16 back-fill read
+// (docs/specs/watchdog.md §Wiring seams): the NEWEST kind='kill',
+// scope='strategy' row for the strategy — served rows included, breaker
+// rows and other strategies'/tiers' kills excluded; ok=false when none.
+func TestLatestStrategyKillEvent(t *testing.T) {
+	s := openStore(t)
+	createTenantStrategy(t, s, uid(1), "tenant-a")
+	createTenantStrategy(t, s, uid(2), "tenant-a")
+
+	if _, _, ok, err := s.LatestStrategyKillEvent(uid(1)); err != nil || ok {
+		t.Fatalf("empty table: ok=%v err=%v, want false, nil", ok, err)
+	}
+	// A breaker row and a tenant-scope kill never match (kill + strategy
+	// scope only).
+	if err := s.AppendKillBreakerEvent(KillBreakerEvent{
+		EventID: uid(74), Kind: "breaker", Scope: "strategy", StrategyID: strptr(uid(1)),
+		ActorID: "breaker-monitor", RecordedAt: formatTime(testNow),
+	}); err != nil {
+		t.Fatalf("AppendKillBreakerEvent: %v", err)
+	}
+	if _, err := s.AppendTenantKill(uid(75), "tenant-a", "admin-1", formatTime(testNow), false); err != nil {
+		t.Fatalf("AppendTenantKill: %v", err)
+	}
+	if _, _, ok, err := s.LatestStrategyKillEvent(uid(1)); err != nil || ok {
+		t.Fatalf("breaker+tenant rows only: ok=%v err=%v, want false, nil", ok, err)
+	}
+
+	if _, err := s.AppendStrategyKill(uid(76), uid(1), "trader-1", formatTime(testNow), false); err != nil {
+		t.Fatalf("AppendStrategyKill: %v", err)
+	}
+	if _, err := s.AppendStrategyKill(uid(77), uid(2), "watchdog", formatTime(testNow), false); err != nil {
+		t.Fatalf("AppendStrategyKill(other strategy): %v", err)
+	}
+	if ev, actor, ok, err := s.LatestStrategyKillEvent(uid(1)); err != nil || !ok ||
+		ev != uid(76) || actor != "trader-1" {
+		t.Fatalf("after first kill: (%s, %s, %v, %v), want (%s, trader-1, true, nil)", ev, actor, ok, err, uid(76))
+	}
+	// A newer row wins; a served marker never hides it (served or not).
+	if _, err := s.AppendStrategyKill(uid(78), uid(1), "watchdog", formatTime(testNow), false); err != nil {
+		t.Fatalf("second AppendStrategyKill: %v", err)
+	}
+	if err := s.AppendSafetyEffectDone(uid(78), formatTime(testNow)); err != nil {
+		t.Fatalf("AppendSafetyEffectDone: %v", err)
+	}
+	if ev, actor, ok, err := s.LatestStrategyKillEvent(uid(1)); err != nil || !ok ||
+		ev != uid(78) || actor != "watchdog" {
+		t.Fatalf("newest served kill: (%s, %s, %v, %v), want (%s, watchdog, true, nil)", ev, actor, ok, err, uid(78))
+	}
+}
+
 // TestSafetyAlertDedupeReads pins the alert journal and its two dedupe
 // reads: keyed (kind, strategy_id, ref_id[, utcDate]) with the
 // empty-matches-NULL rule on BOTH nullable keys.

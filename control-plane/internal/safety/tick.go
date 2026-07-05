@@ -36,7 +36,12 @@ func (m *Monitor) safeTick(ctx context.Context) (next time.Duration) {
 // tick is one evaluation pass (spec §Evaluation loop). The stall scan runs
 // on EVERY tick — pre-reconcile skipped ticks included — so a drive
 // suppressed by resetPending or a never-completing reconcile still alerts
-// LOUDLY; the returned duration selects the next tick's cadence.
+// LOUDLY; the returned duration selects the next tick's cadence. The
+// watchdog pass ALSO runs on every tick, pre-reconcile included
+// (watchdog.md WD-12: a pass placed only after the breaker evaluation
+// would be silently recon-gated in full); only its recon-gated actions —
+// the rung-1 ENTRY sweep and the unprotected-exposure fast path — are
+// skipped while Reconciled() is false.
 func (m *Monitor) tick(ctx context.Context) time.Duration {
 	now := m.now()
 	defer m.stallScan(now)
@@ -45,20 +50,22 @@ func (m *Monitor) tick(ctx context.Context) time.Duration {
 		m.logf("safety: monitor: monitored set: %v", err)
 		return m.active
 	}
-	if !m.recon.Reconciled() {
+	reconciled := m.recon.Reconciled()
+	if !reconciled {
 		// Step 1 — reconcile gate: local positions and PnL are unverified
-		// before the first completed startup reconcile. Skip everything
-		// except the (deferred) stall scan and alert per strategy with
-		// the same daily dedupe as step 4 (ref_id = cause).
+		// before the first completed startup reconcile. Skip the breaker
+		// evaluation and alert per strategy with the same daily dedupe as
+		// step 4 (ref_id = cause).
 		for _, c := range cands {
 			m.alertDaily("breaker_mark_stale", c.row.StrategyID, "not_reconciled",
 				`{"cause":"not_reconciled"}`, now)
 		}
-		return m.interval(cands)
+	} else {
+		for _, c := range cands {
+			m.evaluate(ctx, c, now)
+		}
 	}
-	for _, c := range cands {
-		m.evaluate(ctx, c, now)
-	}
+	m.watchdogPass(ctx, cands, now, reconciled)
 	return m.interval(cands)
 }
 

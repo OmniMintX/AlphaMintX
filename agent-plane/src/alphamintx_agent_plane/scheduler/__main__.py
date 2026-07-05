@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import TextIO
 
 from alphamintx_agent_plane.client.controlplane import (
+    HEARTBEAT_INTERVAL_SECONDS,
     TOKEN_ENV_VAR,
     ControlPlaneClient,
     StrategyAuth,
@@ -26,9 +27,11 @@ from alphamintx_agent_plane.llm.factory import create_llm_client
 from alphamintx_agent_plane.scheduler.checkpoint import ENV_CHECKPOINT_DB, open_checkpointer
 from alphamintx_agent_plane.scheduler.loop import (
     DEFAULT_TICK_INTERVAL_SECONDS,
+    ENV_HEARTBEAT_INTERVAL_SECONDS,
     ENV_STRATEGY_ID,
     ENV_SYMBOL,
     ENV_TICK_INTERVAL_SECONDS,
+    MAX_HEARTBEAT_INTERVAL_SECONDS,
     Scheduler,
     StrategyRuntime,
 )
@@ -60,6 +63,21 @@ def _tick_interval(env: Mapping[str, str]) -> float:
     return value
 
 
+def _heartbeat_interval(env: Mapping[str, str]) -> float:
+    """WD-25: optional cadence override; default 30; bounds (0, 45]; fail-fast."""
+    raw = env.get(ENV_HEARTBEAT_INTERVAL_SECONDS, str(HEARTBEAT_INTERVAL_SECONDS))
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"invalid {ENV_HEARTBEAT_INTERVAL_SECONDS}={raw!r}") from exc
+    if not 0 < value <= MAX_HEARTBEAT_INTERVAL_SECONDS:
+        raise RuntimeError(
+            f"invalid {ENV_HEARTBEAT_INTERVAL_SECONDS}={raw!r}: must be in "
+            f"(0, {MAX_HEARTBEAT_INTERVAL_SECONDS:g}]"
+        )
+    return value
+
+
 def build_scheduler(environ: Mapping[str, str] | None = None) -> Scheduler:
     """Build the scheduler from env vars; any defect raises before the loop starts."""
     env = os.environ if environ is None else environ
@@ -69,6 +87,7 @@ def build_scheduler(environ: Mapping[str, str] | None = None) -> Scheduler:
     checkpoint_db = _require(env, ENV_CHECKPOINT_DB)
     state_path = _require(env, ENV_STATE_PATH)
     tick_interval_seconds = _tick_interval(env)
+    heartbeat_interval_seconds = _heartbeat_interval(env)
     client = ControlPlaneClient(
         HttpTransport.from_env(env),
         StrategyAuth(strategy_id=strategy_id, bearer_token=token),
@@ -87,6 +106,7 @@ def build_scheduler(environ: Mapping[str, str] | None = None) -> Scheduler:
         checkpointer=open_checkpointer(checkpoint_db),
         tick_state=TickState(state_path),
         tick_interval_seconds=tick_interval_seconds,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
     )
 
 

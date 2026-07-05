@@ -95,6 +95,10 @@ type Config struct {
 	// §API surface); nil in paper mode — no drive runs, the persisted row
 	// alone gate-blocks.
 	SafetyDriver SafetyDriver
+	// Heartbeats receives heartbeat beats (watchdog.md §Wiring seams),
+	// wired to the safety.Monitor in live mode; nil in paper mode — the
+	// heartbeat handler accepts and discards (WD-3).
+	Heartbeats HeartbeatSink
 
 	// ReadToken authorizes GETs ONLY (web dashboard), every tenant.
 	ReadToken string
@@ -168,6 +172,7 @@ func New(cfg Config) *Server {
 		"POST /api/v1/strategies/{id}/approvals":         s.handlePostApproval,
 		"POST /api/v1/strategies/{id}/traces":            s.handlePostTrace,
 		"POST /api/v1/strategies/{id}/proposals":         s.handlePostProposal,
+		"POST /api/v1/strategies/{id}/heartbeat":         s.handleHeartbeat,
 		"POST /api/v1/strategies/{id}/limits":            s.handlePostLimits,
 		"POST /api/v1/strategies/{id}/kill":              s.handleStrategyKill,
 		"POST /api/v1/tenants":                           s.handleCreateTenant,

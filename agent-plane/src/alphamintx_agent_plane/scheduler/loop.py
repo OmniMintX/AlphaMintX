@@ -18,6 +18,7 @@ immediately. Cancellation shuts down cleanly.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import time
 from collections.abc import Callable, Coroutine, Sequence
@@ -28,7 +29,10 @@ from typing import Any, Protocol
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from alphamintx_agent_plane.client.controlplane import ControlPlaneClient
+from alphamintx_agent_plane.client.controlplane import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    ControlPlaneClient,
+)
 from alphamintx_agent_plane.client.errors import (
     ControlPlaneConflictError,
     ControlPlaneError,
@@ -49,9 +53,16 @@ from alphamintx_agent_plane.scheduler.snapshot import MarketSnapshotProvider
 logger = logging.getLogger(__name__)
 
 ENV_TICK_INTERVAL_SECONDS = "ALPHAMINTX_TICK_INTERVAL_SECONDS"
+ENV_HEARTBEAT_INTERVAL_SECONDS = "ALPHAMINTX_HEARTBEAT_INTERVAL_SECONDS"
 ENV_STRATEGY_ID = "ALPHAMINTX_STRATEGY_ID"
 ENV_SYMBOL = "ALPHAMINTX_SYMBOL"
 DEFAULT_TICK_INTERVAL_SECONDS = 60.0
+# WD-25: the interval upper bound is half the watchdog's 90 s silence
+# threshold; the default stays HEARTBEAT_INTERVAL_SECONDS (controlplane.py).
+MAX_HEARTBEAT_INTERVAL_SECONDS = 45.0
+# WD-24: each beat's WAIT is capped at min(interval, 15 s); the transport
+# chain itself keeps running on its abandoned per-attempt thread (WD-23).
+HEARTBEAT_WAIT_CAP_SECONDS = 15.0
 
 AsyncSleep = Callable[[float], Coroutine[Any, Any, None]]
 
@@ -94,26 +105,42 @@ class Scheduler:
         checkpointer: BaseCheckpointSaver[str],
         tick_state: TickStateStore,
         tick_interval_seconds: float = DEFAULT_TICK_INTERVAL_SECONDS,
+        heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
         max_debate_rounds: int = DEFAULT_MAX_DEBATE_ROUNDS,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: AsyncSleep = asyncio.sleep,
+        heartbeat_monotonic: Callable[[], float] = time.monotonic,
+        heartbeat_sleep: AsyncSleep = asyncio.sleep,
     ) -> None:
         if tick_interval_seconds <= 0:
             raise ValueError("tick_interval_seconds must be > 0")
+        if not 0 < heartbeat_interval_seconds <= MAX_HEARTBEAT_INTERVAL_SECONDS:
+            raise ValueError(
+                "heartbeat_interval_seconds must be in "
+                f"(0, {MAX_HEARTBEAT_INTERVAL_SECONDS:g}]"
+            )
         self._strategies = list(strategies)
         self._snapshots = snapshots
         self._checkpointer = checkpointer
         self._tick_state = tick_state
         self._tick_interval = float(tick_interval_seconds)
+        self._heartbeat_interval = float(heartbeat_interval_seconds)
         self._max_debate_rounds = max_debate_rounds
         self._monotonic = monotonic
         self._wall_clock = wall_clock
         self._sleep = sleep
+        self._heartbeat_monotonic = heartbeat_monotonic
+        self._heartbeat_sleep = heartbeat_sleep
         self._day_usage: dict[tuple[str, str], _DayUsage] = {}
 
     async def run(self, *, max_ticks: int | None = None) -> None:
-        """Run every strategy loop; cancellation propagates for a clean shutdown."""
+        """Run every strategy loop; cancellation propagates for a clean shutdown.
+
+        Heartbeat sender tasks (watchdog.md WD-22) are EXCLUDED from the
+        primary gather and cancelled in the shutdown path, so a bounded
+        ``run(max_ticks=…)`` terminates once every strategy loop finishes.
+        """
         tasks = [
             asyncio.create_task(
                 self._run_strategy(strategy, max_ticks),
@@ -121,12 +148,68 @@ class Scheduler:
             )
             for strategy in self._strategies
         ]
+        heartbeats = [
+            asyncio.create_task(
+                self._run_heartbeat(strategy),
+                name=f"heartbeat:{strategy.strategy_id}",
+            )
+            for strategy in self._strategies
+        ]
         try:
             await asyncio.gather(*tasks)
         finally:
-            for task in tasks:
+            for task in [*tasks, *heartbeats]:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*tasks, *heartbeats, return_exceptions=True)
+
+    async def _run_heartbeat(self, strategy: StrategyRuntime) -> None:
+        """Per-strategy heartbeat sender loop (watchdog.md WD-22..WD-25).
+
+        Start-anchored cadence: the next attempt starts at start + interval,
+        NEVER end + interval — an attempt overrunning its slot consumes its
+        own slot and the next send fires immediately. Failures never crash
+        the scheduler and never touch the checkpoint DB or tick state.
+        """
+        while True:
+            started = self._heartbeat_monotonic()
+            await self._attempt_heartbeat(strategy)
+            elapsed = self._heartbeat_monotonic() - started
+            remaining = self._heartbeat_interval - elapsed
+            if remaining > 0:
+                await self._heartbeat_sleep(remaining)
+
+    async def _attempt_heartbeat(self, strategy: StrategyRuntime) -> None:
+        """One heartbeat POST on its OWN short-lived single-use executor.
+
+        WD-23/WD-24: the blocking transport chain runs on a fresh one-thread
+        executor per attempt (never the default executor ticks use) under a
+        ``min(interval, 15 s)`` wait cap; on timeout the beat is ABANDONED but
+        its thread keeps running to completion, blocking nothing — at most
+        ceil(90 s max chain / 30 s cadence) = 3 zombie threads per strategy at
+        the default cadence. Any failure is logged WARNING; the loop continues.
+        """
+        wait_cap = min(self._heartbeat_interval, HEARTBEAT_WAIT_CAP_SECONDS)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(
+                    executor, strategy.client.heartbeat
+                ),
+                timeout=wait_cap,
+            )
+        except TimeoutError:
+            logger.warning(
+                "heartbeat abandoned after the %.1fs wait cap: strategy=%s "
+                "(the transport chain keeps running on its abandoned thread)",
+                wait_cap,
+                strategy.strategy_id,
+            )
+        except Exception:
+            logger.warning(
+                "heartbeat failed: strategy=%s", strategy.strategy_id, exc_info=True
+            )
+        finally:
+            executor.shutdown(wait=False)
 
     async def _run_strategy(self, strategy: StrategyRuntime, max_ticks: int | None) -> None:
         completed = 0

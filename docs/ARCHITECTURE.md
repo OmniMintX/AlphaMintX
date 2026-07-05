@@ -35,7 +35,8 @@ AlphaMintX/
   protective stops preserved until flatten fills) after every reconcile.
   Live PnL circuit breaker (`internal/safety` Monitor): fires once per
   strategy per UTC day, flatten + ENTRY halt until 00:00 UTC
-  (`docs/specs/safety-wiring.md`). Watchdog deferred.
+  (`docs/specs/safety-wiring.md`). Watchdog heartbeat receiver +
+  escalation ladder (`docs/specs/watchdog.md`).
 - Multi-tenant RBAC (`docs/specs/multi-tenant-rbac.md`): fixed roles
   viewer/trader/admin/owner on DB-issued hashed tokens, tenant isolation
   (foreign = 404, no existence oracle), runtime limit changes behind a
@@ -134,11 +135,11 @@ OMS, never managed by LLM loops (invariant 2).
   returns the original verdict verbatim — never re-evaluated, never a second
   order.
 - Heartbeat: agent-plane POSTs an authenticated heartbeat **per strategy every
-  30 s** (endpoint deferred to the watchdog slice — Phase 3 reaction,
-  risk-limits.md §Watchdog; the client stub exists). The watchdog reacts
-  after 90 s of silence: it cancels ENTRY orders
-  only and alerts; protective reduce-only stops stay on the exchange
-  (`docs/specs/risk-limits.md` §Watchdog).
+  30 s** to `POST /api/v1/strategies/{id}/heartbeat`. The watchdog reacts
+  after 90 s of silence: it cancels ENTRY orders only and alerts; protective
+  reduce-only stops stay on the exchange. 10 min of silence (or > 90 s with
+  unprotected exposure) escalates to a strategy-tier kill. Receiver, ladder,
+  and endpoint are normative in `docs/specs/watchdog.md`.
 
 ## mintrouter as the sole LLM gateway
 

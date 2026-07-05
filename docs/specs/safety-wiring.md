@@ -760,10 +760,9 @@ Additional obligations:
 
 ## Deferred (recorded, not silent)
 
-- SW-1 — watchdog heartbeat receiver and its escalation ladder
-  (silence > 90 s ⇒ ENTRY cancel + alert; > 10 min ⇒ strategy-tier kill)
-  per risk-limits.md §Watchdog: a separate change; the kill it escalates
-  INTO is fully specified here.
+- SW-1 — landed: `docs/specs/watchdog.md` (watchdog heartbeat receiver
+  and its escalation ladder — silence > 90 s ⇒ ENTRY cancel + alert;
+  > 10 min ⇒ the strategy-tier kill fully specified here).
 - SW-2 — kill unlock machinery: standing-condition clearing events and
   the `killed → paper/paused` endpoint wiring of strategy-lifecycle.md.
   Until it lands, every kill is permanent (as the v1 tenant kill was).
