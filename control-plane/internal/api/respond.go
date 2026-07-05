@@ -45,6 +45,16 @@ const (
 	codePeriodOpen            = "PERIOD_OPEN"
 	codeUnknownInvoice        = "UNKNOWN_INVOICE"
 	codeUnknownReconciliation = "UNKNOWN_RECONCILIATION"
+	// Live-OMS reconciliation codes (live-oms-and-reconciler.md §API
+	// surface), value-consistent with the oms/live sentinel errors:
+	// RECON_RUNNING is the 409 on POST .../oms/recon/run; the rest are
+	// order-level — recorded on order status, rejected_submissions, and
+	// oms_recon_events.details_json, never new HTTP shapes.
+	codeReconRunning      = "RECON_RUNNING"
+	codeReconcilePending  = "RECONCILE_PENDING"
+	codeFilterUnavailable = "FILTER_UNAVAILABLE"
+	codeFilterRejected    = "FILTER_REJECTED"
+	codeExchangeRejected  = "EXCHANGE_REJECTED"
 )
 
 // Preflight reason codes (persistence-and-api.md §Approval preflight).

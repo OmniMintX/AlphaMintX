@@ -1,24 +1,58 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/live"
 )
 
+// fakeReconStatus is the test ReconStatusProvider (spec §API surface: the
+// RBAC test env MUST wire a fake so the requiresLiveOMS routes register and
+// the matrix pin holds). It mirrors the tenant-filtering contract: a tenant
+// scope gets the restricted subset plus its own counts; "" the full view.
+type fakeReconStatus struct {
+	runErr error // TriggerRun result (tests inject RECON_RUNNING)
+}
+
+func (f *fakeReconStatus) Status(tenantID string) (live.ReconStatus, error) {
+	st := live.ReconStatus{
+		Mode: "live", VenueEnv: "testnet", Reconciled: true,
+		LastRun: &live.ReconRun{Status: "completed", CompletedAt: formatTime(testNow)},
+	}
+	if tenantID != "" {
+		orphans := 0
+		st.Orphans = &orphans
+		return st, nil
+	}
+	epoch := int64(0)
+	st.VenueEpoch = &epoch
+	st.LastRun.RunID = uid(96)
+	st.LastRun.StartedAt = formatTime(testNow)
+	st.LastRun.Counters = &live.RunCounters{FillsBackfilled: 1}
+	st.PendingIntents = 2
+	st.Watermarks = []live.Watermark{{Symbol: "BTC/USDT", VenueEpoch: 0, ExchangeTradeID: 42}}
+	return st, nil
+}
+
+func (f *fakeReconStatus) TriggerRun(context.Context, bool) error { return f.runErr }
+
 // rbacEnv is the FULLY-WIRED server of the RBAC matrix test: every optional
-// dependency set (gatedEnv wires limits + runtime state), so every route in
-// the permission table is registered, plus tenant-1 with one strategy and a
-// DB token per role and a DB agent token.
+// dependency set (gatedEnv wires limits + runtime state; the fake recon
+// provider registers the live-OMS routes), so every route in the permission
+// table is registered, plus tenant-1 with one strategy and a DB token per
+// role and a DB agent token.
 type rbacPrincipals struct {
 	viewer, trader, admin, owner, agent string
 }
 
 func rbacEnv(t *testing.T) (*testEnv, rbacPrincipals) {
 	t.Helper()
-	e := gatedEnv(t)
+	e := gatedEnv(t, func(cfg *Config) { cfg.ReconStatus = &fakeReconStatus{} })
 	createTenant(t, e.store, "tenant-1")
 	createStrategy(t, e.store, strat1, "paper")
 	p := rbacPrincipals{
@@ -110,4 +144,64 @@ func TestRBACMatrixPins(t *testing.T) {
 	wantError(t, e.do(t, "POST", "/api/v1/tenants/tenant-1/kill", dbToks.agent, nil), 403, codeForbidden)
 	wantError(t, e.do(t, "GET", "/api/v1/strategies", adminTok, nil), 403, codeForbidden)
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/approvals", adminTok, nil), 403, codeForbidden)
+}
+
+// TestReconStatusTenantFiltered: tenant principals receive ONLY the
+// restricted subset plus their own counts (multi-tenant-rbac.md isolation
+// rule); account-level detail — watermarks, venue epoch, run_id/counters —
+// is env-class only.
+func TestReconStatusTenantFiltered(t *testing.T) {
+	e, dbToks := rbacEnv(t)
+
+	var tenant map[string]any
+	rec := e.do(t, "GET", "/api/v1/oms/recon/status", dbToks.viewer, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tenant status = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	decodeJSON(t, rec, &tenant)
+	for _, k := range []string{"watermarks", "venue_epoch"} {
+		if _, ok := tenant[k]; ok {
+			t.Errorf("tenant view leaks %q", k)
+		}
+	}
+	if _, ok := tenant["orphans"]; !ok {
+		t.Error("tenant view missing its own orphan count")
+	}
+	lastRun, _ := tenant["last_run"].(map[string]any)
+	for _, k := range []string{"run_id", "started_at", "counters"} {
+		if _, ok := lastRun[k]; ok {
+			t.Errorf("tenant last_run leaks %q", k)
+		}
+	}
+
+	var env map[string]any
+	decodeJSON(t, e.do(t, "GET", "/api/v1/oms/recon/status", readTok, nil), &env)
+	for _, k := range []string{"watermarks", "venue_epoch", "pending_intents"} {
+		if _, ok := env[k]; !ok {
+			t.Errorf("env view missing %q", k)
+		}
+	}
+}
+
+// TestReconRun: 200 with the run_completed counters; unknown body fields
+// are rejected (DisallowUnknownFields); RECON_RUNNING maps to 409.
+func TestReconRun(t *testing.T) {
+	e, _ := rbacEnv(t)
+	rec := e.do(t, "POST", "/api/v1/oms/recon/run", adminTok,
+		map[string]any{"accept_venue_reset": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("run status = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var run live.ReconRun
+	decodeJSON(t, rec, &run)
+	if run.Status != "completed" || run.Counters == nil || run.Counters.FillsBackfilled != 1 {
+		t.Fatalf("run = %+v, want completed with counters", run)
+	}
+	wantError(t, e.do(t, "POST", "/api/v1/oms/recon/run", adminTok,
+		map[string]any{"bogus": 1}), 400, codeSchemaInvalid)
+
+	busy := gatedEnv(t, func(cfg *Config) {
+		cfg.ReconStatus = &fakeReconStatus{runErr: live.ErrReconRunning}
+	})
+	wantError(t, busy.do(t, "POST", "/api/v1/oms/recon/run", adminTok, nil), 409, codeReconRunning)
 }

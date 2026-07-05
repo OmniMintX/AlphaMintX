@@ -311,6 +311,29 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		"InsertMeteringRecords": true, "ClosePeriod": true, "Reconcile": true,
 		"ListInvoices": true, "GetInvoice": true,
 		"ListReconciliations": true, "GetReconciliation": true,
+		// Live-OMS surface (live-oms-and-reconciler.md §Store-surface
+		// amendment): INSERT-only writers for the intent journal, recon
+		// audit, obligation timers, deferred fees, and venue epochs; the
+		// enumerated Record* mutators (live columns mutate ONLY through
+		// them); and the Reconciler/OMS read helpers.
+		"InsertOrderIntent": true, "AppendOMSReconEvent": true,
+		"InsertProtectiveObligation": true, "InsertPendingFillFee": true,
+		"InsertVenueEpoch":  true,
+		"RecordIntentClaim": true, "RecordIntentClaimRevoked": true,
+		"RecordIntentAttempt": true, "RecordExchangeAck": true, "RecordOrderStatus": true,
+		"RecordProtectiveSatisfied": true, "RecordFeeConverted": true,
+		"ListPendingNewIntents": true, "ListOpenProtectiveObligations": true,
+		"ListUnconvertedPendingFillFees": true, "CurrentVenueEpoch": true,
+		"FillWatermark": true, "ListOMSReconEvents": true,
+		// InsertJournaledOrder is the journal-before-send transaction
+		// (orders + order_intents commit together); RecordVenueFill is the
+		// one-transaction fill booking (deduped INSERT + fill bookkeeping +
+		// monotone FSM + accounting, invariant 8). The rest are read-only.
+		"InsertJournaledOrder": true, "RecordVenueFill": true,
+		"GetLiveOrderByClientOrderID": true, "GetLiveOrderByExchangeOrderID": true,
+		"ListNonTerminalLiveOrders": true, "GetOrderIntent": true, "ListFillsByOrder": true,
+		"ListFilledProtectiveEntries": true, "GetLiveOrderForFill": true,
+		"BreakerActiveToday": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

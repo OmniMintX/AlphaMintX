@@ -119,4 +119,43 @@ CREATE TABLE IF NOT EXISTS discrepancies (discrepancy_id TEXT PRIMARY KEY, -- ap
   class TEXT NOT NULL CHECK (class IN ('ORPHAN_CLIENT','ORPHAN_GATEWAY','ESTIMATED_CLIENT',
     'MISMATCH_TOKENS','MISMATCH_COST','ATTRIBUTION_MISMATCH')),
   request_id TEXT, strategy_id TEXT, details_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS order_intents (              -- write-ahead journal (see mutation rule below)
+  client_order_id TEXT PRIMARY KEY,                     -- amx1-<token22>-<attempt>
+  intent_token TEXT NOT NULL, attempt INTEGER NOT NULL,
+  order_id TEXT NOT NULL REFERENCES orders,
+  strategy_id TEXT NOT NULL, symbol TEXT NOT NULL, venue_symbol TEXT NOT NULL,
+  side TEXT NOT NULL, type TEXT NOT NULL, qty_base TEXT NOT NULL,
+  limit_price TEXT, stop_price TEXT,
+  origin TEXT NOT NULL, proposal_id TEXT, kill_epoch INTEGER NOT NULL,
+  journaled_at TEXT NOT NULL,
+  claimed_at TEXT, claim_revoked_at TEXT,               -- send-claim state (Record* mutators ONLY)
+  UNIQUE (intent_token, attempt));
+CREATE TABLE IF NOT EXISTS oms_recon_events (event_id TEXT PRIMARY KEY,  -- append-only recon audit
+  kind TEXT NOT NULL CHECK (kind IN ('run_started','run_completed','run_failed',
+    'intent_resolved_present','intent_resolved_absent','orphan_canceled',
+    'orphan_protective_left','foreign_order_ignored','order_terminalized',
+    'fill_backfilled','fill_after_terminal','stale_update_dropped',
+    'cum_qty_mismatch','balance_drift','commission_asset_anomaly',
+    'duplicate_exposure','flatten_dust','flatten_short_balance',
+    'stream_reconnect','venue_reset','recon_blocked_safety',
+    'protective_resized','sl_deadline_contingency','tp_deadline_missed',
+    'fee_conversion_applied')),
+  run_id TEXT, strategy_id TEXT, symbol TEXT,           -- run_id = recon-run UUID (NOT the runs table)
+  client_order_id TEXT, exchange_order_id TEXT, exchange_trade_id INTEGER,
+  details_json TEXT NOT NULL, recorded_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS protective_obligations (     -- restart-safe SL/TP deadline timers
+  obligation_id TEXT PRIMARY KEY, entry_order_id TEXT NOT NULL REFERENCES orders,
+  strategy_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('sl','tp')),
+  due_at TEXT NOT NULL, created_at TEXT NOT NULL,
+  satisfied_at TEXT);                                   -- RecordProtectiveSatisfied ONLY
+CREATE TABLE IF NOT EXISTS pending_fill_fees (          -- deferred fee conversions (R5)
+  fill_id TEXT PRIMARY KEY REFERENCES fills,
+  commission TEXT NOT NULL, commission_asset TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  converted_at TEXT);                                   -- RecordFeeConverted ONLY
+CREATE TABLE IF NOT EXISTS venue_epochs (               -- append-only; row insertion IS the epoch transition
+  venue_epoch INTEGER PRIMARY KEY,                      -- current epoch = MAX(venue_epoch)
+  started_at TEXT NOT NULL,                             -- R5 cold-start startTime bootstrap
+  reason TEXT NOT NULL CHECK (reason IN ('initial','venue_reset_accepted')),
+  details_json TEXT NOT NULL);
 `

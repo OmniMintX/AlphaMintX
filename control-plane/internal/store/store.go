@@ -96,6 +96,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("billing migration %s: %w", path, err)
 	}
+	if err := migrateLiveOMS(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("live OMS migration %s: %w", path, err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -152,6 +156,46 @@ func migrateBilling(db *sql.DB) error {
 	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_costs_request_id
 		ON model_costs (request_id) WHERE request_id IS NOT NULL`)
 	return err
+}
+
+// migrateLiveOMS is the additive live-OMS migration (live-oms-and-
+// reconciler.md §Migration note): orders and fills pre-exist, so their live
+// columns are added iff absent, THEN the two partial unique indexes apply
+// (they reference the ALTERed columns, so they run post-ALTER, not in
+// schemaDDL). NO data backfill: existing paper rows keep NULL in every new
+// column (fills.venue_epoch defaults to 0) and are excluded from the
+// partial indexes.
+func migrateLiveOMS(db *sql.DB) error {
+	for _, col := range []struct{ table, name, ddl string }{
+		{"orders", "client_order_id", `ALTER TABLE orders ADD COLUMN client_order_id TEXT`},
+		{"orders", "exchange_order_id", `ALTER TABLE orders ADD COLUMN exchange_order_id TEXT`},
+		{"fills", "venue_symbol", `ALTER TABLE fills ADD COLUMN venue_symbol TEXT`},
+		{"fills", "exchange_trade_id", `ALTER TABLE fills ADD COLUMN exchange_trade_id INTEGER`},
+		{"fills", "venue_epoch", `ALTER TABLE fills ADD COLUMN venue_epoch INTEGER NOT NULL DEFAULT 0`},
+	} {
+		var have int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?)
+			WHERE name = ?`, col.table, col.name).Scan(&have); err != nil {
+			return err
+		}
+		if have == 0 {
+			if _, err := db.Exec(col.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	for _, ddl := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order_id
+			ON orders (client_order_id) WHERE client_order_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_venue_trade
+			ON fills (venue_epoch, venue_symbol, exchange_trade_id)
+			WHERE exchange_trade_id IS NOT NULL`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close closes the underlying database.

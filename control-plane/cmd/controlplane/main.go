@@ -24,7 +24,9 @@ import (
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/api"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/live"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/omsbridge"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
@@ -54,9 +56,12 @@ func main() {
 // (CONTROLPLANE_RISK_LIMITS), the paper-OMS bridge acting as the Submitter
 // (CONTROLPLANE_FILL_MODEL), and the BinanceFeed writer that stores marks
 // and fires the OMS trigger sweep on every tick (CONTROLPLANE_SYMBOLS).
-// Each piece is fail-closed when absent: no limits means no verdicts are
-// produced here, no fill model means approvals block SUBMITTER_UNAVAILABLE,
-// and no feed means the gate rejects MARK_PRICE_UNAVAILABLE.
+// CONTROLPLANE_OMS_MODE=live replaces the paper bridge with the live
+// Binance OMS (live-oms-and-reconciler.md §Config) and registers the recon
+// routes. Each piece is fail-closed when absent: no limits means no
+// verdicts are produced here, no Submitter means approvals block
+// SUBMITTER_UNAVAILABLE, and no feed means the gate rejects
+// MARK_PRICE_UNAVAILABLE.
 func serve(dbPath string) error {
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -125,8 +130,57 @@ func serve(dbPath string) error {
 		}
 	}
 
+	// The live-OMS opt-in (live-oms-and-reconciler.md §Config): exactly one
+	// of the paper bridge or the live OMS fills the Submitter seam.
+	liveCfg, err := parseLiveOMS(
+		os.Getenv("CONTROLPLANE_OMS_MODE"),
+		os.Getenv("CONTROLPLANE_BINANCE_ENV"),
+		os.Getenv("CONTROLPLANE_BINANCE_API_KEY"),
+		os.Getenv("CONTROLPLANE_BINANCE_API_SECRET"),
+		os.Getenv("CONTROLPLANE_LIVE_PROD_ACK"),
+		os.Getenv("CONTROLPLANE_LIVE_OMS_TUNING"),
+	)
+	if err != nil {
+		return err
+	}
+
+	symbols := splitSymbols(os.Getenv("CONTROLPLANE_SYMBOLS"))
+
 	var bridge *omsbridge.Bridge
-	if raw := os.Getenv("CONTROLPLANE_FILL_MODEL"); raw != "" {
+	var liveOMS *live.OMS
+	switch {
+	case liveCfg != nil:
+		if os.Getenv("CONTROLPLANE_FILL_MODEL") != "" {
+			return errors.New("CONTROLPLANE_OMS_MODE=live excludes CONTROLPLANE_FILL_MODEL (exactly one of paper bridge or live OMS)")
+		}
+		if limits == nil {
+			return errors.New("CONTROLPLANE_OMS_MODE=live requires CONTROLPLANE_RISK_LIMITS (allocated_capital_quote seeds equity)")
+		}
+		if len(symbols) == 0 {
+			return errors.New("CONTROLPLANE_OMS_MODE=live requires CONTROLPLANE_SYMBOLS (the OMS trades configured symbols only)")
+		}
+		if err := validateVenuePairing(liveCfg.env,
+			os.Getenv("CONTROLPLANE_BINANCE_REST_URL"), os.Getenv("CONTROLPLANE_BINANCE_WS_URL")); err != nil {
+			return err
+		}
+		ex := exchange.NewBinance(liveCfg.env, liveCfg.apiKey, liveCfg.apiSecret, nil)
+		ex.RecvWindow = time.Duration(liveCfg.tuning.RecvWindowMS) * time.Millisecond
+		liveOMS, err = live.New(live.Config{
+			Store:                 st,
+			Exchange:              ex,
+			Symbols:               symbols,
+			Marks:                 marks,
+			AllocatedCapitalQuote: limits.AllocatedCapitalQuote,
+			VenueEnv:              string(liveCfg.env),
+			Tuning:                liveCfg.tuning,
+		})
+		if err != nil {
+			return err
+		}
+		cfg.Submitter = liveOMS
+		cfg.ReconStatus = liveOMS
+	case os.Getenv("CONTROLPLANE_FILL_MODEL") != "":
+		raw := os.Getenv("CONTROLPLANE_FILL_MODEL")
 		if limits == nil {
 			return errors.New("CONTROLPLANE_FILL_MODEL requires CONTROLPLANE_RISK_LIMITS (allocated_capital_quote seeds equity)")
 		}
@@ -151,7 +205,17 @@ func serve(dbPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if symbols := splitSymbols(os.Getenv("CONTROLPLANE_SYMBOLS")); len(symbols) > 0 {
+	if liveOMS != nil {
+		// Run drives the mandatory startup reconcile, the user-data
+		// stream, and the periodic reconcile until shutdown.
+		go func() {
+			if err := liveOMS.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("live OMS: %v", err)
+			}
+		}()
+	}
+
+	if len(symbols) > 0 {
 		market := marketdata.MarketSpot // v1 scope: spot markets (risk-limits.md)
 		if v := os.Getenv("CONTROLPLANE_BINANCE_MARKET"); v != "" {
 			market = marketdata.Market(v)

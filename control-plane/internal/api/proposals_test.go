@@ -37,8 +37,9 @@ func testRiskLimits() riskgate.RiskLimits {
 }
 
 // gatedEnv is newEnv plus the serve-mode ingestion wiring: RiskLimits and a
-// runstate hydrator over the same store and mark cache.
-func gatedEnv(t *testing.T) *testEnv {
+// runstate hydrator over the same store and mark cache. Extra mutators
+// apply on top (rbacEnv wires the fake ReconStatusProvider this way).
+func gatedEnv(t *testing.T, mutate ...func(*Config)) *testEnv {
 	t.Helper()
 	return newEnv(t, func(cfg *Config) {
 		limits := testRiskLimits()
@@ -46,6 +47,9 @@ func gatedEnv(t *testing.T) *testEnv {
 		cfg.RuntimeState = &runstate.Hydrator{
 			Store: cfg.Store, Marks: cfg.Marks,
 			AllocatedCapitalQuote: limits.AllocatedCapitalQuote,
+		}
+		for _, m := range mutate {
+			m(cfg)
 		}
 	})
 }

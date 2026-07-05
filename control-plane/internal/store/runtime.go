@@ -90,6 +90,24 @@ func listPositions(q dbtx, strategyID string) ([]Position, error) {
 	return out, rows.Err()
 }
 
+// getPosition reads one (strategy, symbol) position snapshot; ok=false when
+// no row exists yet.
+func getPosition(q dbtx, strategyID, symbol string) (Position, bool, error) {
+	var p Position
+	err := q.QueryRow(`SELECT strategy_id, symbol, qty_base, entry_price, fees_quote,
+		realized_pnl_quote, updated_at
+		FROM positions WHERE strategy_id = ? AND symbol = ?`, strategyID, symbol).
+		Scan(&p.StrategyID, &p.Symbol, &p.QtyBase, &p.EntryPrice,
+			&p.FeesQuote, &p.RealizedPnLQuote, &p.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Position{}, false, nil
+	}
+	if err != nil {
+		return Position{}, false, err
+	}
+	return p, true, nil
+}
+
 // GetStrategyState returns the realized-equity snapshot; ok=false when the
 // strategy has no row yet (nothing realized so far).
 func (s *Store) GetStrategyState(strategyID string) (StrategyState, bool, error) {

@@ -18,14 +18,16 @@ type RoutePermission struct {
 	// Public marks the single unauthenticated route (GET /health).
 	Public bool
 	// Requires names optional wiring the route depends on: "" always
-	// registered, requiresIngestion (limits + runtime state) or
-	// requiresLimits (a limits provider).
+	// registered, requiresIngestion (limits + runtime state),
+	// requiresLimits (a limits provider), or requiresLiveOMS (a
+	// ReconStatusProvider — live deployments only).
 	Requires string
 }
 
 const (
 	requiresIngestion = "ingestion"
 	requiresLimits    = "limits"
+	requiresLiveOMS   = "live-oms"
 )
 
 // allows reports whether the principal's role (user class) or class (env
@@ -74,5 +76,11 @@ func Permissions() []RoutePermission {
 		{Method: "GET", Path: "/api/v1/billing/invoices/{invoice_id}", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/billing/reconciliations", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/billing/reconciliations/{recon_id}", Roles: admins, Classes: []string{classRead, classEnvAdmin}},
+		// Live-OMS reconciliation (live-oms-and-reconciler.md §API
+		// surface): status is tenant-filtered for tenant principals; the
+		// run trigger is a deployer act (env-admin ONLY, like the billing
+		// POSTs). Both exist only when the live OMS is wired.
+		{Method: "GET", Path: "/api/v1/oms/recon/status", Roles: readers, Classes: []string{classRead, classEnvAdmin}, Requires: requiresLiveOMS},
+		{Method: "POST", Path: "/api/v1/oms/recon/run", Classes: []string{classEnvAdmin}, Requires: requiresLiveOMS},
 	}
 }

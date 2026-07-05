@@ -22,6 +22,11 @@ AlphaMintX/
   RiskLimits (`docs/specs/risk-limits.md`). Emits a persisted RiskVerdict.
 - **OMS**: the ONLY component that talks to exchanges. Order FSM, idempotent
   clientOrderId, fill reconciliation (ws primary, REST audit), orphan recovery.
+  Paper OMS (`internal/oms/paper` + `omsbridge`) is the default; live OMS
+  (`internal/oms/live` + `internal/exchange`, Binance spot, testnet-first,
+  prod behind a triple opt-in) implements the write-ahead intent journal,
+  transactional send claims, Reconciler (exchange-is-truth), venue epochs,
+  and the protective SL/TP lifecycle (`docs/specs/live-oms-and-reconciler.md`).
 - Exchange credential storage: field-level encrypted, write-only (invariant 6).
 - Kill-switch endpoints (strategy / tenant / platform) and watchdog.
 - Multi-tenant RBAC (`docs/specs/multi-tenant-rbac.md`): fixed roles

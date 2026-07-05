@@ -9,6 +9,7 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/live"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
@@ -39,6 +41,16 @@ type Submitter interface {
 // ingestion; *runstate.Hydrator satisfies it.
 type RuntimeStateSource interface {
 	State(strategyID, lifecycleState, symbol string, now time.Time) (riskgate.RuntimeState, error)
+}
+
+// ReconStatusProvider is the live-OMS reconciliation seam
+// (live-oms-and-reconciler.md §API surface): Status is tenant-filtered by
+// the principal's tenant scope ("" = platform view) and TriggerRun runs
+// R1-R7 synchronously (ErrReconRunning when a run is in progress). The live
+// OMS satisfies it; main.go wires it in live mode only.
+type ReconStatusProvider interface {
+	Status(tenantID string) (live.ReconStatus, error)
+	TriggerRun(ctx context.Context, acceptVenueReset bool) error
 }
 
 // Config wires the server. Store is required; zero-value tokens disable
@@ -65,6 +77,10 @@ type Config struct {
 	// with Limits set falls back to a provider over the bare base (no
 	// persisted overlay — test/replay wiring).
 	LimitsProvider *LimitsProvider
+	// ReconStatus enables the two /api/v1/oms/recon routes; nil (paper
+	// deployments) leaves them unregistered (404), preserving the
+	// Phase 1/2 surface exactly (live-oms-and-reconciler.md §API surface).
+	ReconStatus ReconStatusProvider
 
 	// ReadToken authorizes GETs ONLY (web dashboard), every tenant.
 	ReadToken string
@@ -151,6 +167,8 @@ func New(cfg Config) *Server {
 		"GET /api/v1/billing/invoices/{invoice_id}":      s.handleGetInvoice,
 		"GET /api/v1/billing/reconciliations":            s.handleListReconciliations,
 		"GET /api/v1/billing/reconciliations/{recon_id}": s.handleGetReconciliation,
+		"GET /api/v1/oms/recon/status":                   s.handleGetReconStatus,
+		"POST /api/v1/oms/recon/run":                     s.handlePostReconRun,
 	}
 	for _, perm := range Permissions() {
 		switch perm.Requires {
@@ -160,6 +178,10 @@ func New(cfg Config) *Server {
 			}
 		case requiresLimits:
 			if s.limits == nil {
+				continue
+			}
+		case requiresLiveOMS:
+			if cfg.ReconStatus == nil {
 				continue
 			}
 		}

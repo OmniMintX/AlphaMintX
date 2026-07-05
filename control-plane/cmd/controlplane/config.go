@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/live"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/riskgate"
 )
 
@@ -126,6 +129,72 @@ func defaultedDec(field, v, def string) (decimal.Decimal, error) {
 		return decimal.Decimal{}, fmt.Errorf("CONTROLPLANE_RISK_LIMITS: %s %q: %w", field, v, err)
 	}
 	return d, nil
+}
+
+// prodAckLiteral is the exact CONTROLPLANE_LIVE_PROD_ACK value required for
+// CONTROLPLANE_BINANCE_ENV=prod (live-oms-and-reconciler.md §Config,
+// invariant 15: three explicit settings before real funds).
+const prodAckLiteral = "I-UNDERSTAND-THIS-TRADES-REAL-FUNDS"
+
+// liveOMSConfig carries the parsed live-OMS opt-in (spec §Config); nil
+// means paper mode (the default). The credentials are secrets: never
+// logged, in errors or otherwise.
+type liveOMSConfig struct {
+	env       exchange.Env
+	apiKey    string
+	apiSecret string
+	tuning    live.Tuning
+}
+
+// parseLiveOMS validates the live-OMS env settings. mode "" or "paper"
+// yields nil (paper is the default and behaviorally unchanged); "live"
+// requires BOTH API credentials; env "prod" additionally requires the exact
+// ack literal. Any other mode or env value refuses to start.
+func parseLiveOMS(mode, env, apiKey, apiSecret, prodAck, tuningRaw string) (*liveOMSConfig, error) {
+	switch mode {
+	case "", "paper":
+		return nil, nil
+	case "live":
+	default:
+		return nil, fmt.Errorf("CONTROLPLANE_OMS_MODE %q: must be \"paper\" or \"live\"", mode)
+	}
+	c := &liveOMSConfig{env: exchange.EnvTestnet}
+	switch env {
+	case "", string(exchange.EnvTestnet):
+	case string(exchange.EnvProd):
+		if prodAck != prodAckLiteral {
+			return nil, errors.New("CONTROLPLANE_BINANCE_ENV=prod requires CONTROLPLANE_LIVE_PROD_ACK to equal " + prodAckLiteral)
+		}
+		c.env = exchange.EnvProd
+	default:
+		return nil, fmt.Errorf("CONTROLPLANE_BINANCE_ENV %q: must be \"testnet\" or \"prod\"", env)
+	}
+	if apiKey == "" || apiSecret == "" {
+		return nil, errors.New("CONTROLPLANE_OMS_MODE=live requires CONTROLPLANE_BINANCE_API_KEY and CONTROLPLANE_BINANCE_API_SECRET")
+	}
+	c.apiKey, c.apiSecret = apiKey, apiSecret
+	tuning, err := live.ParseTuning(tuningRaw)
+	if err != nil {
+		return nil, err
+	}
+	c.tuning = tuning
+	return c, nil
+}
+
+// validateVenuePairing enforces the normative venue pairing (spec §Config):
+// CONTROLPLANE_BINANCE_ENV=prod REQUIRES prod market data — a testnet
+// market-data endpoint override refuses to start. Testnet trading may (and
+// is recommended to) use prod market data.
+func validateVenuePairing(env exchange.Env, restURL, wsURL string) error {
+	if env != exchange.EnvProd {
+		return nil
+	}
+	for _, u := range []string{restURL, wsURL} {
+		if strings.Contains(u, "testnet") {
+			return errors.New("CONTROLPLANE_BINANCE_ENV=prod requires prod market data: remove the testnet CONTROLPLANE_BINANCE_REST_URL/_WS_URL override (venue pairing, docs/specs/live-oms-and-reconciler.md §Config)")
+		}
+	}
+	return nil
 }
 
 // splitSymbols parses the CONTROLPLANE_SYMBOLS comma list of canonical

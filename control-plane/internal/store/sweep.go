@@ -52,3 +52,48 @@ func (t *SweepTx) UpsertStrategyState(st StrategyState) error {
 func (t *SweepTx) GetStrategyState(strategyID string) (StrategyState, bool, error) {
 	return getStrategyState(t.tx, strategyID)
 }
+
+// GetPosition reads one (strategy, symbol) position snapshot inside the
+// transaction (live fill accounting reads-then-upserts atomically);
+// ok=false when no row exists yet.
+func (t *SweepTx) GetPosition(strategyID, symbol string) (Position, bool, error) {
+	return getPosition(t.tx, strategyID, symbol)
+}
+
+// InsertOrderIntent journals one placement attempt (Store semantics).
+func (t *SweepTx) InsertOrderIntent(i OrderIntent) error { return insertOrderIntent(t.tx, i) }
+
+// RecordOrderStatus advances the order FSM monotonically (Store semantics).
+func (t *SweepTx) RecordOrderStatus(orderID, status string) (string, error) {
+	return recordOrderStatus(t.tx, orderID, status)
+}
+
+// AppendOMSReconEvent appends one recon audit row (Store semantics): the
+// step-3 kill-stale abandon writes the rejected status and its
+// intent_resolved_absent event in the SAME transaction.
+func (t *SweepTx) AppendOMSReconEvent(e OMSReconEvent) error {
+	return appendOMSReconEvent(t.tx, e)
+}
+
+// InsertPendingFillFee persists a deferred fee conversion (Store semantics)
+// inside the fill-booking transaction (Reconciler R5).
+func (t *SweepTx) InsertPendingFillFee(f PendingFillFee) error {
+	return insertPendingFillFee(t.tx, f)
+}
+
+// InsertProtectiveObligation persists a fresh SL/TP deadline timer (Store
+// semantics) inside the fill-booking transaction: the timer and its
+// triggering fill commit together (§Protective order lifecycle).
+func (t *SweepTx) InsertProtectiveObligation(o ProtectiveObligation) error {
+	return insertProtectiveObligation(t.tx, o)
+}
+
+// RecordFeeConverted resolves a deferred fee conversion (Store semantics)
+// in the SAME transaction as its accounting application.
+func (t *SweepTx) RecordFeeConverted(fillID, convertedAt string) error {
+	return resolveOnce(t.tx,
+		`UPDATE pending_fill_fees SET converted_at = ?
+			WHERE fill_id = ? AND converted_at IS NULL`,
+		`SELECT COUNT(*) FROM pending_fill_fees WHERE fill_id = ?`,
+		"pending fill fee", fillID, convertedAt)
+}

@@ -165,6 +165,22 @@ Scope:
 Exit criteria:
 - [ ] Reconciler proves exchange-is-truth: orphan adoption and gap detection
       tested against testnet outage/restart scenarios.
+      (2026-07-05: implementation complete per
+      `docs/specs/live-oms-and-reconciler.md` — `internal/exchange`
+      (Binance spot adapter + deterministic fake, 4-class error taxonomy,
+      redaction-pinned), `internal/oms/live` (write-ahead intent journal +
+      transactional send claims, monotone FSM, Reconciler R1–R7, venue
+      epochs, protective SL/TP lifecycle with contingency flatten,
+      safety-engine ops), additive store DDL (5 tables + 5 guarded ALTERs;
+      soak `control.db` copy opens unchanged, 590 runs intact), recon API
+      behind `requiresLiveOMS` in the RBAC matrix. Scenario matrix
+      S1–S23 + `TestFakeDrill_OutageRestart` (the 5-step drill twin:
+      ≥1 intent adopted, ≥1 fill backfilled by trade id, cum-qty identity,
+      second-restart zero-dup + watermark>0) all green in CI.
+      REMAINING for the checkbox: run `TestTestnetDrill_OutageRestart`
+      against the REAL Binance testnet — needs operator-supplied
+      `CONTROLPLANE_BINANCE_API_KEY`/`_SECRET` (testnet); the test fails
+      on vacuous evidence by construction.)
 - [ ] Kill-switch drill executed at strategy, tenant, and platform tier: ENTRY
       orders canceled, protective stops preserved (canceled only after flatten
       fills), optional reduce-only flatten, no auto-restart, effects resumable

@@ -103,6 +103,10 @@ RULES: tuple[Rule, ...] = (
             "X-MBX-APIKEY",
             "BINANCE_API_KEY",
             "BINANCE_API_SECRET",
+            # CONTROLPLANE_BINANCE_* are control-plane-only tokens (exchange
+            # credentials and venue config, live-oms-and-reconciler.md
+            # §Config, invariant 14).
+            "CONTROLPLANE_BINANCE_",
             "import ccxt",
             "from ccxt",
         ),
