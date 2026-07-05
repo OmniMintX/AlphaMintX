@@ -158,6 +158,15 @@ Scope:
 - Live OMS: testnet-first defaults, live endpoints behind explicit flag; small
   notional caps; strict symbol whitelist; trade-only (non-custodial) API keys.
 - Paper-gate enforcement for promotion (see `docs/specs/strategy-lifecycle.md`).
+  (2026-07-05: landed per `docs/specs/lifecycle-api.md` — lifecycle
+  transition endpoint `POST /api/v1/strategies/{id}/lifecycle` (CAS
+  persistence, guards from persisted state, kills redirected to the
+  kill endpoints), computed unwaivable paper-gate (in-request fill
+  replay, `GET .../paper-gate` report), SW-2 kill-clear + unlock
+  (`kill_clear_events`, `ActiveKill` predicate, 3 clear endpoints,
+  `killed → paper/paused` via the endpoint), LC-16a atomic
+  CreateStrategy bootstrap + Open-time migration; unlock/clear/
+  lifecycle drills per the spec's §Test obligations.)
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.

@@ -111,6 +111,11 @@ operator — the env-admin class — a platform kill). Normative rules:
   their audit `tenant_id`; tenant rows (`tenant_id = :tid AND strategy_id
   IS NULL`) bind only their tenant. Strategy-kill rows carrying a non-NULL
   `tenant_id` therefore need NO predicate change (invariant 11).
+  Since SW-2 landed, the standing-condition BLOCKERS (hydrator
+  `KillActive`, the entry check below, the WD-16 skip) key on the
+  clear-aware `ActiveKill` predicate instead (lifecycle-api.md
+  LC-28/LC-34); the RAW-epoch reads here keep backing the staleness
+  ordering.
 - **Epoch monotonicity.** One global counter across all three scopes,
   computed inside the insert transaction (race-free under the store's
   single-connection invariant) — the OMS kill re-check's stale-epoch
@@ -121,13 +126,20 @@ operator — the env-admin class — a platform kill). Normative rules:
 ### Standing-kill check in the OMS entry path (normative)
 
 - `submitEntry` (`internal/oms/live/submit.go`) MUST reject with
-  `KILL_SWITCH_ACTIVE` when `GlobalMaxKillEpoch(strategyID) > 0` —
+  `KILL_SWITCH_ACTIVE` when `ActiveKill(strategyID)` is true — the LC-28
+  active-kill predicate of `docs/specs/lifecycle-api.md` (SW-2 landed):
+  an UNCLEARED kill at any tier blocks, a cleared kill no longer does —
   mirroring the existing `BreakerActiveToday` ENTRY halt. This closes
   the L2/L3 window in which a submission CREATED after the kill stamps
   the fresh post-kill epoch and therefore passes the transmit-loop
   staleness comparison (`transmit`'s `maxEpoch > intent.KillEpoch`
   re-check only catches submissions journaled BEFORE the kill)
-  (invariant 15).
+  (invariant 15). Stamp-then-check order (LC-34a): the RAW stamp epoch
+  (`GlobalMaxKillEpoch`) is read BEFORE the `ActiveKill` check and the
+  stamped value is that PRE-check read — a kill committing after the
+  stamp carries a higher epoch and the transmit-loop comparison catches
+  it; no interleaving lets an intent transmit under a kill it never
+  observed.
 - Safety-origin submissions (the flatten, protective, and orphan-cancel
   paths) are EXEMPT from this standing check — they MUST run during a
   kill — and rely on the transmit-loop staleness comparison alone. They
@@ -364,13 +376,18 @@ with `flatten=0` are served after entry cancels and lifecycle locks alone.
 - Precedence is platform > tenant > strategy in the standing-condition
   sense: the gate predicate and epoch counter already encode "most
   restrictive wins, any active kill rejects" (risk-limits.md gate step 1).
-- Unlock is OUT OF SCOPE (§Deferred): strategy-lifecycle.md's
-  `killed → paper/paused` human-unlock transitions require the triggering
-  kill tier's standing condition CLEARED, and no clearing machinery
-  exists yet — every kill stands once fired, as the v1 tenant kill was.
+- Unlock LANDED (SW-2 — `docs/specs/lifecycle-api.md`): append-only
+  `kill_clear_events` rows clear the standing condition per scope —
+  strategy, tenant, and platform clears, with the CAS-verified
+  `cleared_epoch` and the `ActiveKill` predicate (LC-27/LC-28)
+  superseding "every kill stands once fired" — and
+  strategy-lifecycle.md's `killed → paper/paused` human-unlock
+  transitions run through the lifecycle endpoint (LC-36: clear and
+  unlock are two audited acts).
   **No auto-restart** holds by construction and by the absence of any
-  code path out of `killed` without a human actor (strategy-lifecycle.md;
-  restated, not re-specified, invariant 9).
+  code path out of `killed` without a human actor — nothing clears a
+  kill as a side effect (lifecycle-api.md invariant 1; restated, not
+  re-specified, invariant 9).
 
 ## Live PnL circuit-breaker monitor
 
@@ -508,9 +525,9 @@ the drills; `cmd/controlplane` wires the real implementations.
   lifecycle state unchanged throughout.
 - Kill: recovery ONLY via explicit human unlock per strategy-lifecycle.md
   (`killed → paper/paused`, Admin/Owner, recorded reason, positions-flat
-  guard, standing condition cleared) — and since unlock machinery is
-  deferred (§Deferred), every kill currently stands permanently. Nothing
-  in this spec re-specifies those transitions.
+  guard, standing condition cleared) — the clear + unlock machinery is
+  `docs/specs/lifecycle-api.md` (SW-2). Nothing in this spec
+  re-specifies those transitions.
 
 ## Paper-mode invariance (normative)
 
@@ -639,7 +656,11 @@ reason `kill_epoch_stale`).
    lifecycle locks recorded, flatten rows fully flat — where dust,
    alerted short-balance, and unconfigured-symbol residue count as zero
    AFTER their one-time `safety_residue_abandoned` alert); Ambiguous
-   outcomes leave the row unserved.
+   outcomes leave the row unserved. Pinned carve-out (lifecycle-api.md
+   LC-38): a marker written by a kill-CLEAR records that the clear is
+   the audited resolution — one `kill_effects_superseded` alert per
+   superseded event — not that effects executed; the driver re-checks
+   marker absence immediately before executing an event's effects.
 4. **Derive-from-state resumability.** Effects re-derive from store+venue
    state on every drive; restart ⇒ reconcile ⇒ DriveSafetyEffects
    converges; a second restart over a completed world is a no-op.
@@ -658,8 +679,10 @@ reason `kill_epoch_stale`).
    and never silently passes: it alerts. The proposal gate's
    `MARK_PRICE_UNAVAILABLE` fail-closed rule is the exposure backstop.
 9. **No auto-restart.** Kill recovery requires explicit human unlock
-   (strategy-lifecycle.md; machinery deferred, so kills currently stand);
-   the breaker changes effective autonomy only, never lifecycle state.
+   (strategy-lifecycle.md; machinery landed — `docs/specs/lifecycle-api.md`:
+   clear the standing condition, then the lifecycle endpoint's
+   `killed → paper/paused` unlock); the breaker changes effective
+   autonomy only, never lifecycle state.
 10. Kill endpoints exist and gate-block in BOTH modes;
     `DriveSafetyEffects` and the monitor exist ONLY when the live OMS is
     wired; paper behavior is unchanged and all DDL is additive.
@@ -676,8 +699,10 @@ reason `kill_epoch_stale`).
 14. A monitor tick panic is recovered, logged, and alerted; the monitor
     and the process keep running.
 15. **Standing-kill entry check.** `submitEntry` rejects with
-    `KILL_SWITCH_ACTIVE` whenever `GlobalMaxKillEpoch(strategyID) > 0`;
-    safety-origin submissions are exempt and stamp the CURRENT
+    `KILL_SWITCH_ACTIVE` whenever `ActiveKill(strategyID)` is true
+    (lifecycle-api.md LC-28 — a cleared kill no longer blocks), with
+    the RAW stamp epoch read BEFORE the check (LC-34a); safety-origin
+    submissions are exempt and stamp the CURRENT
     (post-bump) epoch at journal time, so a kill's own flatten never
     self-deadlocks and a second kill abandons it as `kill_epoch_stale`.
 16. **Reconcile gates serving.** A drive pass may execute effects
@@ -686,6 +711,9 @@ reason `kill_epoch_stale`).
     reconcile run finished strictly after the event's `recorded_at` —
     otherwise the marker is deferred to the next R7-hooked pass; the
     stall alert is TIME-based and fires even when no pass can run.
+    Clear-written markers are exempt (invariant 3's LC-38 carve-out):
+    they record supersession, not venue-verified completion, and need
+    no post-event reconcile.
 17. **Error isolation.** An error serving one (event, strategy) is
     logged and counted as residual work; the pass continues with the
     next strategy and the next event, never aborting early.
@@ -763,9 +791,10 @@ Additional obligations:
 - SW-1 — landed: `docs/specs/watchdog.md` (watchdog heartbeat receiver
   and its escalation ladder — silence > 90 s ⇒ ENTRY cancel + alert;
   > 10 min ⇒ the strategy-tier kill fully specified here).
-- SW-2 — kill unlock machinery: standing-condition clearing events and
-  the `killed → paper/paused` endpoint wiring of strategy-lifecycle.md.
-  Until it lands, every kill is permanent (as the v1 tenant kill was).
+- SW-2 — landed: `docs/specs/lifecycle-api.md` (append-only
+  `kill_clear_events` + the `ActiveKill` predicate + the three clear
+  endpoints, and the lifecycle endpoint's `killed → paper/paused`
+  unlock wiring).
 - SW-3 — kill-driven token revocation (ARCHITECTURE.md "tokens are
   revoked on kill-switch"), deferred from multi-tenant-rbac.md and
   consciously deferred again: gate + OMS re-check already deny all

@@ -685,3 +685,210 @@ func TestBreakerDrill_RearmNextUTCDay(t *testing.T) {
 		t.Errorf("next-day entry status = %s, want open", ord.Status)
 	}
 }
+
+// LC-34 split, OMS half (lifecycle-api.md): a clear at the kill's own
+// scope re-enables ENTRY submissions — the standing check is the
+// ActiveKill predicate — while the post-clear submission stamps the RAW
+// epoch (LC-34a) and an intent stamped PRE-kill still abandons stale
+// (invariant 3: staleness survives clearing).
+func TestKillClearDrill_ClearReenablesSubmitStaleStillAbandons(t *testing.T) {
+	e := newEnv(t)
+	e.reconcile()
+	epoch, err := e.st.AppendStrategyKill(uid(90), uid(1), "op-1", formatTime(e.now), false)
+	if err != nil {
+		t.Fatalf("AppendStrategyKill: %v", err)
+	}
+	if err := e.submitEntry(10); !errors.Is(err, ErrKillSwitchActive) {
+		t.Fatalf("pre-clear submit err = %v, want ErrKillSwitchActive", err)
+	}
+	cleared, superseded, err := e.st.AppendKillClearStrategy(uid(91), uid(1), "admin-1",
+		"resolved", epoch, formatTime(e.now))
+	if err != nil || cleared != epoch || len(superseded) != 1 || superseded[0] != uid(90) {
+		t.Fatalf("clear = (%d, %v, %v), want (%d, [%s], nil)", cleared, superseded, err, epoch, uid(90))
+	}
+	// The standing check passes; the fresh entry stamps the RAW epoch.
+	if err := e.submitEntry(20); err != nil { // token 1
+		t.Fatalf("post-clear submit err = %v, want nil (re-enabled)", err)
+	}
+	if ord := e.order(idN(1, 0)); ord.Status != "open" || ord.KillEpoch != epoch {
+		t.Errorf("post-clear order = status %s epoch %d, want open at RAW stamp %d",
+			ord.Status, ord.KillEpoch, epoch)
+	}
+	// An intent stamped PRE-kill (epoch 0) is still stale: the transmit
+	// loop compares against the RAW max, which a clear never lowers.
+	_, intent := e.journalOrder(tokenN(9))
+	if err := e.oms.sendIntent(context.Background(), intent); !errors.Is(err, ErrKillEpochStale) {
+		t.Fatalf("stale-stamp send err = %v, want ErrKillEpochStale", err)
+	}
+	if ord := e.order(intent.ClientOrderID); ord.Status != "rejected" {
+		t.Errorf("stale intent status = %s, want rejected", ord.Status)
+	}
+	if open := e.venueOpen(); len(open) != 1 {
+		t.Errorf("venue open orders = %d, want 1 (only the post-clear entry)", len(open))
+	}
+}
+
+// LC-34a stamp-then-check: a kill landing AFTER the stamp read (between
+// journal and send) is caught by the transmit-loop staleness comparison
+// EVEN IF it is already cleared by then — no interleaving lets an intent
+// transmit under a kill it never observed, and a clear never un-stales it.
+func TestKillClearDrill_ClearedPostStampKillStillStale(t *testing.T) {
+	e := newEnv(t)
+	e.reconcile()
+	e.oms.afterJournal = func() {
+		epoch, err := e.st.AppendStrategyKill(uid(90), uid(1), "op-1", formatTime(testNow), false)
+		if err != nil {
+			t.Fatalf("AppendStrategyKill: %v", err)
+		}
+		if _, _, err := e.st.AppendKillClearStrategy(uid(91), uid(1), "admin-1",
+			"cleared immediately", epoch, formatTime(testNow)); err != nil {
+			t.Fatalf("AppendKillClearStrategy: %v", err)
+		}
+	}
+	if err := e.submitEntry(10); !errors.Is(err, ErrKillEpochStale) {
+		t.Fatalf("SubmitApproved err = %v, want ErrKillEpochStale (RAW epoch survives the clear)", err)
+	}
+	if ord := e.order(idN(1, 0)); ord.Status != "rejected" {
+		t.Errorf("order status = %s, want rejected", ord.Status)
+	}
+	if got := e.venueOpen(); len(got) != 0 {
+		t.Errorf("venue open orders = %d, want 0 (never sent)", len(got))
+	}
+}
+
+// LC-38 driver half: an in-flight drive holding a pre-clear event snapshot
+// re-checks the served marker immediately before executing — a concurrent
+// clear's supersede marker makes it a no-op, so superseded effects (cancel,
+// lifecycle lock, flatten) NEVER execute, before or after.
+func TestKillClearDrill_SupersededEffectsNeverExecute(t *testing.T) {
+	e := newEnv(t)
+	e.reconcile()
+	e.openPosition(10)                        // open long, token 1
+	if err := e.submitEntry(20); err != nil { // resting entry, token 2
+		t.Fatalf("SubmitApproved: %v", err)
+	}
+	epoch, err := e.st.AppendStrategyKill(uid(90), uid(1), "op-1", formatTime(e.now), true)
+	if err != nil {
+		t.Fatalf("AppendStrategyKill: %v", err)
+	}
+	// The in-flight pass listed the row BEFORE the clear landed.
+	var ev store.KillBreakerEvent
+	for _, u := range e.unserved() {
+		if u.EventID == uid(90) {
+			ev = u
+		}
+	}
+	if ev.EventID == "" {
+		t.Fatal("kill row not listed unserved")
+	}
+	if _, superseded, err := e.st.AppendKillClearStrategy(uid(91), uid(1), "admin-1",
+		"resolved", epoch, formatTime(e.now)); err != nil || len(superseded) != 1 {
+		t.Fatalf("clear = (%v, %v), want the kill superseded", superseded, err)
+	}
+	e.oms.driveSafetyEvent(context.Background(), ev, "")
+
+	assertUntouched := func(when string) {
+		t.Helper()
+		if got := e.lifecycle(uid(1)); got != "live_l1" {
+			t.Errorf("%s: lifecycle = %s, want live_l1 (no lock)", when, got)
+		}
+		if ord := e.order(idN(2, 0)); ord.Status != "open" {
+			t.Errorf("%s: resting entry = %s, want open (no cancel sweep)", when, ord.Status)
+		}
+		live, err := e.st.ListNonTerminalLiveOrders()
+		if err != nil {
+			t.Fatalf("%s: ListNonTerminalLiveOrders: %v", when, err)
+		}
+		if findLiveReduceOnlyMarket(live, uid(1), "BTC/USDT") != nil {
+			t.Errorf("%s: a flatten was journaled, want none", when)
+		}
+	}
+	assertUntouched("stale-snapshot drive")
+	// A fresh full pass sees zero unserved rows: equally a no-op.
+	if err := e.oms.DriveSafetyEffects(context.Background()); err != nil {
+		t.Fatalf("DriveSafetyEffects: %v", err)
+	}
+	assertUntouched("fresh drive")
+	if got := e.unserved(); len(got) != 0 {
+		t.Errorf("unserved events = %d, want 0 (superseded)", len(got))
+	}
+	if alerts := e.alerts("kill_effects_superseded"); len(alerts) != 1 ||
+		alerts[0].RefID == nil || *alerts[0].RefID != uid(90) {
+		t.Errorf("superseded alerts = %+v, want one row ref %s", alerts, uid(90))
+	}
+}
+
+// LC-38 per-strategy re-check: a clear landing MID-PASS — after the first
+// strategy of a tenant kill journals its flatten (the afterJournal seam)
+// but before the second strategy's flatten half — stops every remaining
+// flatten: exactly ONE flatten exists across both strategies and the
+// clear's marker leaves the row served.
+func TestKillClearDrill_MidPassClearStopsRemainingFlattens(t *testing.T) {
+	e := newEnv(t)
+	e.reconcile()
+	e.createStrategy(2, "tenant-1")
+	// Open a full position for BOTH strategies; the shared BTC balance
+	// covers both, so no flatten is ever balance-bounded.
+	if err := e.submitEntry(10); err != nil { // strategy 1, token 1
+		t.Fatalf("SubmitApproved: %v", err)
+	}
+	if err := e.submitEntryWith(20, func(p *contract.Proposal) { p.StrategyID = uid(2) }); err != nil {
+		t.Fatalf("SubmitApproved: %v", err) // strategy 2, token 2
+	}
+	for _, tok := range []byte{1, 2} {
+		if err := e.venue.Fill(idN(tok, 0), "0.01562", "64000"); err != nil {
+			t.Fatalf("Fill token %d: %v", tok, err)
+		}
+	}
+	e.reconcile()
+	e.venue.SetBalance("BTC", "0.03124", "0")
+
+	epoch, err := e.st.AppendTenantKill(uid(90), "tenant-1", "op-1", formatTime(e.now), true)
+	if err != nil {
+		t.Fatalf("AppendTenantKill: %v", err)
+	}
+	// The FIRST flatten's journal fires the clear: the pass is mid-event,
+	// between the two strategies' flatten halves.
+	cleared := false
+	e.oms.afterJournal = func() {
+		if cleared {
+			return
+		}
+		cleared = true
+		if _, _, err := e.st.AppendKillClearTenant(uid(91), "tenant-1", "admin-1",
+			"cleared mid-pass", epoch, formatTime(e.now)); err != nil {
+			t.Errorf("AppendKillClearTenant: %v", err)
+		}
+	}
+	if err := e.oms.DriveSafetyEffects(context.Background()); err != nil {
+		t.Fatalf("DriveSafetyEffects: %v", err)
+	}
+
+	if !cleared {
+		t.Fatal("no flatten ever journaled: the fixture never exercised the mid-pass window")
+	}
+	live, err := e.st.ListNonTerminalLiveOrders()
+	if err != nil {
+		t.Fatalf("ListNonTerminalLiveOrders: %v", err)
+	}
+	flattens := 0
+	for _, sid := range []string{uid(1), uid(2)} {
+		if findLiveReduceOnlyMarket(live, sid, "BTC/USDT") != nil {
+			flattens++
+		}
+	}
+	if flattens != 1 {
+		t.Errorf("flattens journaled = %d, want 1 (the clear stops the remaining strategy's flatten)", flattens)
+	}
+	if got := e.unserved(); len(got) != 0 {
+		t.Errorf("unserved events = %d, want 0 (the clear's supersede marker serves the row)", len(got))
+	}
+	// A fresh pass over the superseded row journals nothing new.
+	before := e.tokens.n
+	if err := e.oms.DriveSafetyEffects(context.Background()); err != nil {
+		t.Fatalf("re-drive: %v", err)
+	}
+	if e.tokens.n != before {
+		t.Errorf("re-drive minted %d new intents, want 0", e.tokens.n-before)
+	}
+}

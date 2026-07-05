@@ -52,6 +52,16 @@ type SafetyDriver interface {
 	DriveSafetyEffects(ctx context.Context) error
 }
 
+// EntryCanceler is the lifecycle pause-effect seam (lifecycle-api.md
+// §Wiring seams): CancelOpenEntries cancels un-filled ENTRY orders only —
+// protective reduce-only orders untouched (the machine's
+// EffectCancelEntryOrders contract). The live OMS satisfies it directly;
+// the paper omsbridge's LC-12a canceler satisfies it in paper mode; nil
+// takes the LC-12 alert path.
+type EntryCanceler interface {
+	CancelOpenEntries(ctx context.Context, strategyID string) error
+}
+
 // ReconStatusProvider is the live-OMS reconciliation seam
 // (live-oms-and-reconciler.md §API surface): Status is tenant-filtered by
 // the principal's tenant scope ("" = platform view) and TriggerRun runs
@@ -99,6 +109,20 @@ type Config struct {
 	// wired to the safety.Monitor in live mode; nil in paper mode — the
 	// heartbeat handler accepts and discards (WD-3).
 	Heartbeats HeartbeatSink
+	// EntryCanceler executes EffectCancelEntryOrders after a committed
+	// transition into paused (lifecycle-api.md LC-12); nil alerts instead
+	// of failing the transition.
+	EntryCanceler EntryCanceler
+	// PaperSubmitter marks the Submitter as the paper bridge (LC-14a):
+	// false (a live-OMS Submitter) makes the paper lifecycle state part
+	// of the L0 floor — verdicts persist, nothing submits.
+	PaperSubmitter bool
+	// ExchangeKeysConfigured feeds the LC-8 guard input; set at startup
+	// in live deployments with exchange credentials.
+	ExchangeKeysConfigured bool
+	// AllocatedCapitalQuote seeds the paper-gate equity curve (LC-21) —
+	// the SAME value handed to the runstate hydrator and OMS.
+	AllocatedCapitalQuote decimal.Decimal
 
 	// ReadToken authorizes GETs ONLY (web dashboard), every tenant.
 	ReadToken string
@@ -175,9 +199,14 @@ func New(cfg Config) *Server {
 		"POST /api/v1/strategies/{id}/heartbeat":         s.handleHeartbeat,
 		"POST /api/v1/strategies/{id}/limits":            s.handlePostLimits,
 		"POST /api/v1/strategies/{id}/kill":              s.handleStrategyKill,
+		"POST /api/v1/strategies/{id}/lifecycle":         s.handlePostLifecycle,
+		"GET /api/v1/strategies/{id}/paper-gate":         s.handleGetPaperGate,
+		"POST /api/v1/strategies/{id}/kill/clear":        s.handleStrategyKillClear,
 		"POST /api/v1/tenants":                           s.handleCreateTenant,
 		"POST /api/v1/tenants/{tenant_id}/kill":          s.handleTenantKill,
+		"POST /api/v1/tenants/{tenant_id}/kill/clear":    s.handleTenantKillClear,
 		"POST /api/v1/platform/kill":                     s.handlePlatformKill,
+		"POST /api/v1/platform/kill/clear":               s.handlePlatformKillClear,
 		"POST /api/v1/tokens":                            s.handleMintToken,
 		"GET /api/v1/tokens":                             s.handleListTokens,
 		"POST /api/v1/tokens/{token_id}/revoke":          s.handleRevokeToken,

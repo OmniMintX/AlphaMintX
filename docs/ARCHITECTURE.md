@@ -37,6 +37,13 @@ AlphaMintX/
   strategy per UTC day, flatten + ENTRY halt until 00:00 UTC
   (`docs/specs/safety-wiring.md`). Watchdog heartbeat receiver +
   escalation ladder (`docs/specs/watchdog.md`).
+- Lifecycle transition API (`POST /api/v1/strategies/{id}/lifecycle`):
+  the strategy state machine over HTTP with guards computed from
+  persisted state, unwaivable computed paper-gate enforcement behind
+  `paper → live_*` promotion (`GET .../paper-gate` report), and SW-2
+  kill-clear/unlock — append-only `kill_clear_events` at all 3 tiers,
+  the active-kill predicate, audited `killed → paper/paused` human
+  unlock (`docs/specs/lifecycle-api.md`).
 - Multi-tenant RBAC (`docs/specs/multi-tenant-rbac.md`): fixed roles
   viewer/trader/admin/owner on DB-issued hashed tokens, tenant isolation
   (foreign = 404, no existence oracle), runtime limit changes behind a

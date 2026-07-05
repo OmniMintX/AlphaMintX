@@ -187,7 +187,7 @@ A preflight failure is recorded on the approval record as
 | Tier | Scope | Who may trigger | Who may unlock |
 |---|---|---|---|
 | Strategy | one strategy instance | Trader, Admin, Owner; watchdog escalation | Admin, Owner |
-| Tenant | all strategies of a tenant | Admin, Owner | Admin, Owner (after clearing the tenant kill) |
+| Tenant | all strategies of a tenant | Admin, Owner | Admin, Owner (after clearing the tenant kill — the clear machinery of `docs/specs/lifecycle-api.md` LC-25..LC-33) |
 | Platform | everything | Platform Admin | Platform Admin only; no unlock while active |
 
 Procedure (normative):
@@ -209,7 +209,10 @@ Procedure (normative):
   PROTECTIVE stops are NEVER canceled while a position remains open unless
   the action flattens it. **No auto-restart** — recovery only via explicit
   human unlock (`docs/specs/strategy-lifecycle.md`).
-- Standing condition: while a tenant- or platform-tier kill is active, the
+- Standing condition: a kill is ACTIVE while no `kill_clear_events` row of
+  its own scope covers its epoch — the active-kill predicate and the
+  per-tier clear endpoints are normative in `docs/specs/lifecycle-api.md`
+  (LC-28..LC-33). While a tenant- or platform-tier kill is active, the
   gate rejects all proposals in scope and lifecycle transitions out of
   `killed` are blocked.
 - Human flatten in `killed`: Trader+ MAY trigger flatten of remaining

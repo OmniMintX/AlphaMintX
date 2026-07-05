@@ -1,6 +1,9 @@
 package store
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // Append-only audit tables (invariant 7): INSERT-only methods, no UPDATE or
 // DELETE, ever.
@@ -25,6 +28,59 @@ func (s *Store) AppendLifecycleTransition(t LifecycleTransition) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// AppendLifecycleTransitionCAS is the compare-and-swap twin of
+// AppendLifecycleTransition (lifecycle-api.md LC-9): ONE transaction
+// re-reads strategies.lifecycle_state; when it no longer equals
+// t.FromState, NOTHING is written and (false, nil) reports the conflict
+// (handler: 409 LIFECYCLE_CONFLICT); otherwise the audit row and the
+// snapshot advance exactly like AppendLifecycleTransition. liveTarget
+// (t.ToState is a live_* tier) re-evaluates the LC-28 active-kill
+// predicate IN the transaction — the handler's LC-8 pre-check reads
+// ActiveKill outside it, so a kill landing between that read and the
+// commit would otherwise slip a live promotion through; an active kill is
+// ErrKillActive and NOTHING is written. The transaction serializes
+// against the safety driver's AppendKillLifecycleLock, so a concurrent
+// kill and a concurrent unlock never interleave into a lost update.
+// ErrNotFound for an unknown strategy.
+func (s *Store) AppendLifecycleTransitionCAS(t LifecycleTransition, liveTarget bool) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer rollback(tx)
+	var state string
+	err = tx.QueryRow(`SELECT lifecycle_state FROM strategies WHERE strategy_id = ?`, t.StrategyID).Scan(&state)
+	if err == sql.ErrNoRows {
+		return false, fmt.Errorf("strategy %s: %w", t.StrategyID, ErrNotFound)
+	}
+	if err != nil {
+		return false, err
+	}
+	if state != t.FromState {
+		return false, nil
+	}
+	if liveTarget {
+		var active int
+		if err := tx.QueryRow(activeKillSQL, t.StrategyID).Scan(&active); err != nil {
+			return false, err
+		}
+		if active > 0 {
+			return false, fmt.Errorf("strategy %s: %w", t.StrategyID, ErrKillActive)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO lifecycle_transitions
+		(transition_id, strategy_id, from_state, to_state, actor_id, actor_role, reason, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.TransitionID, t.StrategyID, t.FromState, t.ToState, t.ActorID, t.ActorRole, t.Reason, t.RecordedAt); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE strategies SET lifecycle_state = ?, updated_at = ? WHERE strategy_id = ?`,
+		t.ToState, t.RecordedAt, t.StrategyID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // AppendRejectedSubmission records a malformed submission that never earned

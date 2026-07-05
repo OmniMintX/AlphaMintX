@@ -59,6 +59,15 @@ const (
 	// kill body must carry the explicit ack literal; missing/wrong is 400
 	// and NO row is written.
 	codePlatformKillAckRequired = "PLATFORM_KILL_ACK_REQUIRED"
+	// Lifecycle and kill-clear codes (lifecycle-api.md §Error codes).
+	codeInvalidLifecycleState    = "INVALID_LIFECYCLE_STATE"
+	codeUseKillEndpoint          = "USE_KILL_ENDPOINT"
+	codeIllegalTransition        = "ILLEGAL_TRANSITION"
+	codePaperGateFailed          = "PAPER_GATE_FAILED"
+	codeLifecycleConflict        = "LIFECYCLE_CONFLICT"
+	codeNoActiveKill             = "NO_ACTIVE_KILL"
+	codeClearConflict            = "CLEAR_CONFLICT"
+	codePlatformClearAckRequired = "PLATFORM_CLEAR_ACK_REQUIRED"
 )
 
 // Preflight reason codes (persistence-and-api.md §Approval preflight).

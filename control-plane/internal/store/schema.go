@@ -170,4 +170,14 @@ CREATE TABLE IF NOT EXISTS safety_alerts (              -- append-only monitor/d
   kind TEXT NOT NULL,                                   -- OPEN set (SS-25 pattern); registry in §Alerts
   strategy_id TEXT, ref_id TEXT,                        -- ref_id: nullable dedupe key (§Alerts)
   details_json TEXT NOT NULL, recorded_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS kill_clear_events (clear_id TEXT PRIMARY KEY,  -- append-only SW-2 audit
+  scope TEXT NOT NULL CHECK (scope IN ('strategy','tenant','platform')),
+  strategy_id TEXT, tenant_id TEXT,
+  cleared_epoch INTEGER NOT NULL, actor_id TEXT NOT NULL, reason TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  CHECK ((scope = 'strategy' AND strategy_id IS NOT NULL AND tenant_id IS NOT NULL)
+      OR (scope = 'tenant' AND strategy_id IS NULL AND tenant_id IS NOT NULL)
+      OR (scope = 'platform' AND strategy_id IS NULL AND tenant_id IS NULL)));
+CREATE INDEX IF NOT EXISTS idx_kill_clear_scope
+  ON kill_clear_events (scope, strategy_id, tenant_id, cleared_epoch);
 `

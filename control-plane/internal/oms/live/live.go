@@ -45,11 +45,11 @@ var (
 	// ErrKillEpochStale: a newer kill epoch arrived between journal and
 	// send; the order is dropped (risk-limits.md OMS kill re-check).
 	ErrKillEpochStale = errors.New("KILL_SWITCH_ACTIVE: kill-epoch stale at submission")
-	// ErrKillSwitchActive: a standing kill binds the strategy
-	// (GlobalMaxKillEpoch > 0) — fresh ENTRY submissions are rejected;
-	// safety-origin flatten/protective submissions are exempt and rely on
-	// the transmit-loop staleness comparison (safety-wiring.md
-	// invariant 15).
+	// ErrKillSwitchActive: a standing UNCLEARED kill binds the strategy
+	// (the store.ActiveKill predicate, lifecycle-api.md LC-28/LC-34) —
+	// fresh ENTRY submissions are rejected; safety-origin
+	// flatten/protective submissions are exempt and rely on the
+	// transmit-loop staleness comparison (safety-wiring.md invariant 15).
 	ErrKillSwitchActive = errors.New("KILL_SWITCH_ACTIVE: a standing kill binds the strategy; ENTRY submissions rejected")
 	// ErrBreakerActive: the circuit breaker binds the strategy on the
 	// current UTC day — ENTRY submissions halt (protectives and reduce-only

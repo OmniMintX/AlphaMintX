@@ -121,6 +121,9 @@ func serve(dbPath string) error {
 		cfg.Limits = limits
 		cfg.LimitsProvider = provider
 		cfg.RuntimeState = hydrator
+		// The paper-gate equity curve seeds at the SAME allocated capital
+		// handed to the hydrator and OMS (lifecycle-api.md LC-21).
+		cfg.AllocatedCapitalQuote = limits.AllocatedCapitalQuote
 		cfg.DailyLossBreached = func(strategyID string, now time.Time) (bool, error) {
 			daily, err := hydrator.DailyPnL(strategyID, now)
 			if err != nil {
@@ -229,6 +232,12 @@ func serve(dbPath string) error {
 		// Heartbeat receipt lands on the Monitor in live mode (watchdog.md
 		// WD-8); paper deployments leave the sink nil (WD-3).
 		cfg.Heartbeats = monitor
+		// Lifecycle seams (lifecycle-api.md §Wiring seams): the live OMS
+		// is the pause entry-canceler; exchange credentials satisfy the
+		// LC-8 guard input; PaperSubmitter stays false — the live-mode
+		// paper floor (LC-14a).
+		cfg.EntryCanceler = liveOMS
+		cfg.ExchangeKeysConfigured = true
 	case os.Getenv("CONTROLPLANE_FILL_MODEL") != "":
 		raw := os.Getenv("CONTROLPLANE_FILL_MODEL")
 		if limits == nil {
@@ -248,6 +257,10 @@ func serve(dbPath string) error {
 			return err
 		}
 		cfg.Submitter = bridge
+		// The paper bridge is the Submitter (LC-14a) and the LC-12a pause
+		// entry-canceler.
+		cfg.PaperSubmitter = true
+		cfg.EntryCanceler = bridge
 	}
 
 	handler := api.New(cfg)

@@ -72,6 +72,18 @@ func Permissions() []RoutePermission {
 		// mode-independent.
 		{Method: "POST", Path: "/api/v1/strategies/{id}/kill", Roles: approvers, Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/platform/kill", Classes: []string{classEnvAdmin}},
+		// Lifecycle transitions (lifecycle-api.md LC-2): trader+ own
+		// tenant plus env-admin; the read/operator/agent classes can never
+		// transition. The paper-gate read is promotion visibility for
+		// every reader (LC-24). Always registered, both modes (LC-1).
+		{Method: "POST", Path: "/api/v1/strategies/{id}/lifecycle", Roles: approvers, Classes: []string{classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/paper-gate", Roles: readers, Classes: []string{classRead}},
+		// Kill-clear tiers (lifecycle-api.md LC-29): one level stricter
+		// than kill on the strategy tier (unlock is Admin+); the platform
+		// tier is env-admin ONLY. Always registered, mode-independent.
+		{Method: "POST", Path: "/api/v1/strategies/{id}/kill/clear", Roles: admins, Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/tenants/{tenant_id}/kill/clear", Roles: admins, Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/platform/kill/clear", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tokens/{token_id}/revoke", Roles: admins, Classes: []string{classEnvAdmin}},

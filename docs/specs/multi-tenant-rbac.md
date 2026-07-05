@@ -195,16 +195,24 @@ DB principals:
 | `POST .../proposals`, `POST .../traces` | ✗ | ✗ | ✗ | ✗ | ✓ own strategy only |
 | `POST .../limits` (runtime limit change) | ✗ | ✗ | ✓ | ✓ | ✗ |
 | `POST /api/v1/tenants/{tenant_id}/kill` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
+| `POST /api/v1/strategies/{id}/lifecycle` (lifecycle transition, lifecycle-api.md LC-2) | ✗ | ✓ | ✓ | ✓ | ✗ |
+| `GET /api/v1/strategies/{id}/paper-gate` (promotion visibility, LC-24) | ✓ | ✓ | ✓ | ✓ | ✗ |
+| `POST /api/v1/strategies/{id}/kill/clear` (unlock is Admin+, LC-29) | ✗ | ✗ | ✓ own | ✓ own | ✗ |
+| `POST /api/v1/tenants/{tenant_id}/kill/clear` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
+| `POST /api/v1/platform/kill/clear` (env-admin ONLY) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST/GET /api/v1/tokens`, `POST .../revoke` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/tenants` | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `GET /health` | unauthenticated | | | | |
 
 Env classes (platform-scoped, §Principals): read ⇒ all strategy-data GETs,
-any tenant (NOT the token-metadata routes — the most-exposed credential
-gets the least surface); operator ⇒ `POST .../approvals` only, any tenant;
-agent ⇒ its two ingestion routes only; env-admin ⇒ `POST .../limits`,
-`POST .../kill`, all `/api/v1/tokens` routes, and `POST /api/v1/tenants` —
-any tenant, and NO strategy-data reads (the read class already exists).
+any tenant, incl. `GET .../paper-gate` (NOT the token-metadata routes — the
+most-exposed credential gets the least surface); operator ⇒
+`POST .../approvals` only, any tenant; agent ⇒ its two ingestion routes
+only; env-admin ⇒ `POST .../limits`, `POST .../kill`,
+`POST .../lifecycle`, all three `.../kill/clear` routes (the platform
+clear is env-admin ONLY), all `/api/v1/tokens` routes, and
+`POST /api/v1/tenants` — any tenant, and NO strategy-data reads (the read
+class already exists).
 
 - Reads at viewer+ preserve Phase 1 semantics (READ_TOKEN never authorizes a
   POST); `POST .../approvals` at trader+ preserves operator semantics
@@ -286,12 +294,18 @@ Phase 1 meanings.
   fire for every strategy of the tenant — new proposals are rejected
   `KILL_SWITCH_ACTIVE` and the approval preflight blocks pending decisions.
   The effects engine (ENTRY-order cancel, reduce-only flatten, `killed`
-  lifecycle transition, resumable re-drive) is DEFERRED to the Phase 3
-  drills; the body therefore carries no `flatten` field in v1.
-- **v1 is irreversible**, exactly like the Phase 1 global kill: no unlock
-  machinery exists yet, so a tenant kill stands until the Phase 3 unlock
-  work lands. The strategy-lifecycle.md unlock paths are inoperative for
-  tenant kills until then, as they are today for global kills.
+  lifecycle transition, resumable re-drive), deferred here to the Phase 3
+  drills, has since LANDED per `docs/specs/safety-wiring.md`, which
+  EXTENDS this endpoint with the optional `{"flatten": bool}` body.
+- **Clearable since SW-2** (supersedes "v1 is irreversible"): the tenant
+  kill's standing condition is cleared by its dual,
+  `POST /api/v1/tenants/{tenant_id}/kill/clear` (admin/owner own tenant;
+  env-admin) — an append-only `kill_clear_events` row whose REQUIRED
+  `observed_epoch` is CAS-verified (`docs/specs/lifecycle-api.md`
+  LC-27..LC-33); the active-kill predicate (LC-28) then stops binding the
+  tenant's strategies, and the strategy-lifecycle.md unlock paths run
+  through the lifecycle endpoint (LC-36). An uncleared kill stands,
+  exactly as before.
 - **Epoch monotonicity across scopes.** `kill_epoch = MAX(kill_epoch) OVER
   the whole table + 1`, computed inside the insert transaction: one global
   counter, so the OMS kill re-check's "stale epoch" comparison stays

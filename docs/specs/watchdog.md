@@ -126,11 +126,15 @@ reconcile gate).
   implies; killing a paused book for expected silence would be a false
   positive by construction. The watch set is therefore STRICTLY the
   `live_*` subset of the Monitor's existing candidate scan.
-- **WD-11.** Entering the watch set stamps `firstWatched` (WD-9);
-  leaving it (kill lock, pause, any non-live transition) removes the
-  strategy from evaluation on the next tick — no state to clean up
-  beyond the in-memory maps, which MAY retain stale entries harmlessly
-  (evaluation keys off the CURRENT watch set, never off map keys).
+- **WD-11 (AMENDED by lifecycle-api.md LC-34b).** Entering the watch
+  set stamps `firstWatched` (WD-9); leaving it (kill lock, pause, any
+  non-live transition) removes the strategy from evaluation on the
+  next tick AND deletes BOTH its in-memory map entries (`firstWatched`
+  and `lastSeen`). Re-entry after an absence re-stamps
+  `firstWatched = now` and deletes any stale `lastSeen`: with kill
+  clears making re-promotion reachable, stale entries stopped being
+  harmless — after clear + unlock + re-promotion the first pass never
+  escalates on pre-kill staleness.
 
 ## Placement and cadence (normative)
 
@@ -214,12 +218,15 @@ baseline)` (WD-8/WD-9):
 - **WD-15. Quiet.** `age ≤ 90 s` ⇒ no action. There is no
   "recovered" bookkeeping: rung 1 is stateless (WD-17), and a resumed
   heartbeat simply stops the ladder from re-triggering.
-- **WD-16. Standing-kill skip (idempotence).** If
-  `GlobalMaxKillEpoch(strategyID) > 0` (`internal/store/runtime.go` —
-  any standing strategy/tenant/platform kill binding the strategy),
+- **WD-16. Standing-kill skip (idempotence — AMENDED by
+  lifecycle-api.md LC-34).** If `ActiveKill(strategyID)` is true (the
+  LC-28 active-kill predicate — any UNCLEARED strategy/tenant/platform
+  kill binding the strategy; the `safety.Store` interface swapped
+  `GlobalMaxKillEpoch` for `ActiveKill`),
   the watchdog SKIPS the strategy entirely: the kill's own effect
   machinery owns the sweep and the lock, and a second kill row MUST
-  NOT be appended. This check runs BEFORE any rung on every tick, so
+  NOT be appended. A CLEARED kill no longer skips: after a clear the
+  watchdog is RE-ARMED and may kill again on fresh silence. This check runs BEFORE any rung on every tick, so
   escalation is exactly-once-ish: the window between two ticks cannot
   double-fire (one goroutine), and the post-escalation ticks skip
   until the lifecycle lock removes the strategy from the watch set.
@@ -228,8 +235,10 @@ baseline)` (WD-8/WD-9):
   existing read exposes — `GlobalMaxKillEpoch` returns the epoch
   alone (`internal/store/runtime.go`) and
   `ListUnservedSafetyEvents` excludes served rows
-  (`internal/store/safety.go`) — so the skip path reads them via
-  the NEW `LatestStrategyKillEvent` accessor (§Wiring seams). When
+  (`internal/store/safety.go`) — so it reads them via
+  the NEW `LatestStrategyKillEvent` accessor (§Wiring seams); the
+  back-fill runs BEFORE and REGARDLESS of the skip (LC-34), so a
+  cleared kill still gets its crash-lost alert repaired. When
   that newest strategy-scope kill row has `actor_id = 'watchdog'` and
   `HasSafetyAlert("watchdog_kill_escalation", strategyID, event_id)`
   finds no alert for that `event_id`, the skip path MUST append the
@@ -239,17 +248,13 @@ baseline)` (WD-8/WD-9):
   subsequent tick lands in this skip. The back-filled alert's
   `details_json` is `{"cause":"backfill"}` exactly: the original
   cause and the `last_seen`/`silence_seconds` figures did not
-  survive the crash and MUST NOT be fabricated (WD-21). Recorded
-  assumption (lift semantics): `GlobalMaxKillEpoch` is the MAX over
-  ALL time (`internal/store/runtime.go`) and no lift/unlock event kind
-  exists, so after the future human unlock of strategy-lifecycle.md
-  (`killed` → `paper` → `live_*`) the epoch stays > 0 and this skip
-  would permanently exempt the re-promoted strategy from the
-  watchdog. Today that is consistent: the unlock machinery is
-  unimplemented (SW-2), and the OMS entry path applies the IDENTICAL
-  `epoch > 0` standing-kill gate (`internal/oms/live/submit.go`), so
-  an un-lifted strategy cannot submit entries either. The unlock
-  work MUST revisit BOTH gates together.
+  survive the crash and MUST NOT be fabricated (WD-21). Lift
+  semantics (REVISITED, as this paragraph demanded —
+  lifecycle-api.md LC-34): with the skip keyed on the clear-aware
+  `ActiveKill` predicate, a kill-clear re-arms the watchdog and a
+  re-promoted strategy is watched again; the OMS entry path's
+  standing-kill gate (`internal/oms/live/submit.go`) moved to
+  `ActiveKill` in the SAME change, so both gates stayed consistent.
 - **WD-17. Rung 1 — silence > 90 s (derive-from-state, NOT
   persisted).** `kill_breaker_events.kind` carries a baked-in CHECK
   `(kind IN ('kill','breaker'))` and the migration discipline is
@@ -624,8 +629,9 @@ effect attempt (invariant 7):
    bump, gate-block, ENTRY sweep, lifecycle lock, served marker,
    crash-resume, stall alert, no auto-restart — is safety-wiring.md's,
    unmodified.
-4. **Idempotent escalation.** No kill row is appended while
-   `GlobalMaxKillEpoch(strategyID) > 0`; post-escalation ticks skip
+4. **Idempotent escalation.** No kill row is appended while an
+   UNCLEARED kill binds the strategy (`ActiveKill` — WD-16 as amended
+   by lifecycle-api.md LC-34); post-escalation ticks skip
    the strategy until the lifecycle lock removes it from the watch set.
 5. **Rung 1 is stateless and self-healing.** No persisted watchdog
    state exists; silence is re-detected and the sweep re-run every

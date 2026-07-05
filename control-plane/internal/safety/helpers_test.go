@@ -25,6 +25,9 @@ type fakeStore struct {
 	orders     []store.LiveOrder
 	events     []store.KillBreakerEvent
 	alerts     []store.SafetyAlert
+	// cleared: per-strategy cleared-epoch watermark (the kill_clear_events
+	// stand-in backing the ActiveKill fake).
+	cleared map[string]int64
 	// Error injection for the watchdog fail-safe branch tests
 	// (watchdog.md WD-17/WD-20): each, when set, fails the matching call.
 	ordersErr     error
@@ -33,7 +36,10 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{positions: map[string][]store.Position{}}
+	return &fakeStore{
+		positions: map[string][]store.Position{},
+		cleared:   map[string]int64{},
+	}
 }
 
 func (f *fakeStore) ListStrategies(page, limit int) ([]store.Strategy, int, error) {
@@ -115,20 +121,39 @@ func (f *fakeStore) ListUnservedSafetyEvents() ([]store.KillBreakerEvent, error)
 	return append([]store.KillBreakerEvent(nil), f.events...), nil
 }
 
-func (f *fakeStore) GlobalMaxKillEpoch(strategyID string) (int64, error) {
+// ActiveKill mirrors the store's LC-28 predicate over the fake's rows: a
+// kill binds when strategy-scoped to strategyID or scope-id-free (the fake
+// keeps every strategy in tenant-1, so tenant rows bind too); it is active
+// while its epoch exceeds the strategy's cleared watermark.
+func (f *fakeStore) ActiveKill(strategyID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.maxBindingEpoch(strategyID) > f.cleared[strategyID], nil
+}
+
+// maxBindingEpoch is the highest kill epoch binding strategyID (0 = none);
+// the caller holds f.mu.
+func (f *fakeStore) maxBindingEpoch(strategyID string) int64 {
 	var max int64
 	for _, e := range f.events {
 		if e.Kind != "kill" || e.KillEpoch == nil {
 			continue
 		}
-		global := e.StrategyID == nil && e.TenantID == nil
-		if (global || (e.StrategyID != nil && *e.StrategyID == strategyID)) && *e.KillEpoch > max {
+		binds := e.StrategyID == nil || *e.StrategyID == strategyID
+		if binds && *e.KillEpoch > max {
 			max = *e.KillEpoch
 		}
 	}
-	return max, nil
+	return max
+}
+
+// clearKills records a clear at the strategy's current max binding epoch
+// (the kill_clear_events stand-in): ActiveKill goes false until a NEWER
+// kill row lands.
+func (f *fakeStore) clearKills(strategyID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleared[strategyID] = f.maxBindingEpoch(strategyID)
 }
 
 func (f *fakeStore) AppendStrategyKill(eventID, strategyID, actorID, recordedAt string, flatten bool) (int64, error) {
@@ -436,6 +461,18 @@ func (h *harness) advance(d time.Duration) {
 	h.clockMu.Lock()
 	h.clock = h.clock.Add(d)
 	h.clockMu.Unlock()
+}
+
+// setState rewrites one registered strategy's lifecycle state (watch-set
+// membership drills).
+func (f *fakeStore) setState(strategyID, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.strategies {
+		if f.strategies[i].StrategyID == strategyID {
+			f.strategies[i].LifecycleState = state
+		}
+	}
 }
 
 // addStrategy registers one strategy; posQty != "" opens a BTC/USDT

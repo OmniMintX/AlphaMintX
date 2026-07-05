@@ -4,6 +4,16 @@ Every strategy instance is in exactly one lifecycle state, persisted and
 append-only audited. The state machine is enforced in control-plane code;
 illegal transitions are errors, not warnings.
 
+Enforcement is normative in `docs/specs/lifecycle-api.md`: the transition
+endpoint `POST /api/v1/strategies/{id}/lifecycle` (guards computed from
+persisted state, never caller assertions; `→ killed` flows only through
+the kill endpoints), the computed paper-gate algorithm (LC-15..LC-24,
+read-only report at `GET .../paper-gate`), and the kill-clear/unlock
+machinery (LC-25..LC-38). The `killed → paper/paused` unlocks below are
+reachable via that endpoint once the triggering kill tier's standing
+condition is cleared through the kill-clear endpoints (LC-36: clear and
+unlock are two audited acts).
+
 ## States
 
 | State | Meaning |
@@ -18,6 +28,9 @@ illegal transitions are errors, not warnings.
 
 There is no `live_l0` state: L0 (advisor) is the effective-autonomy floor —
 `paper` strategies and circuit-breaker-demoted live strategies operate at L0.
+In a live-mode deployment `paper` is part of the L0 floor for the LIVE
+venue: verdicts persist and a `paper` strategy submits only to the paper
+OMS bridge, never to the live Submitter (lifecycle-api.md LC-14a).
 
 In every state with open positions — including `paused`, `killed`, and
 breaker-demoted L0 — protective reduce-only stops are kept and the OMS
@@ -29,9 +42,10 @@ blocked.
 ALL conditions MUST hold, computed from the immutable track record:
 - ≥ 14 calendar days in `paper` state, AND
 - ≥ 30 closed paper trades, AND
-- average closed-trade notional ≥ `min_avg_trade_notional_quote` (Admin-set;
-  default 25% of `per_position_notional_cap_quote`) — thirty $1 trades MUST
-  NOT pass, AND
+- average closed-trade notional ≥ `min_avg_trade_notional_quote` (default
+  25% of `per_position_notional_cap_quote`; v1 pins the default — the
+  Admin-set override is deferred, lifecycle-api.md LC-D1) — thirty $1
+  trades MUST NOT pass, AND
 - paper max drawdown ≤ the strategy's `max_drawdown_pct` limit, AND
 - paper profit_factor ≥ 1.0 (gross profit / gross loss; gross_loss = 0 with
   gross_profit > 0 passes; both 0 fails).
@@ -70,6 +84,12 @@ live performance.
 "Trader+" = Trader, Admin, or Owner of the tenant. Viewer can never transition.
 Circuit breaker (daily loss) does NOT change lifecycle state: it demotes
 effective autonomy to L0 until the next UTC day (invariant 4).
+
+**Admin approval (v1 NARROWING, lifecycle-api.md LC-8):** the L3 approval
+guard is satisfied only when the ACTING principal itself maps to
+Admin/Owner — the transition's audit row (actor_id, actor_role, reason) IS
+the recorded approval. A Trader cannot carry a third party's approval;
+approval-by-reference is deferred (LC-D2).
 
 ## Autonomy ladder L0–L3 (invariant 3)
 

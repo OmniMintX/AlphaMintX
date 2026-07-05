@@ -57,9 +57,12 @@ func newEnv(t *testing.T, mutate func(*Config)) *testEnv {
 	}
 	sub := &stubSubmitter{}
 	cfg := Config{
-		Store:             st,
-		Marks:             marks,
-		Submitter:         sub,
+		Store:     st,
+		Marks:     marks,
+		Submitter: sub,
+		// The stub stands in for the paper bridge (LC-14a); the live-mode
+		// paper-floor test overrides it to false.
+		PaperSubmitter:    true,
 		ReadToken:         readTok,
 		OperatorToken:     opTok,
 		OperatorPrincipal: "trader-1",

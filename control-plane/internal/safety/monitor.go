@@ -101,9 +101,11 @@ type Store interface {
 	HasSafetyAlertToday(kind, strategyID, refID, utcDate string) (bool, error)
 	ListUnservedSafetyEvents() ([]store.KillBreakerEvent, error)
 	// Watchdog surface (watchdog.md §Wiring seams): the standing-kill
-	// skip, the rung-2 escalation append, the per-kill-event alert
-	// dedupe, and the WD-16 back-fill read.
-	GlobalMaxKillEpoch(strategyID string) (int64, error)
+	// skip — on the LC-28 ActiveKill predicate since lifecycle-api.md
+	// LC-34: after a clear the watchdog is RE-ARMED and may kill again
+	// on fresh silence — the rung-2 escalation append, the per-kill-event
+	// alert dedupe, and the WD-16 back-fill read.
+	ActiveKill(strategyID string) (bool, error)
 	AppendStrategyKill(eventID, strategyID, actorID, recordedAt string, flatten bool) (int64, error)
 	HasSafetyAlert(kind, strategyID, refID string) (bool, error)
 	LatestStrategyKillEvent(strategyID string) (eventID, actorID string, ok bool, err error)
@@ -166,6 +168,9 @@ type Monitor struct {
 	// entry, startedAt the monitor's construction instant; the silence
 	// baseline is max(startedAt, firstWatched). A restart loses lastSeen
 	// and grants a fresh, bounded window (the accepted WD-9 liveness gap).
+	// Leaving the watch set deletes BOTH entries and re-entry re-stamps
+	// (lifecycle-api.md LC-34b): re-promotion after a kill clear starts a
+	// fresh baseline, never a pre-kill staleness escalation.
 	startedAt    time.Time
 	hbMu         sync.Mutex
 	lastSeen     map[string]time.Time

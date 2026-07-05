@@ -15,38 +15,64 @@ import (
 // watchdogPass is the per-tick watchdog evaluation (docs/specs/watchdog.md
 // §Placement and cadence): the watch set is STRICTLY the live_* subset of
 // the Monitor's candidate scan (WD-10 — paper/paused/killed silence is not
-// a live-money event); leaving the set removes a strategy from evaluation
-// with no cleanup — evaluation keys off the CURRENT watch set, and the
-// in-memory maps may retain stale entries harmlessly (WD-11).
+// a live-money event). Membership is tracked per pass (WD-11 as amended by
+// lifecycle-api.md LC-34b): leaving the set deletes BOTH in-memory map
+// entries — with kill clears making re-promotion reachable, a stale
+// firstWatched/lastSeen pair could otherwise escalate the first
+// post-re-promotion pass on pre-kill staleness.
 func (m *Monitor) watchdogPass(ctx context.Context, cands []candidate, now time.Time, reconciled bool) {
 	if m.watchdogOff {
 		return
 	}
+	watched := make(map[string]bool, len(cands))
 	for _, c := range cands {
-		if !strings.HasPrefix(c.row.LifecycleState, "live_") {
+		if strings.HasPrefix(c.row.LifecycleState, "live_") {
+			watched[c.row.StrategyID] = true
+		}
+	}
+	m.pruneWatchSet(watched)
+	for _, c := range cands {
+		if !watched[c.row.StrategyID] {
 			continue
 		}
 		m.watchOne(ctx, c, now, reconciled)
 	}
 }
 
+// pruneWatchSet deletes BOTH heartbeat-map entries for every strategy that
+// LEFT the watch set (LC-34b); firstWatched's key set IS the tracked
+// membership, so strategies never watched keep their Beat state.
+func (m *Monitor) pruneWatchSet(watched map[string]bool) {
+	m.hbMu.Lock()
+	defer m.hbMu.Unlock()
+	for sid := range m.firstWatched {
+		if !watched[sid] {
+			delete(m.firstWatched, sid)
+			delete(m.lastSeen, sid)
+		}
+	}
+}
+
 // watchOne runs the evaluation ladder for ONE watched strategy: the WD-16
-// standing-kill skip BEFORE any rung, then age against the WD-8/WD-9
-// baseline — quiet (WD-15), rung 2 (WD-19: pure 10 min, never recon-gated,
-// or the recon-gated unprotected-exposure fast path), or rung 1 (WD-17).
+// crash-lost-alert back-fill BEFORE and regardless of the standing-kill
+// skip (lifecycle-api.md LC-34 — a cleared kill still gets its lost alert
+// repaired), the skip itself on the ActiveKill predicate, then age against
+// the WD-8/WD-9 baseline — quiet (WD-15), rung 2 (WD-19: pure 10 min,
+// never recon-gated, or the recon-gated unprotected-exposure fast path),
+// or rung 1 (WD-17).
 func (m *Monitor) watchOne(ctx context.Context, c candidate, now time.Time, reconciled bool) {
 	sid := c.row.StrategyID
 	lastSeen, seen := m.observe(sid, now)
-	epoch, err := m.st.GlobalMaxKillEpoch(sid)
+	m.backfillEscalationAlert(sid, now)
+	active, err := m.st.ActiveKill(sid)
 	if err != nil {
-		m.logf("safety: watchdog: GlobalMaxKillEpoch(%s): %v", sid, err)
+		m.logf("safety: watchdog: ActiveKill(%s): %v", sid, err)
 		return
 	}
-	if epoch > 0 {
-		// A standing kill (any tier) owns the sweep and the lock: never a
-		// second kill row (invariant 4); repair a crash-lost escalation
-		// alert while here (WD-16 back-fill).
-		m.backfillEscalationAlert(sid, now)
+	if active {
+		// A standing (uncleared) kill at any tier owns the sweep and the
+		// lock: never a second kill row (invariant 4). After a clear the
+		// watchdog is RE-ARMED and may kill again on fresh silence.
 		return
 	}
 	age, fromBeat := m.silenceAge(sid, lastSeen, seen, now)
@@ -64,12 +90,17 @@ func (m *Monitor) watchOne(ctx context.Context, c candidate, now time.Time, reco
 }
 
 // observe stamps firstWatched on watch-set entry (WD-11) and returns the
-// strategy's lastSeen beat (seen=false when none since start).
+// strategy's lastSeen beat (seen=false when none since start). Entry after
+// an absence re-stamps firstWatched = now and deletes any stale lastSeen
+// left from before the absence (LC-34b: after clear + unlock +
+// re-promotion the first pass never escalates on pre-kill staleness).
 func (m *Monitor) observe(strategyID string, now time.Time) (time.Time, bool) {
 	m.hbMu.Lock()
 	defer m.hbMu.Unlock()
 	if _, ok := m.firstWatched[strategyID]; !ok {
 		m.firstWatched[strategyID] = now
+		delete(m.lastSeen, strategyID)
+		return time.Time{}, false
 	}
 	last, seen := m.lastSeen[strategyID]
 	return last, seen

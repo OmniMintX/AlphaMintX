@@ -82,6 +82,17 @@ func (s *Store) AppendSafetyEffectDone(eventID, completedAt string) error {
 	return err
 }
 
+// SafetyEffectServed reports whether eventID carries a safety_effects
+// done-marker — driver-written OR clear-written (lifecycle-api.md LC-38):
+// the safety drive re-checks it immediately before executing an event's
+// effects, so an in-flight pass can never execute effects a concurrent
+// clear has superseded. Read-only.
+func (s *Store) SafetyEffectServed(eventID string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM safety_effects WHERE event_id = ?`, eventID).Scan(&n)
+	return n > 0, err
+}
+
 // AppendSafetyAlert appends one safety_alerts row (append-only monitor and
 // driver alerts; kind is an OPEN set — no CHECK, §Alerts registry).
 func (s *Store) AppendSafetyAlert(a SafetyAlert) error {

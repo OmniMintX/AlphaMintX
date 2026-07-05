@@ -225,6 +225,20 @@ func (o *OMS) Kill(epoch int64) {
 	}
 }
 
+// CancelOpenEntries cancels the strategy's resting un-filled ENTRY orders
+// only — reduce-only protectives untouched, positions still managed (the
+// EffectCancelEntryOrders contract, lifecycle-api.md LC-12a). The kill
+// epoch is unchanged: this is the pause effect, not a kill.
+func (o *OMS) CancelOpenEntries(strategyID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, ord := range o.orders {
+		if ord.StrategyID == strategyID && ord.Class == ClassEntry && ord.Status == StatusOpen {
+			ord.Status = StatusCanceled
+		}
+	}
+}
+
 // Flatten closes the (strategy, symbol) position with a reduce-only market
 // order at the supplied mark ± directional slippage, taker fee. Safety-path:
 // exempt from rate limits and the kill-epoch re-check. SL/TP are canceled

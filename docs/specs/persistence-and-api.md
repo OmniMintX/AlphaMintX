@@ -106,6 +106,16 @@ CREATE TABLE strategy_state (strategy_id TEXT PRIMARY KEY,    -- mutable snapsho
   equity_quote TEXT NOT NULL,
   peak_equity_quote TEXT NOT NULL, daily_realized_pnl_quote TEXT NOT NULL,
   daily_utc_date TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE kill_clear_events (clear_id TEXT PRIMARY KEY,    -- append-only SW-2 audit (lifecycle-api.md LC-25)
+  scope TEXT NOT NULL CHECK (scope IN ('strategy','tenant','platform')),
+  strategy_id TEXT, tenant_id TEXT,
+  cleared_epoch INTEGER NOT NULL, actor_id TEXT NOT NULL, reason TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  CHECK ((scope = 'strategy' AND strategy_id IS NOT NULL AND tenant_id IS NOT NULL)
+      OR (scope = 'tenant' AND strategy_id IS NULL AND tenant_id IS NOT NULL)
+      OR (scope = 'platform' AND strategy_id IS NULL AND tenant_id IS NULL)));
+CREATE INDEX idx_kill_clear_scope
+  ON kill_clear_events (scope, strategy_id, tenant_id, cleared_epoch);
 ```
 
 Phase 2 billing DDL — `metering_records`, `billing_periods`, `invoices`,
@@ -125,7 +135,18 @@ Phase 2 billing DDL — `metering_records`, `billing_periods`, `invoices`,
   inserted and acknowledged BEFORE any side effect executes (risk-limits.md
   §Kill-switch). `kill_epoch` is monotonic; the OMS kill re-check reads the
   persisted maximum; restarts re-drive incomplete effects from these rows —
-  kill state survives restart.
+  kill state survives restart. A kill row is a standing condition until an
+  append-only `kill_clear_events` row of its own scope covers its epoch —
+  the active-kill predicate and the clear endpoints are normative in
+  `docs/specs/lifecycle-api.md` (LC-25..LC-38).
+- **`lifecycle_transitions` bootstrap (lifecycle-api.md LC-16a).**
+  `CreateStrategy` atomically inserts the strategies row AND, when the
+  initial state is `paper`/`live_*`, one `draft → <initial>` bootstrap
+  transition row (`actor_id='bootstrap'`, `actor_role='system'`,
+  `recorded_at` = `created_at`) in the SAME transaction; a guarded
+  `Open`-time migration back-fills one synthetic draft→paper row for
+  legacy `paper`/`paused` strategies, so the paper-gate window never
+  fails closed merely because a strategy predates the bootstrap.
 - **`orders.proposal_id`** is NOT NULL iff `origin='proposal'`; safety-path
   orders carry their causing origin, so audit links every order to a cause.
   `stop_price` and `kill_epoch` make protective stops and the kill re-check
@@ -179,6 +200,9 @@ Trace envelope (request body; published as `contracts/agent_trace.schema.json`
 | `POST /api/v1/strategies/{id}/proposals` | Submission envelope `{tick_number, proposal}`; agent token only. 200 ⇒ `{verdict, submitted?, submit_error_code?, pending_approval?}` (a duplicate same-hash same-tick submission returns the stored verdict verbatim, without the optional flags); 400 unparseable/missing IDs or missing `tick_number` (+ `rejected_submissions` row); 403 `STRATEGY_SCOPE_MISMATCH`; 409 `IDEMPOTENCY_CONFLICT` (same `proposal_id`, different payload or tick) / `RUN_TICK_CONFLICT` (run/tick contradicts the `runs` natural key); 429 per-strategy proposal rate limit (default 30/min, ARCHITECTURE.md) — no persisted verdict. |
 | `POST /api/v1/strategies/{id}/traces` | Trace envelope ingestion (agent-plane token only). 200 ⇒ `{run_id}` for BOTH a fresh ingest and a verbatim duplicate (idempotent re-POST); 400 schema-invalid; 403 `STRATEGY_SCOPE_MISMATCH`; 404 `UNKNOWN_RUN` (proposals arrive before traces); 409 `IDEMPOTENCY_CONFLICT` (same `run_id`, different payload). |
 | `POST /api/v1/strategies/{id}/heartbeat` | Watchdog liveness beat (agent token only; body `{}`, unknown fields rejected). 200 ⇒ `{received_at}`; 403 `STRATEGY_SCOPE_MISMATCH`. No store write; never charges the per-strategy proposal limiter. Normative in `docs/specs/watchdog.md`. |
+| `POST /api/v1/strategies/{id}/lifecycle` | One lifecycle transition (trader+, own tenant; env-admin). Body `{to, reason}`, strictly decoded; `to="killed"` ⇒ 422 `USE_KILL_ENDPOINT` (kills flow only through the kill endpoints). 200 ⇒ `{strategy_id, from_state, to_state, transition_id, recorded_at}`; 400 `INVALID_LIFECYCLE_STATE` / `SCHEMA_INVALID`; 409 `LIFECYCLE_CONFLICT` (CAS lost); 422 `ILLEGAL_TRANSITION` / `PAPER_GATE_FAILED` (embeds the `paper_gate` report). Normative in `docs/specs/lifecycle-api.md` (LC-1..LC-14a). |
+| `GET /api/v1/strategies/{id}/paper-gate` | Read-only paper-gate report `{passed, window_started_at, evaluated_at, conditions[×5]}` (viewer+; read class) — computed in-request, never cached or persisted (lifecycle-api.md LC-23/LC-24). |
+| `POST /api/v1/strategies/{id}/kill/clear`, `POST /api/v1/tenants/{tenant_id}/kill/clear`, `POST /api/v1/platform/kill/clear` | SW-2 kill-clear tiers (admin/owner own tenant; env-admin; the platform tier env-admin ONLY, body additionally `{"ack": "CLEAR-PLATFORM"}`). Body `{reason, observed_epoch}`, strictly decoded. 200 ⇒ `{clear_id, scope, cleared_epoch, recorded_at, superseded_event_ids}`; 400 `SCHEMA_INVALID` / `PLATFORM_CLEAR_ACK_REQUIRED`; 409 `CLEAR_CONFLICT` (stale `observed_epoch`, nothing written); 422 `NO_ACTIVE_KILL`. Normative in lifecycle-api.md (LC-25..LC-38). |
 | `POST/GET /api/v1/billing/*` | Phase 2 billing surface (metering import, period close, reconcile, invoice/reconciliation reads) — normative in `docs/specs/billing-and-metering.md`. Error codes: 400 `INVALID_METERING_RECORD` / `INVALID_PERIOD`; 404 `UNKNOWN_TENANT` / `UNKNOWN_INVOICE` / `UNKNOWN_RECONCILIATION`; 409 `METERING_CONFLICT` / `PERIOD_CLOSED` / `PERIOD_OPEN`. |
 | `GET /health` | Unauthenticated liveness. |
 
@@ -240,8 +264,12 @@ unparseable bodies, missing IDs, or a missing `tick_number` land in
   lifecycle `paper` auto-executes `approve`/`clip` verdicts against the
   **paper OMS** — simulation is what paper trading is (strategy-lifecycle.md:
   paper = pipeline runs, paper OMS only; the ≥ 30 closed paper trades gate
-  needs those fills). `live_l1` uses the pending-approval flow below; an
-  `escalate` verdict creates a pending approval in any live lifecycle.
+  needs those fills) — but ONLY when the paper bridge is the wired
+  Submitter: in a live-mode deployment (`PaperSubmitter` false) `paper` is
+  part of the L0 floor — verdicts persist, nothing submits, and a `paper`
+  strategy never reaches the live venue (lifecycle-api.md LC-14a).
+  `live_l1` uses the pending-approval flow below; an `escalate` verdict
+  creates a pending approval in any live lifecycle.
 - **L1 (`live_l1`)**: an L1 `approve`/`clip` verdict — or any `escalate`
   verdict — inserts a `pending_approvals` row, `deadline_at = created_at +
   l1_approval_timeout_seconds` (default 600, risk-limits.md). An approved

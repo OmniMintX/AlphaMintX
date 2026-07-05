@@ -495,3 +495,86 @@ func TestWatchdogDedupeReadErrorSkipsSweep(t *testing.T) {
 		t.Errorf("watchdog_silence alerts = %d, want 1", len(alerts))
 	}
 }
+
+// After a kill CLEAR the watchdog is RE-ARMED (lifecycle-api.md LC-34):
+// the standing skip keys on ActiveKill, so persisting silence appends a
+// SECOND kill row once the first is cleared — while the uncleared kill
+// still skips every pass (invariant 4 unchanged).
+func TestWatchdogRekillsAfterClear(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "")
+
+	h.tick() // stamp firstWatched (WD-11 baseline)
+	h.advance(601 * time.Second)
+	h.tick()
+	if kills := h.st.killEvents(); len(kills) != 1 {
+		t.Fatalf("kill events at 601 s = %d, want 1", len(kills))
+	}
+	h.driver.waitDrive(t)
+	// The standing kill skips: no second row while uncleared.
+	h.advance(10 * time.Second)
+	h.tick()
+	if kills := h.st.killEvents(); len(kills) != 1 {
+		t.Fatalf("kill events under the standing kill = %d, want still 1", len(kills))
+	}
+
+	h.st.clearKills(sid)
+	h.advance(10 * time.Second)
+	h.tick() // re-armed: fresh silence (still > 10 min) kills again
+	kills := h.st.killEvents()
+	if len(kills) != 2 {
+		t.Fatalf("kill events after the clear = %d, want 2 (re-armed)", len(kills))
+	}
+	if kills[1].KillEpoch == nil || *kills[1].KillEpoch != 2 {
+		t.Errorf("re-kill epoch = %v, want 2 (monotone counter)", kills[1].KillEpoch)
+	}
+	h.driver.waitDrive(t)
+}
+
+// Watch-set re-entry (lifecycle-api.md LC-34b): leaving the set deletes
+// BOTH in-memory map entries and re-entry re-stamps firstWatched — after
+// clear + unlock + re-promotion the first pass never escalates on
+// pre-kill staleness, and the ladder still runs from the fresh baseline.
+func TestWatchdogWatchSetReentryFreshBaseline(t *testing.T) {
+	h := newHarness(t)
+	h.addStrategy(sid, "live_l1", "", "")
+
+	h.tick()               // enters the watch set
+	h.m.Beat(sid, testNow) // a pre-absence beat that MUST NOT survive the leave
+	h.st.setState(sid, "paper")
+	h.tick() // leaves: BOTH map entries deleted
+	h.m.hbMu.Lock()
+	_, fw := h.m.firstWatched[sid]
+	_, ls := h.m.lastSeen[sid]
+	h.m.hbMu.Unlock()
+	if fw || ls {
+		t.Fatalf("map entries after leaving = (firstWatched %v, lastSeen %v), want both deleted", fw, ls)
+	}
+
+	h.advance(700 * time.Second) // an absence far past both thresholds
+	h.st.setState(sid, "live_l1")
+	h.tick() // re-entry: fresh baseline, NO escalation on pre-kill staleness
+	if kills := h.st.killEvents(); len(kills) != 0 {
+		t.Fatalf("kill events on the re-entry pass = %d, want 0 (fresh firstWatched)", len(kills))
+	}
+	if alerts := h.st.alertsOf("watchdog_silence", "silence"); len(alerts) != 0 {
+		t.Fatalf("silence alerts on the re-entry pass = %d, want 0", len(alerts))
+	}
+
+	// The ladder still runs from the re-stamped baseline: rung 1 past
+	// 90 s, rung 2 past 10 min.
+	h.advance(91 * time.Second)
+	h.tick()
+	if alerts := h.st.alertsOf("watchdog_silence", "silence"); len(alerts) != 1 {
+		t.Errorf("silence alerts at +91 s = %d, want 1", len(alerts))
+	}
+	if kills := h.st.killEvents(); len(kills) != 0 {
+		t.Errorf("kill events at +91 s = %d, want 0 (rung 1 only)", len(kills))
+	}
+	h.advance(510 * time.Second)
+	h.tick()
+	if kills := h.st.killEvents(); len(kills) != 1 {
+		t.Errorf("kill events at +601 s = %d, want 1", len(kills))
+	}
+	h.driver.waitDrive(t)
+}

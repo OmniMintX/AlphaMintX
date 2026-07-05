@@ -64,6 +64,17 @@ func (s *Server) handlePostProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Gate evaluations for a strategy are serialized (risk-limits.md); the
+	// duplicate check and the rate-limit charge sit under the same lock so
+	// a verbatim retry never burns a token and never races an evaluation.
+	lock := s.strategyLock(strategyID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// The strategy row is read UNDER the lock (LC-14): a lifecycle
+	// transition committed while this request waited — a pause, say — is
+	// observed; a stale pre-lock snapshot could route a submission for a
+	// strategy that is no longer live.
 	st, err := s.cfg.Store.GetStrategy(strategyID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, codeUnknownStrategy, "unknown strategy")
@@ -73,13 +84,6 @@ func (s *Server) handlePostProposal(w http.ResponseWriter, r *http.Request) {
 		s.writeInternal(w, r, err)
 		return
 	}
-
-	// Gate evaluations for a strategy are serialized (risk-limits.md); the
-	// duplicate check and the rate-limit charge sit under the same lock so
-	// a verbatim retry never burns a token and never races an evaluation.
-	lock := s.strategyLock(strategyID)
-	lock.Lock()
-	defer lock.Unlock()
 
 	dup, err := s.cfg.Store.IsDuplicateProposal(sub)
 	if err != nil && !errors.Is(err, store.ErrIdempotencyConflict) {
@@ -181,6 +185,12 @@ func (s *Server) routeExecution(st store.Strategy, p *contract.Proposal, v *cont
 	case "live_l1":
 		return s.armPendingApproval(v, st.StrategyID, now, resp)
 	case "paper", "live_l2", "live_l3":
+		if st.LifecycleState == "paper" && !s.cfg.PaperSubmitter {
+			// Live-mode paper floor (lifecycle-api.md LC-14a): paper track
+			// records are built against the paper OMS, never the live
+			// venue — the verdict persists, nothing submits.
+			return nil
+		}
 		if s.cfg.Submitter == nil {
 			return nil // no OMS wired: persisted, never falsely "submitted"
 		}

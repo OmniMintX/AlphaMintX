@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	sqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
@@ -13,13 +15,32 @@ import (
 )
 
 // CreateStrategy inserts a strategy row (the anchor for runs and lifecycle
-// audit rows).
+// audit rows) and, when the initial lifecycle state is `paper` or a
+// `live_*` tier, the LC-16a bootstrap transition row — from_state 'draft',
+// actor 'bootstrap', actor_role 'system' (the LC-10 carve-out), reason
+// 'bootstrap', recorded_at = created_at — in the SAME transaction, so the
+// LC-16 paper window has its qualifying entry from birth.
 func (s *Store) CreateStrategy(st Strategy) error {
-	_, err := s.db.Exec(`INSERT INTO strategies
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if _, err := tx.Exec(`INSERT INTO strategies
 		(strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		st.StrategyID, st.TenantID, st.Name, st.LifecycleState, st.CreatedAt, st.UpdatedAt)
-	return err
+		st.StrategyID, st.TenantID, st.Name, st.LifecycleState, st.CreatedAt, st.UpdatedAt); err != nil {
+		return err
+	}
+	if st.LifecycleState == "paper" || strings.HasPrefix(st.LifecycleState, "live_") {
+		if _, err := tx.Exec(`INSERT INTO lifecycle_transitions
+			(transition_id, strategy_id, from_state, to_state, actor_id, actor_role, reason, recorded_at)
+			VALUES (?, ?, 'draft', ?, 'bootstrap', 'system', 'bootstrap', ?)`,
+			uuid.NewString(), st.StrategyID, st.LifecycleState, st.CreatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // InsertProposal ingests a proposal submission. The UNIQUE proposal_id is

@@ -176,3 +176,38 @@ func TestKillEffectsCancelEntriesOnly(t *testing.T) {
 		t.Errorf("kill effects = %v, want cancel_entry_orders (stops kept)", effects)
 	}
 }
+
+// TestNewPausedFrom pins the LC-7 rehydration constructor: the machine
+// rebuilt from the audit trail behaves exactly like the in-memory pause —
+// resume only to the recorded provenance, killed provenance locks to the
+// killed->paper guard, and "" (no paused-entry row found) is unknown
+// provenance with the same paper-only exit.
+func TestNewPausedFrom(t *testing.T) {
+	i := NewPausedFrom(StateLiveL2)
+	if i.State() != StatePaused {
+		t.Fatalf("state = %s, want paused", i.State())
+	}
+	if _, err := i.Transition(StateLiveL1, trader()); err == nil {
+		t.Error("rehydrated pause must resume only to its recorded provenance")
+	}
+	if _, err := i.Transition(StateLiveL2, trader()); err != nil || i.State() != StateLiveL2 {
+		t.Fatalf("resume to provenance: err=%v state=%s, want nil, live_l2", err, i.State())
+	}
+
+	fullUnlock := Context{Actor: RoleAdmin, PositionsFlat: true, ConfigValid: true,
+		KillCleared: true, CountersReset: true, Reason: "post-mortem done"}
+	for _, prev := range []State{StateKilled, ""} {
+		i := NewPausedFrom(prev)
+		for _, to := range []State{StateLiveL1, StateLiveL2, StateLiveL3, StatePaused} {
+			if _, err := i.Transition(to, fullUnlock); err == nil {
+				t.Errorf("NewPausedFrom(%q) -> %s must be illegal (paper-only exit)", prev, to)
+			}
+		}
+		if _, err := i.Transition(StatePaper, trader()); err == nil {
+			t.Errorf("NewPausedFrom(%q) -> paper by trader must require the killed->paper guard", prev)
+		}
+		if _, err := i.Transition(StatePaper, fullUnlock); err != nil || i.State() != StatePaper {
+			t.Errorf("NewPausedFrom(%q) -> paper with full guard: err=%v state=%s", prev, err, i.State())
+		}
+	}
+}

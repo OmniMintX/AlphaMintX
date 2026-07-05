@@ -140,16 +140,30 @@ func (o *OMS) submitEntry(ctx context.Context, sub submission, sizeQuote decimal
 	if halted {
 		return ErrBreakerActive
 	}
+	// Stamp-then-check read order (lifecycle-api.md LC-34a): the RAW stamp
+	// epoch is read BEFORE the standing ActiveKill check and the stamped
+	// value is this PRE-check read — a kill committing before the
+	// ActiveKill read rejects the submission; one committing after the
+	// stamp carries a higher epoch and is caught by the transmit-loop
+	// maxEpoch > intent.KillEpoch comparison. No interleaving lets an
+	// intent transmit under a kill it never observed.
 	epoch, err := o.st.GlobalMaxKillEpoch(sub.strategyID)
 	if err != nil {
 		return err
 	}
-	// Standing-kill check (safety-wiring.md invariant 15): a fresh ENTRY
+	// Standing-kill check (safety-wiring.md invariant 15, on the LC-28
+	// ActiveKill predicate since lifecycle-api.md LC-34): a fresh ENTRY
 	// submission would stamp the post-kill epoch and pass the transmit
-	// staleness re-check, so the standing condition rejects it here;
+	// staleness re-check, so the standing condition rejects it here while
+	// an UNCLEARED kill binds the strategy — a cleared kill no longer
+	// blocks, but staleness ordering keeps the RAW epoch (invariant 3);
 	// safety-origin flatten/protective submissions bypass this path and
 	// rely on the transmit-loop comparison alone.
-	if epoch > 0 {
+	active, err := o.st.ActiveKill(sub.strategyID)
+	if err != nil {
+		return err
+	}
+	if active {
 		return ErrKillSwitchActive
 	}
 	sub.killEpoch = epoch

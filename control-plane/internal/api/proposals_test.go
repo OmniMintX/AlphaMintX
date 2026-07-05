@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -48,6 +50,8 @@ func gatedEnv(t *testing.T, mutate ...func(*Config)) *testEnv {
 			Store: cfg.Store, Marks: cfg.Marks,
 			AllocatedCapitalQuote: limits.AllocatedCapitalQuote,
 		}
+		// The paper-gate equity seed is the SAME allocated capital (LC-21).
+		cfg.AllocatedCapitalQuote = limits.AllocatedCapitalQuote
 		for _, m := range mutate {
 			m(cfg)
 		}
@@ -308,6 +312,54 @@ func TestPostProposalRateLimitedPerStrategy(t *testing.T) {
 	}
 	if !bytes.Equal(env.Verdict, stored) {
 		t.Errorf("duplicate verdict not the stored bytes verbatim:\n got %s\nwant %s", env.Verdict, stored)
+	}
+}
+
+// TestPostProposalPauseCommittedWhileLockedBlocksSubmit pins the LC-14
+// read-under-lock rule: the strategy row is read AFTER the per-strategy
+// lock is acquired, so a pause committed while the request waited on the
+// lock is observed — the approve verdict persists on the paused L0 floor
+// and the Submitter is NEVER called (a stale pre-lock snapshot would have
+// routed the submission at live_l3).
+func TestPostProposalPauseCommittedWhileLockedBlocksSubmit(t *testing.T) {
+	e := gatedEnv(t)
+	createStrategy(t, e.store, strat1, "live_l3")
+	putMark(e, "BTC/USDT", "64000")
+
+	body, err := json.Marshal(store.ProposalSubmission{
+		TickNumber: 0, Proposal: openProposal(t, uid(10), strat1, uid(12)),
+	})
+	if err != nil {
+		t.Fatalf("marshal submission: %v", err)
+	}
+	lock := e.srv.strategyLock(strat1)
+	lock.Lock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- e.do(t, http.MethodPost, "/api/v1/strategies/"+strat1+"/proposals", agent1Tok, body)
+	}()
+	// Let the request reach the lock, then commit the pause and release:
+	// under the fix the handler's row read happens after this commit.
+	time.Sleep(50 * time.Millisecond)
+	if err := e.store.AppendLifecycleTransition(store.LifecycleTransition{
+		TransitionID: uid(80), StrategyID: strat1, FromState: "live_l3", ToState: "paused",
+		ActorID: "admin-1", ActorRole: "admin", Reason: "pause", RecordedAt: formatTime(testNow),
+	}); err != nil {
+		t.Fatalf("AppendLifecycleTransition: %v", err)
+	}
+	lock.Unlock()
+
+	rec := <-done
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var env proposalEnvelope
+	decodeJSON(t, rec, &env)
+	if env.Submitted != nil {
+		t.Errorf("envelope = %+v, want no submitted flag (paused L0 floor)", env)
+	}
+	if e.sub.count() != 0 {
+		t.Errorf("submitter calls = %d, want 0 (the committed pause blocks submission)", e.sub.count())
 	}
 }
 

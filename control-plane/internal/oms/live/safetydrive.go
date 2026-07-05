@@ -55,6 +55,18 @@ func (o *OMS) lastReconcileCompletedAt() string {
 // otherwise the effects still ran and the marker defers to the next
 // R7-hooked pass.
 func (o *OMS) driveSafetyEvent(ctx context.Context, ev store.KillBreakerEvent, reconciledAt string) {
+	// Supersede re-check (lifecycle-api.md LC-38): a concurrent clear may
+	// have written the done-marker since the pass listed this row — a
+	// marker found means the CLEAR is the resolution; an in-flight drive
+	// must never execute effects the clear superseded.
+	served, err := o.st.SafetyEffectServed(ev.EventID)
+	if err != nil {
+		o.logf("live: safety drive: event %s: served re-check: %v", ev.EventID, err)
+		return // unserved as far as we know: the next pass retries
+	}
+	if served {
+		return
+	}
 	strategies, err := o.affectedStrategies(ev)
 	if err != nil {
 		o.logf("live: safety drive: event %s: affected strategies: %v", ev.EventID, err)
@@ -180,6 +192,18 @@ func (o *OMS) driveSafetyStrategy(ctx context.Context, ev store.KillBreakerEvent
 	// 3c — flatten: kill rows iff the operator chose it; breaker rows
 	// ALWAYS flatten (spec §Fire step 6 — the loss bound wins).
 	if ev.Kind != "breaker" && (ev.Flatten == nil || !*ev.Flatten) {
+		return residual, nil
+	}
+	// Per-strategy supersede re-check (lifecycle-api.md LC-38): a clear
+	// landing MID-PASS — between the strategies of a tenant/platform row —
+	// writes the done-marker after the event-level re-check already ran;
+	// an unserved flatten of a cleared kill must never move a live book,
+	// so each strategy re-checks immediately before its flatten half.
+	served, err := o.st.SafetyEffectServed(ev.EventID)
+	if err != nil {
+		return residual + 1, err
+	}
+	if served {
 		return residual, nil
 	}
 	origin := "kill"

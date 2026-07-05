@@ -1,6 +1,7 @@
 package omsbridge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -91,6 +92,20 @@ func (b *Bridge) SubmitApproved(meta store.VerdictMeta) error {
 		return err
 	}
 	return submitErr
+}
+
+// CancelOpenEntries cancels the paper book's resting un-filled ENTRY
+// orders for the strategy and persists the status flips — reduce-only
+// protectives untouched (lifecycle-api.md LC-12a: the paper half of the
+// api.Config.EntryCanceler seam; a paused paper strategy stops filling its
+// resting limit entries). The context parameter exists only to satisfy the
+// shared seam signature the live OMS defines.
+func (b *Bridge) CancelOpenEntries(_ context.Context, strategyID string) error {
+	now := b.now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.oms.CancelOpenEntries(strategyID)
+	return b.persistLocked(nil, now)
 }
 
 // Sweep runs the deterministic per-tick trigger sweep over fresh marks and

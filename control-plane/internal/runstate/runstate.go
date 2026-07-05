@@ -59,14 +59,21 @@ func (h *Hydrator) State(strategyID, lifecycleState, symbol string, now time.Tim
 		MarkPrice:             decimal.Zero,
 	}
 
+	// KillEpoch STAYS the raw epoch (lifecycle-api.md LC-34, staleness
+	// ordering): a clear never un-stales an intent stamped before the kill.
 	epoch, err := h.Store.GlobalMaxKillEpoch(strategyID)
 	if err != nil {
 		return state, err
 	}
 	state.KillEpoch = epoch
-	// A persisted kill event is a standing condition until human unlock;
-	// Phase 1 has no unlock machinery, so any epoch > 0 keeps the gate shut.
-	state.KillActive = epoch > 0 || lifecycleState == "killed"
+	// The standing-condition blocker moves to the ActiveKill predicate
+	// (LC-34): a kill is a standing condition until its scope's SW-2
+	// clear; a killed lifecycle state keeps the gate shut regardless.
+	active, err := h.Store.ActiveKill(strategyID)
+	if err != nil {
+		return state, err
+	}
+	state.KillActive = active || lifecycleState == "killed"
 
 	// One consistent snapshot: positions, open orders, and strategy_state
 	// are read in a single transaction so a concurrent sweep never tears

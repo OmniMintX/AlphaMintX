@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 
 	_ "modernc.org/sqlite"
@@ -99,6 +101,10 @@ func Open(path string) (*Store, error) {
 	if err := migrateLiveOMS(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("live OMS migration %s: %w", path, err)
+	}
+	if err := migrateLifecycleBootstrap(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("lifecycle bootstrap migration %s: %w", path, err)
 	}
 	return &Store{db: db}, nil
 }
@@ -196,6 +202,55 @@ func migrateLiveOMS(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateLifecycleBootstrap is the additive lifecycle-api.md LC-16a
+// migration: every legacy `paper` OR `paused` strategy with no
+// to_state='paper' lifecycle_transitions row gets ONE synthetic
+// draft→paper bootstrap row (recorded_at = created_at) so the LC-16
+// paper window never fails closed merely because the strategy predates
+// CreateStrategy's atomic bootstrap. Idempotent: guarded by the
+// NOT EXISTS condition; for a paused strategy the synthetic row is a
+// WINDOW-START record only (PausedProvenance reads to_state='paused'
+// rows, untouched).
+func migrateLifecycleBootstrap(db *sql.DB) error {
+	rows, err := db.Query(`SELECT strategy_id, created_at FROM strategies s
+		WHERE s.lifecycle_state IN ('paper', 'paused')
+		AND NOT EXISTS (SELECT 1 FROM lifecycle_transitions t
+			WHERE t.strategy_id = s.strategy_id AND t.to_state = 'paper')`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type legacy struct{ strategyID, createdAt string }
+	var missing []legacy
+	for rows.Next() {
+		var l legacy
+		if err := rows.Scan(&l.strategyID, &l.createdAt); err != nil {
+			return err
+		}
+		missing = append(missing, l)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	for _, l := range missing {
+		if _, err := tx.Exec(`INSERT INTO lifecycle_transitions
+			(transition_id, strategy_id, from_state, to_state, actor_id, actor_role, reason, recorded_at)
+			VALUES (?, ?, 'draft', 'paper', 'bootstrap', 'system', 'bootstrap', ?)`,
+			uuid.NewString(), l.strategyID, l.createdAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Close closes the underlying database.

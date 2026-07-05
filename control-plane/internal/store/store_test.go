@@ -322,6 +322,20 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// LatestStrategyKillEvent is the read-only WD-16 back-fill accessor
 		// (docs/specs/watchdog.md §Wiring seams).
 		"LatestStrategyKillEvent": true,
+		// Lifecycle-API surface (docs/specs/lifecycle-api.md §Store
+		// surface): the CAS transition appender, the append-only SW-2
+		// kill-clear appenders (kill rows are never mutated — a clear is
+		// a new row, invariant 2), and the read-only lifecycle/paper-gate
+		// accessors.
+		"AppendLifecycleTransitionCAS": true,
+		"AppendKillClearStrategy":      true,
+		"AppendKillClearTenant":        true,
+		"AppendKillClearPlatform":      true,
+		"ActiveKill":                   true,
+		"PaperWindowStart":             true,
+		"PausedProvenance":             true,
+		"ListPaperGateFills":           true,
+		"SafetyEffectServed":           true,
 		// Billing and metering surface (billing-and-metering.md): all six
 		// tables are INSERT-only — imports, closes, and reconciliation
 		// runs append; invoices and runs are read back, never mutated.

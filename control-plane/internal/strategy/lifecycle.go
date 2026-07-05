@@ -80,6 +80,15 @@ func New() *Instance { return &Instance{state: StateDraft} }
 // NewAt returns an instance at a given state (tests, rehydration).
 func NewAt(state State) *Instance { return &Instance{state: state} }
 
+// NewPausedFrom returns an instance rehydrated at paused with its resume
+// provenance (lifecycle-api.md LC-7: pausedFrom is not a persisted column;
+// the API reconstructs it from the newest to_state='paused' audit row).
+// prev "" means unknown provenance, which the machine already treats as
+// the paper-only exit.
+func NewPausedFrom(prev State) *Instance {
+	return &Instance{state: StatePaused, pausedFrom: prev}
+}
+
 // State returns the current lifecycle state.
 func (i *Instance) State() State { return i.state }
 

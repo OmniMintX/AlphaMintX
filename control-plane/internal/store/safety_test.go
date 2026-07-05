@@ -147,7 +147,7 @@ func TestAppendKillLifecycleLock(t *testing.T) {
 	}
 	var from, actor, role, reason string
 	if err := s.db.QueryRow(`SELECT from_state, actor_id, actor_role, reason
-		FROM lifecycle_transitions WHERE strategy_id = ?`, uid(2)).
+		FROM lifecycle_transitions WHERE strategy_id = ? AND to_state = 'killed'`, uid(2)).
 		Scan(&from, &actor, &role, &reason); err != nil {
 		t.Fatalf("transition row: %v", err)
 	}
@@ -155,14 +155,16 @@ func TestAppendKillLifecycleLock(t *testing.T) {
 		t.Fatalf("transition row = (%s, %s, %s, %q), want live_l2/safety-engine/system/reason referencing %s",
 			from, actor, role, reason, uid(81))
 	}
-	// Already killed: idempotent no-op, no second transition row.
+	// Already killed: idempotent no-op, no second kill transition row
+	// (the LC-16a bootstrap row is the only other row).
 	if locked, err := s.AppendKillLifecycleLock(uid(2), uid(82), "safety-engine", formatTime(testNow)); err != nil || locked {
 		t.Fatalf("re-lock killed strategy = %v, %v, want false, nil", locked, err)
 	}
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM lifecycle_transitions WHERE strategy_id = ?`,
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM lifecycle_transitions
+		WHERE strategy_id = ? AND to_state = 'killed'`,
 		uid(2)).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("transition rows = %d err=%v, want exactly 1", n, err)
+		t.Fatalf("kill transition rows = %d err=%v, want exactly 1", n, err)
 	}
 }
 
