@@ -73,6 +73,14 @@ func TestEvaluateTable(t *testing.T) {
 		{name: "daily loss plus worst case breaches",
 			mutateS: func(s *RuntimeState) { s.DailyRealizedPnLQuote = decimal.NewFromInt(-490) },
 			want:    contract.DecisionReject, wantCode: contract.CodeDailyLossLimitBreached},
+		// Boundary pins for the >= comparison (checks.go step 4): base
+		// worst_case = 1000*|100-98|/100 = 20, limit = 500.
+		{name: "daily loss exactly at limit rejects",
+			mutateS: func(s *RuntimeState) { s.DailyRealizedPnLQuote = decimal.NewFromInt(-480) },
+			want:    contract.DecisionReject, wantCode: contract.CodeDailyLossLimitBreached},
+		{name: "daily loss one cent below limit approves",
+			mutateS: func(s *RuntimeState) { s.DailyRealizedPnLQuote = decimal.RequireFromString("-479.99") },
+			want:    contract.DecisionApprove},
 		{name: "reserved pending-entry worst case counts",
 			mutateS: func(s *RuntimeState) { s.ReservedWorstCaseQuote = decimal.NewFromInt(480) },
 			want:    contract.DecisionReject, wantCode: contract.CodeDailyLossLimitBreached},
@@ -246,5 +254,17 @@ func TestApproveNeverClipsAndHasNoClippedSize(t *testing.T) {
 	v := Evaluate(baseProposal(t), baseLimits(), baseState(), baseNow(t))
 	if v.Decision != contract.DecisionApprove || v.ClippedSizeQuote != nil {
 		t.Fatalf("want plain approve, got %+v", v)
+	}
+}
+
+// Size EXACTLY at the notional cap is not oversize: the clip comparison is
+// strict (evaluate.go step 10), so the verdict approves un-clipped with no
+// clipped_size_quote.
+func TestSizeExactlyAtCapApprovesWithoutClip(t *testing.T) {
+	p := baseProposal(t)
+	p.SizeQuote = mustDec(t, "2000") // == PerPositionNotionalCapQuote
+	v := Evaluate(p, baseLimits(), baseState(), baseNow(t))
+	if v.Decision != contract.DecisionApprove || v.ClippedSizeQuote != nil {
+		t.Fatalf("size at exact cap must approve un-clipped, got %+v", v)
 	}
 }

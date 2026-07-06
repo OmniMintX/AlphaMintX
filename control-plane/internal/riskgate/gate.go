@@ -114,15 +114,19 @@ func snapshot(limits RiskLimits, state RuntimeState) contract.LimitsSnapshot {
 		MaxOpenPositions:            limits.MaxOpenPositions,
 		PerPositionNotionalCapQuote: contract.NewDecimal(limits.PerPositionNotionalCapQuote),
 		DailyLossLimitQuote:         contract.NewDecimal(limits.DailyLossLimitQuote),
-		MaxDrawdownPct:              limits.MaxDrawdownPct.InexactFloat64(),
-		MaxOrdersPerMinute:          limits.MaxOrdersPerMinute,
-		RequireStopLoss:             limits.RequireStopLoss,
-		EquityQuote:                 contract.NewDecimal(state.EquityQuote),
-		PeakEquityQuote:             contract.NewDecimal(state.PeakEquityQuote),
-		DailyRealizedPnlQuote:       contract.NewSignedDecimal(state.DailyRealizedPnLQuote),
-		OpenPositionsCount:          state.OpenPositionsCount,
-		PendingEntryOrdersCount:     state.PendingEntryOrdersCount,
-		MarkPrice:                   contract.NewDecimal(state.MarkPrice),
+		// MaxDrawdownPct is a ratio, not money: riskverdict.schema.json
+		// pins it as a JSON number (ADR-0003 exempts non-money
+		// percentages). InexactFloat64 is audit-only — evaluation
+		// (checks.go step 5) compares the exact decimal.
+		MaxDrawdownPct:          limits.MaxDrawdownPct.InexactFloat64(),
+		MaxOrdersPerMinute:      limits.MaxOrdersPerMinute,
+		RequireStopLoss:         limits.RequireStopLoss,
+		EquityQuote:             contract.NewDecimal(state.EquityQuote),
+		PeakEquityQuote:         contract.NewDecimal(state.PeakEquityQuote),
+		DailyRealizedPnlQuote:   contract.NewSignedDecimal(state.DailyRealizedPnLQuote),
+		OpenPositionsCount:      state.OpenPositionsCount,
+		PendingEntryOrdersCount: state.PendingEntryOrdersCount,
+		MarkPrice:               contract.NewDecimal(state.MarkPrice),
 	}
 	if limits.L2Envelope != nil {
 		l2max := contract.NewDecimal(limits.L2Envelope.MaxSizeQuote)
