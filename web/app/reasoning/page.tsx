@@ -9,73 +9,110 @@ import { riskVerdictSchema, tradeProposalSchema } from "../../src/lib/contract/s
 const proposal = tradeProposalSchema.parse(proposalFixture);
 const verdict = riskVerdictSchema.parse(verdictFixture);
 
-const card = {
-  background: "#fff",
-  border: "1px solid #e0e0e0",
-  borderRadius: "6px",
-  padding: "1rem 1.25rem",
-  marginTop: "0.75rem",
-} as const;
-const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } as const;
+const SIGNAL_TONES: Record<string, string> = {
+  bullish: "badge-green",
+  bearish: "badge-red",
+  neutral: "badge-neutral",
+};
+
+const DECISION_TONES: Record<string, string> = {
+  approve: "badge-green",
+  clip: "badge-green",
+  reject: "badge-red",
+  escalate: "badge-yellow",
+};
 
 export default function ReasoningPage() {
   return (
     <>
-      <h1 style={{ fontSize: "1.4rem" }}>Reasoning viewer</h1>
-      <p style={{ color: "#555" }}>
-        Golden-fixture trace (Phase 0). Proposal <span style={mono}>{proposal.proposal_id}</span>{" "}
-        &rarr; verdict <span style={mono}>{verdict.verdict_id}</span>.
-      </p>
-
-      <section style={card}>
-        <h2 style={{ fontSize: "1.1rem", marginTop: 0 }}>
-          Proposal &mdash; {proposal.action} {proposal.symbol}
-        </h2>
-        <p style={{ color: "#444" }}>
-          size <span style={mono}>{proposal.size_quote}</span> quote &middot; entry{" "}
-          {proposal.entry.type}
-          {proposal.entry.limit_price ? ` @ ${proposal.entry.limit_price}` : ""} &middot; SL{" "}
-          {proposal.stop_loss ?? "n/a"} &middot; TP {proposal.take_profit ?? "n/a"} &middot;
-          confidence {proposal.confidence}
+      <header className="page-head">
+        <h1 className="page-title">Reasoning viewer</h1>
+        <p className="page-sub">
+          Golden-fixture trace (Phase 0). Proposal{" "}
+          <span className="mono">{proposal.proposal_id}</span> &rarr; verdict{" "}
+          <span className="mono">{verdict.verdict_id}</span>.
         </p>
-        <p>{proposal.reasoning}</p>
+      </header>
+
+      <section className="section">
+        <h2 className="section-title">Proposal</h2>
+        <div className="card">
+          <div className="row">
+            <strong>{proposal.action}</strong>
+            <span className="mono">{proposal.symbol}</span>
+          </div>
+          <hr className="divider" />
+          <dl className="kv">
+            <dt>confidence</dt>
+            <dd className="mono">{proposal.confidence}</dd>
+            <dt>size (quote)</dt>
+            <dd className="mono">{proposal.size_quote}</dd>
+            <dt>entry</dt>
+            <dd>
+              {proposal.entry.type}
+              {proposal.entry.limit_price ? ` @ ${proposal.entry.limit_price}` : ""}
+            </dd>
+            <dt>stop loss</dt>
+            <dd className="mono">{proposal.stop_loss ?? "n/a"}</dd>
+            <dt>take profit</dt>
+            <dd className="mono">{proposal.take_profit ?? "n/a"}</dd>
+          </dl>
+          <p>{proposal.reasoning}</p>
+        </div>
       </section>
 
-      <section style={card}>
-        <h2 style={{ fontSize: "1.1rem", marginTop: 0 }}>Analyst summaries</h2>
-        {(["market", "news", "fundamental"] as const).map((role) => {
-          const s = proposal.analyst_summaries[role];
-          return (
-            <p key={role} style={{ margin: "0.4rem 0" }}>
-              <strong style={{ textTransform: "capitalize" }}>{role}</strong> &middot; {s.signal}{" "}
-              ({s.confidence}): {s.summary}
-            </p>
-          );
-        })}
-        <p style={{ color: "#444" }}>
-          <strong>Debate:</strong> {proposal.debate_summary}
-        </p>
+      <section className="section">
+        <h2 className="section-title">Analyst summaries</h2>
+        <div className="grid grid-3">
+          {(["market", "news", "fundamental"] as const).map((role) => {
+            const s = proposal.analyst_summaries[role];
+            return (
+              <div key={role} className="card">
+                <h3 className="card-title">{role}</h3>
+                <div className="row">
+                  <span className={`badge ${SIGNAL_TONES[s.signal] ?? "badge-neutral"}`}>
+                    {s.signal}
+                  </span>
+                  <span className="faint mono small">{s.confidence}</span>
+                </div>
+                <p className="small">{s.summary}</p>
+              </div>
+            );
+          })}
+        </div>
       </section>
 
-      <section style={card}>
-        <h2 style={{ fontSize: "1.1rem", marginTop: 0 }}>
-          Risk Gate verdict &mdash;{" "}
-          <span style={{ color: verdict.decision === "reject" ? "#b3261e" : "#1a7f37" }}>
-            {verdict.decision}
-          </span>
-        </h2>
-        <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
-          {verdict.reasons.map((reason) => (
-            <li key={reason.code} style={{ padding: "0.2rem 0" }}>
-              <span style={mono}>{reason.code}</span>: {reason.message}
-            </li>
-          ))}
-        </ul>
-        <p style={{ color: "#555", fontSize: "0.9rem" }}>
-          Evaluated at <span style={mono}>{verdict.evaluated_at}</span> &middot; daily realized
-          PnL <span style={mono}>{verdict.limits_snapshot.daily_realized_pnl_quote}</span> vs
-          limit <span style={mono}>{verdict.limits_snapshot.daily_loss_limit_quote}</span>
-        </p>
+      <section className="section">
+        <h2 className="section-title">Debate</h2>
+        <div className="card">
+          <p className="muted">{proposal.debate_summary}</p>
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="section-title">Risk Gate verdict</h2>
+        <div className="card">
+          <div className="row">
+            <span className={`badge ${DECISION_TONES[verdict.decision] ?? "badge-neutral"}`}>
+              {verdict.decision}
+            </span>
+          </div>
+          <ul>
+            {verdict.reasons.map((reason) => (
+              <li key={reason.code}>
+                <code>{reason.code}</code>: {reason.message}
+              </li>
+            ))}
+          </ul>
+          <dl className="kv">
+            <dt>evaluated at</dt>
+            <dd className="mono">{verdict.evaluated_at}</dd>
+            <dt>daily realized PnL</dt>
+            <dd className="mono">{verdict.limits_snapshot.daily_realized_pnl_quote}</dd>
+            <dt>daily loss limit</dt>
+            <dd className="mono">{verdict.limits_snapshot.daily_loss_limit_quote}</dd>
+          </dl>
+        </div>
       </section>
     </>
   );

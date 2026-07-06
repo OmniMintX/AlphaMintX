@@ -8,7 +8,7 @@ import { useCallback, useState } from "react";
 
 import { fetchStrategies } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
-import { ErrorBanner, Pager, StateBadge, card, mono } from "./ui";
+import { ErrorBanner, Pager, StateBadge } from "./ui";
 
 export default function StrategiesPage() {
   const [page, setPage] = useState(1);
@@ -17,38 +17,55 @@ export default function StrategiesPage() {
 
   return (
     <>
-      <h1 style={{ fontSize: "1.4rem" }}>Strategies</h1>
-      <p style={{ color: "#555" }}>
-        Lifecycle state per strategy; open one for its runs and reasoning traces.
-      </p>
+      <header className="page-head">
+        <h1 className="page-title">Strategies</h1>
+        <p className="page-sub">
+          Lifecycle state per strategy; open one for its runs and reasoning traces.
+        </p>
+      </header>
       {error && <ErrorBanner message={error} />}
-      {!data && !error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
+      {!data && !error && (
+        <div className="grid">
+          <div className="skeleton" style={{ height: 36 }} />
+          <div className="skeleton" style={{ height: 36 }} />
+          <div className="skeleton" style={{ height: 36 }} />
+        </div>
+      )}
       {data && (
         <>
-          <div style={card}>
-            {data.items.length === 0 && <p style={{ color: "#555" }}>No strategies yet.</p>}
-            {data.items.map((strategy) => (
-              <div
-                key={strategy.strategy_id}
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: "0.75rem",
-                  padding: "0.4rem 0",
-                }}
-              >
-                <Link
-                  href={`/strategies/${strategy.strategy_id}`}
-                  style={{ color: "#0a5bd3", textDecoration: "none", fontWeight: 600 }}
-                >
-                  {strategy.name}
-                </Link>
-                <StateBadge state={strategy.lifecycle_state} />
-                <span style={{ ...mono, color: "#555", fontSize: "0.85rem" }}>
-                  {strategy.strategy_id}
-                </span>
-              </div>
-            ))}
+          <div className="table-wrap">
+            {data.items.length === 0 ? (
+              <div className="empty">No strategies yet.</div>
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>State</th>
+                    <th>Tenant</th>
+                    <th>Strategy ID</th>
+                    <th>Created</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.items.map((strategy) => (
+                    <tr key={strategy.strategy_id}>
+                      <td>
+                        <Link href={`/strategies/${strategy.strategy_id}`}>{strategy.name}</Link>
+                      </td>
+                      <td>
+                        <StateBadge state={strategy.lifecycle_state} />
+                      </td>
+                      <td className="muted">{strategy.tenant_id}</td>
+                      <td className="mono-cell">{strategy.strategy_id}</td>
+                      <td className="mono-cell">{strategy.created_at}</td>
+                      <td className="mono-cell">{strategy.updated_at}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
           <Pager page={data.page} total={data.total} limit={data.limit} onPage={setPage} />
         </>

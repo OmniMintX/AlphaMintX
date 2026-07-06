@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import "./globals.css";
+import { SidebarNav } from "./nav";
+
 export const metadata: Metadata = {
   title: "AlphaMintX",
   description:
@@ -10,40 +13,23 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          fontFamily:
-            "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
-          color: "#1a1a1a",
-          background: "#fafafa",
-        }}
-      >
-        <header
-          style={{
-            padding: "0.75rem 1.5rem",
-            borderBottom: "1px solid #e0e0e0",
-            display: "flex",
-            alignItems: "baseline",
-            gap: "1.5rem",
-          }}
-        >
-          <strong style={{ fontSize: "1.1rem" }}>AlphaMintX</strong>
-          <nav style={{ display: "flex", gap: "1rem", fontSize: "0.9rem" }}>
-            <a href="/" style={{ color: "#0a5bd3", textDecoration: "none" }}>
-              Dashboard
-            </a>
-            <a href="/strategies" style={{ color: "#0a5bd3", textDecoration: "none" }}>
-              Strategies
-            </a>
-            <a href="/reasoning" style={{ color: "#0a5bd3", textDecoration: "none" }}>
-              Reasoning viewer
-            </a>
-          </nav>
-        </header>
-        <main style={{ maxWidth: "56rem", margin: "0 auto", padding: "1.5rem" }}>
-          {children}
-        </main>
+      <body>
+        <div className="shell">
+          <aside className="sidebar">
+            <div className="sidebar-brand">
+              <span className="logo">A</span>
+              AlphaMintX
+              <span className="env-tag">TESTNET</span>
+            </div>
+            <SidebarNav />
+            <div className="sidebar-foot">
+              plane boundary enforced
+              <br />
+              LLMs never touch orders
+            </div>
+          </aside>
+          <main className="main">{children}</main>
+        </div>
       </body>
     </html>
   );

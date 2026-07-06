@@ -11,7 +11,7 @@ import { useCallback, useState } from "react";
 import { fetchRuns, fetchStrategy } from "../../../src/lib/api/client";
 import { usePoll } from "../../../src/lib/api/usePoll";
 import { isAdvisoryOnly, isPaperSimulated } from "../../../src/lib/view/run";
-import { AdvisoryBanner, ErrorBanner, Pager, PaperBanner, StateBadge, card, mono, section } from "../ui";
+import { AdvisoryBanner, ErrorBanner, Pager, PaperBanner, StateBadge } from "../ui";
 import { OpsPanel } from "./ops";
 
 export default function StrategyDetailPage() {
@@ -25,56 +25,87 @@ export default function StrategyDetailPage() {
 
   return (
     <>
-      <p style={{ fontSize: "0.9rem" }}>
-        <Link href="/strategies" style={{ color: "#0a5bd3", textDecoration: "none" }}>
-          &larr; Strategies
-        </Link>
-      </p>
+      <div className="breadcrumbs">
+        <Link href="/strategies">Strategies</Link>
+        <span className="sep">/</span>
+        <span className="truncate">{strategy.data?.name ?? id}</span>
+      </div>
       {strategy.error && <ErrorBanner message={strategy.error} />}
-      {!strategy.data && !strategy.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
+      {!strategy.data && !strategy.error && (
+        <div className="grid">
+          <div className="skeleton" style={{ height: 28, maxWidth: 320 }} />
+          <div className="skeleton" style={{ height: 16, maxWidth: 480 }} />
+        </div>
+      )}
       {strategy.data && (
         <>
-          <h1 style={{ fontSize: "1.4rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            {strategy.data.name} <StateBadge state={strategy.data.lifecycle_state} />
-          </h1>
-          <p style={{ ...mono, color: "#555", fontSize: "0.85rem" }}>
-            {strategy.data.strategy_id}
-          </p>
+          <header className="page-head">
+            <h1 className="page-title">
+              {strategy.data.name} <StateBadge state={strategy.data.lifecycle_state} />
+            </h1>
+            <div className="row small faint mono">
+              <span>{strategy.data.strategy_id}</span>
+              <span>tenant {strategy.data.tenant_id}</span>
+              <span>created {strategy.data.created_at}</span>
+              <span>updated {strategy.data.updated_at}</span>
+            </div>
+          </header>
           {isAdvisoryOnly(strategy.data.lifecycle_state) && <AdvisoryBanner />}
           {isPaperSimulated(strategy.data.lifecycle_state) && <PaperBanner />}
         </>
       )}
 
-      <section style={section}>
-        <h2 style={{ fontSize: "1.1rem" }}>Runs</h2>
+      <section className="section">
+        <h2 className="section-title">
+          Runs
+          {runs.data && <span className="count">{runs.data.total}</span>}
+        </h2>
         {runs.error && <ErrorBanner message={runs.error} />}
-        {!runs.data && !runs.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
+        {!runs.data && !runs.error && (
+          <div className="grid">
+            <div className="skeleton" style={{ height: 36 }} />
+            <div className="skeleton" style={{ height: 36 }} />
+            <div className="skeleton" style={{ height: 36 }} />
+          </div>
+        )}
         {runs.data && (
           <>
-            <div style={card}>
-              {runs.data.items.length === 0 && <p style={{ color: "#555" }}>No runs yet.</p>}
-              {runs.data.items.map((run) => (
-                <div
-                  key={run.run_id}
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: "0.75rem",
-                    padding: "0.4rem 0",
-                  }}
-                >
-                  <Link
-                    href={`/strategies/${id}/runs/${run.run_id}`}
-                    style={{ color: "#0a5bd3", textDecoration: "none", fontWeight: 600 }}
-                  >
-                    Tick {run.tick_number}
-                  </Link>
-                  <span style={{ ...mono, color: "#555", fontSize: "0.85rem" }}>{run.run_id}</span>
-                  <span style={{ color: "#555", fontSize: "0.85rem" }}>
-                    {run.completed_at ? `completed ${run.completed_at}` : "in progress"}
-                  </span>
-                </div>
-              ))}
+            <div className="table-wrap">
+              {runs.data.items.length === 0 ? (
+                <div className="empty">No runs yet.</div>
+              ) : (
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Tick</th>
+                      <th>Run ID</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.data.items.map((run) => (
+                      <tr key={run.run_id}>
+                        <td>
+                          <Link href={`/strategies/${id}/runs/${run.run_id}`}>
+                            Tick {run.tick_number}
+                          </Link>
+                        </td>
+                        <td className="mono-cell">{run.run_id}</td>
+                        <td>
+                          {run.completed_at ? (
+                            <span className="badge badge-green">completed {run.completed_at}</span>
+                          ) : (
+                            <span className="badge badge-yellow">
+                              <span className="dot" />
+                              in progress
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
             <Pager page={runs.data.page} total={runs.data.total} limit={runs.data.limit} onPage={setPage} />
           </>

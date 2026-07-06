@@ -1,64 +1,54 @@
 "use client";
 
 // Shared presentational pieces for the strategies / reasoning-viewer pages.
-// Styling matches the existing inline-style conventions (app/page.tsx).
+// Styling comes from the design system in app/globals.css (dark, dense).
 
 import { hasNextPage, hasPrevPage, totalPages } from "../../src/lib/api/pagination";
 import type { LifecycleState } from "../../src/lib/api/schema";
 
+// Legacy inline-style tokens kept for compatibility; new code uses classes.
 export const section = { marginTop: "1.5rem" } as const;
-export const card = {
-  background: "#fff",
-  border: "1px solid #e0e0e0",
-  borderRadius: "6px",
-  padding: "1rem 1.25rem",
-  marginTop: "0.75rem",
-} as const;
+export const card = {} as const;
 export const mono = {
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
 } as const;
 
-const STATE_COLORS: Record<LifecycleState, { bg: string; fg: string }> = {
-  draft: { bg: "#f0f0f0", fg: "#555" },
-  paper: { bg: "#e7f0fd", fg: "#0a5bd3" },
-  live_l1: { bg: "#e6f4ea", fg: "#1a7f37" },
-  live_l2: { bg: "#e6f4ea", fg: "#1a7f37" },
-  live_l3: { bg: "#e6f4ea", fg: "#1a7f37" },
-  paused: { bg: "#fdf3e0", fg: "#9a6700" },
-  killed: { bg: "#fbe9e7", fg: "#b3261e" },
+const STATE_TONES: Record<LifecycleState, string> = {
+  draft: "badge-neutral",
+  paper: "badge-cyan",
+  live_l1: "badge-green",
+  live_l2: "badge-green",
+  live_l3: "badge-green",
+  paused: "badge-yellow",
+  killed: "badge-red",
+};
+
+const STATE_LABELS: Record<LifecycleState, string> = {
+  draft: "Draft",
+  paper: "Paper",
+  live_l1: "Live L1",
+  live_l2: "Live L2",
+  live_l3: "Live L3",
+  paused: "Paused",
+  killed: "Killed",
 };
 
 export function StateBadge({ state }: { state: LifecycleState }) {
-  const colors = STATE_COLORS[state];
+  const live = state.startsWith("live_");
   return (
-    <span
-      style={{
-        ...mono,
-        background: colors.bg,
-        color: colors.fg,
-        borderRadius: "4px",
-        padding: "0.1rem 0.45rem",
-        fontSize: "0.85rem",
-      }}
-    >
-      {state}
+    <span className={`badge ${STATE_TONES[state]}`}>
+      <span className={`dot${live ? " dot-live" : ""}`} />
+      {STATE_LABELS[state]}
     </span>
   );
 }
 
 export function ErrorBanner({ message }: { message: string }) {
   return (
-    <p
-      style={{
-        background: "#fbe9e7",
-        border: "1px solid #b3261e",
-        borderRadius: "6px",
-        color: "#b3261e",
-        padding: "0.6rem 1rem",
-      }}
-    >
-      {message}
-    </p>
+    <div className="banner banner-error" role="alert">
+      <span aria-hidden>&#9888;</span>
+      <span>{message}</span>
+    </div>
   );
 }
 
@@ -66,18 +56,12 @@ export function ErrorBanner({ message }: { message: string }) {
 // nothing is ever submitted to any OMS.
 export function AdvisoryBanner() {
   return (
-    <p
-      style={{
-        background: "#e7f0fd",
-        border: "1px solid #0a5bd3",
-        borderRadius: "6px",
-        color: "#0a5bd3",
-        padding: "0.6rem 1rem",
-      }}
-    >
-      Advisory only: proposals and verdicts are shown here but never
-      submitted to the OMS.
-    </p>
+    <div className="banner banner-info">
+      <span aria-hidden>&#9432;</span>
+      <span>
+        Advisory only: proposals and verdicts are shown here but never submitted to the OMS.
+      </span>
+    </div>
   );
 }
 
@@ -85,18 +69,13 @@ export function AdvisoryBanner() {
 // (persistence-and-api.md §L0 / L1 execution semantics); no exchange orders.
 export function PaperBanner() {
   return (
-    <p
-      style={{
-        background: "#e7f0fd",
-        border: "1px solid #0a5bd3",
-        borderRadius: "6px",
-        color: "#0a5bd3",
-        padding: "0.6rem 1rem",
-      }}
-    >
-      Paper trading: approved verdicts execute against the paper OMS
-      (simulated fills); nothing reaches a live exchange.
-    </p>
+    <div className="banner banner-info">
+      <span aria-hidden>&#9432;</span>
+      <span>
+        Paper trading: approved verdicts execute against the paper OMS (simulated fills);
+        nothing reaches a live exchange.
+      </span>
+    </div>
   );
 }
 
@@ -111,41 +90,27 @@ export function Pager({
   limit: number;
   onPage: (page: number) => void;
 }) {
-  const button = {
-    border: "1px solid #e0e0e0",
-    borderRadius: "4px",
-    background: "#fff",
-    padding: "0.2rem 0.6rem",
-    cursor: "pointer",
-  } as const;
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "0.75rem",
-        marginTop: "0.75rem",
-        fontSize: "0.9rem",
-      }}
-    >
+    <div className="pager">
       <button
         type="button"
-        style={button}
+        className="btn"
         disabled={!hasPrevPage(page)}
         onClick={() => onPage(page - 1)}
       >
-        Prev
+        &larr; Prev
       </button>
-      <span style={{ color: "#555" }}>
-        Page {page} of {totalPages(total, limit)} ({total} total)
+      <span>
+        Page {page} of {totalPages(total, limit)}
+        <span className="faint"> &middot; {total} total</span>
       </span>
       <button
         type="button"
-        style={button}
+        className="btn"
         disabled={!hasNextPage(page, total, limit)}
         onClick={() => onPage(page + 1)}
       >
-        Next
+        Next &rarr;
       </button>
     </div>
   );

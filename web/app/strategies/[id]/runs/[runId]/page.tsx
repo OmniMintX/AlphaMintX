@@ -19,7 +19,7 @@ import {
 import type { ApprovalDecision } from "../../../../../src/lib/api/schema";
 import { usePoll } from "../../../../../src/lib/api/usePoll";
 import { isAdvisoryOnly, isPaperSimulated } from "../../../../../src/lib/view/run";
-import { AdvisoryBanner, ErrorBanner, PaperBanner, StateBadge, card, mono } from "../../../ui";
+import { AdvisoryBanner, ErrorBanner, PaperBanner, StateBadge } from "../../../ui";
 import {
   AnalystSection,
   ApprovalsSection,
@@ -71,64 +71,56 @@ export default function RunDetailPage() {
 
   return (
     <>
-      <p style={{ fontSize: "0.9rem" }}>
-        <Link href={`/strategies/${id}`} style={{ color: "#0a5bd3", textDecoration: "none" }}>
-          &larr; Strategy
+      <nav className="breadcrumbs">
+        <Link href="/strategies">Strategies</Link>
+        <span className="sep">/</span>
+        <Link href={`/strategies/${id}`} className="mono">
+          {id.slice(0, 8)}
         </Link>
-      </p>
-      {strategy.data && (
-        <h1 style={{ fontSize: "1.4rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          {strategy.data.name} &mdash; tick {data?.run.tick_number ?? "…"}{" "}
-          <StateBadge state={strategy.data.lifecycle_state} />
+        <span className="sep">/</span>
+        <span>Tick {data?.run.tick_number ?? "…"}</span>
+      </nav>
+      <header className="page-head">
+        <h1 className="page-title">
+          Tick {data?.run.tick_number ?? "…"}
+          {strategy.data && <StateBadge state={strategy.data.lifecycle_state} />}
         </h1>
-      )}
-      <p style={{ ...mono, color: "#555", fontSize: "0.85rem" }}>run {runId}</p>
+        <p className="page-sub mono faint">run {runId}</p>
+      </header>
       {strategy.data && isAdvisoryOnly(strategy.data.lifecycle_state) && <AdvisoryBanner />}
       {strategy.data && isPaperSimulated(strategy.data.lifecycle_state) && <PaperBanner />}
       {run.error && <ErrorBanner message={run.error} />}
-      {!data && !run.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
+      {!data && !run.error && <p className="muted">Loading&hellip;</p>}
 
       {data && (
         <>
           {pendingApproval && (
-            <section style={{ ...card, borderColor: "#9a6700" }}>
-              <h2 style={{ fontSize: "1.1rem", marginTop: 0 }}>Pending L1 approval</h2>
-              <p style={{ color: "#555" }}>
-                Verdict <span style={mono}>{pendingApproval.verdict_id}</span> awaits a
-                decision until <span style={mono}>{pendingApproval.deadline_at}</span> (no
-                decision &rArr; auto-reject).
-              </p>
-              <div style={{ display: "flex", gap: "0.75rem" }}>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => decide(pendingApproval.verdict_id, true)}
-                  style={{
-                    background: "#1a7f37",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "4px",
-                    padding: "0.4rem 1rem",
-                    cursor: "pointer",
-                  }}
-                >
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => decide(pendingApproval.verdict_id, false)}
-                  style={{
-                    background: "#b3261e",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "4px",
-                    padding: "0.4rem 1rem",
-                    cursor: "pointer",
-                  }}
-                >
-                  Reject
-                </button>
+            <section className="section">
+              <h2 className="section-title">Pending L1 approval</h2>
+              <div className="card">
+                <p className="muted">
+                  Verdict <span className="mono">{pendingApproval.verdict_id}</span> awaits a
+                  decision until <span className="mono">{pendingApproval.deadline_at}</span> (no
+                  decision &rArr; auto-reject).
+                </p>
+                <div className="row">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy}
+                    onClick={() => decide(pendingApproval.verdict_id, true)}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={busy}
+                    onClick={() => decide(pendingApproval.verdict_id, false)}
+                  >
+                    Reject
+                  </button>
+                </div>
               </div>
             </section>
           )}
@@ -140,11 +132,13 @@ export default function RunDetailPage() {
           {data.proposal ? (
             <ProposalSection proposal={data.proposal} />
           ) : (
-            <section style={card}>
-              <h2 style={{ fontSize: "1.1rem", marginTop: 0 }}>Trader decision</h2>
-              <p style={{ color: "#b3261e" }}>
-                No proposal recorded for this run (the proposal POST failed after retries).
-              </p>
+            <section className="section">
+              <h2 className="section-title">Trader decision</h2>
+              <div className="card">
+                <div className="banner banner-error">
+                  No proposal recorded for this run (the proposal POST failed after retries).
+                </div>
+              </div>
             </section>
           )}
           {data.verdict && <VerdictSection verdict={data.verdict} />}

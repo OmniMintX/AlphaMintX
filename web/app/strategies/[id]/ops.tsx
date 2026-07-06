@@ -32,33 +32,7 @@ import {
   watchdogView,
   type OpsAction,
 } from "../../../src/lib/view/ops";
-import { ErrorBanner, Pager, card, mono, section } from "../ui";
-
-const heading = { fontSize: "1.1rem" } as const;
-const badge = {
-  ...mono,
-  borderRadius: "4px",
-  padding: "0.1rem 0.45rem",
-  fontSize: "0.8rem",
-} as const;
-const warnBadge = { ...badge, background: "#fdf3e0", color: "#9a6700" } as const;
-const dangerBadge = { ...badge, background: "#fbe9e7", color: "#b3261e" } as const;
-const okBadge = { ...badge, background: "#e6f4ea", color: "#1a7f37" } as const;
-const offBadge = { ...badge, background: "#f0f0f0", color: "#555" } as const;
-const button = {
-  border: "1px solid #e0e0e0",
-  borderRadius: "4px",
-  background: "#fff",
-  padding: "0.25rem 0.7rem",
-  cursor: "pointer",
-} as const;
-const dangerButton = { ...button, border: "1px solid #b3261e", color: "#b3261e" } as const;
-const input = {
-  border: "1px solid #e0e0e0",
-  borderRadius: "4px",
-  padding: "0.25rem 0.5rem",
-  fontSize: "0.9rem",
-} as const;
+import { ErrorBanner, Pager } from "../ui";
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -75,26 +49,35 @@ export function OpsPanel({
   const safety = usePoll(loadSafety);
 
   return (
-    <section style={section}>
-      <h2 style={heading}>Ops</h2>
+    <section className="section">
+      <h2 className="section-title">Operations</h2>
       {safety.error && <ErrorBanner message={safety.error} />}
-      {!safety.data && !safety.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
-      {safety.data && (
-        <>
-          <SafetyCard safety={safety.data} />
-          <LifecycleControls
-            strategyId={strategyId}
-            safety={safety.data}
-            onDone={() => {
-              safety.refresh();
-              onLifecycleChange();
-            }}
-          />
-          <KillControls strategyId={strategyId} safety={safety.data} onDone={safety.refresh} />
-        </>
+      {!safety.data && !safety.error && (
+        <div className="grid grid-2" style={{ marginBottom: 12 }}>
+          <div className="skeleton" style={{ height: 120 }} />
+          <div className="skeleton" style={{ height: 120 }} />
+        </div>
       )}
-      <AlertsSection strategyId={strategyId} />
-      <PaperGateSection strategyId={strategyId} />
+      <div className="grid grid-2">
+        {safety.data && (
+          <>
+            <SafetyCard safety={safety.data} />
+            <LifecycleControls
+              strategyId={strategyId}
+              safety={safety.data}
+              onDone={() => {
+                safety.refresh();
+                onLifecycleChange();
+              }}
+            />
+            <KillControls strategyId={strategyId} safety={safety.data} onDone={safety.refresh} />
+          </>
+        )}
+        <PaperGateSection strategyId={strategyId} />
+        <div style={{ gridColumn: "1 / -1" }}>
+          <AlertsSection strategyId={strategyId} />
+        </div>
+      </div>
     </section>
   );
 }
@@ -103,60 +86,84 @@ export function OpsPanel({
 // never a client-side re-derivation.
 function SafetyCard({ safety }: { safety: SafetyStatus }) {
   const standing = unclearedKills(safety.kills);
-  const clearedRows = safety.kills.filter((k) => k.cleared !== null);
   const wd = watchdogView(safety.watchdog);
-  const wdStyle = { off: offBadge, none: warnBadge, ok: okBadge, stale: dangerBadge }[wd.tone];
+  const wdTone = { off: "badge-neutral", none: "badge-neutral", ok: "badge-green", stale: "badge-yellow" }[
+    wd.tone
+  ];
   return (
-    <div style={card}>
+    <div className="card">
+      <h3 className="card-title">Safety</h3>
       {standing.length > 0 && (
-        <div
-          style={{
-            background: safety.active_kill ? "#fbe9e7" : "#fdf3e0",
-            border: `1px solid ${safety.active_kill ? "#b3261e" : "#9a6700"}`,
-            borderRadius: "6px",
-            padding: "0.6rem 1rem",
-            marginBottom: "0.75rem",
-          }}
-        >
-          <strong style={{ color: safety.active_kill ? "#b3261e" : "#9a6700" }}>
-            {safety.active_kill ? "KILL ACTIVE" : "Standing kill (not currently acting)"}
-          </strong>
-          {standing.map((k) => (
-            <p key={k.event_id} style={{ ...mono, fontSize: "0.85rem", margin: "0.3rem 0 0" }}>
-              scope {k.scope} &middot; by {k.actor_id} &middot; {k.recorded_at} &middot; flatten{" "}
-              {String(k.flatten)} &middot; epoch {k.kill_epoch}
-            </p>
-          ))}
+        <div className={`banner ${safety.active_kill ? "banner-error" : "banner-warn"}`}>
+          <span aria-hidden>&#9888;</span>
+          <div>
+            <strong>
+              {safety.active_kill ? "KILL ACTIVE" : "Standing kill (not currently acting)"}
+            </strong>
+            {standing.map((k) => (
+              <p key={k.event_id} className="mono small" style={{ margin: "4px 0 0" }}>
+                scope {k.scope} &middot; by {k.actor_id} &middot; {k.recorded_at} &middot; flatten{" "}
+                {String(k.flatten)} &middot; epoch {k.kill_epoch}
+              </p>
+            ))}
+          </div>
         </div>
       )}
-      <p style={{ margin: "0.2rem 0" }}>
-        {safety.breaker.active_today ? (
-          <span style={warnBadge}>
-            breaker today
-            {safety.breaker.event ? ` (${safety.breaker.event.recorded_at})` : ""}
-          </span>
-        ) : (
-          <span style={offBadge}>no breaker today</span>
-        )}{" "}
-        <span style={wdStyle}>{wd.label}</span>
-      </p>
-      {clearedRows.length > 0 && (
-        <details style={{ marginTop: "0.5rem" }}>
-          <summary style={{ cursor: "pointer", color: "#555" }}>
-            Cleared kills ({clearedRows.length})
-          </summary>
-          {clearedRows.map((k) => (
-            <p key={k.event_id} style={{ ...mono, fontSize: "0.85rem", color: "#555" }}>
-              scope {k.scope} &middot; epoch {k.kill_epoch} &middot; killed {k.recorded_at} &middot;
-              cleared by {k.cleared?.actor_id} at {k.cleared?.recorded_at} &mdash;{" "}
-              {k.cleared?.reason}
-            </p>
-          ))}
-        </details>
+      <dl className="kv">
+        <dt>Breaker</dt>
+        <dd>
+          {safety.breaker.active_today ? (
+            <span className="badge badge-red">
+              <span className="dot" />
+              breaker today
+              {safety.breaker.event ? ` (${safety.breaker.event.recorded_at})` : ""}
+            </span>
+          ) : (
+            <span className="badge badge-green">no breaker today</span>
+          )}
+        </dd>
+        <dt>Watchdog</dt>
+        <dd>
+          <span className={`badge ${wdTone}`}>{wd.label}</span>
+        </dd>
+      </dl>
+      {safety.kills.length > 0 && (
+        <>
+          <hr className="divider" />
+          <ul className="timeline">
+            {safety.kills.map((k) => (
+              <li key={k.event_id} className={k.cleared === null ? "tl-red" : undefined}>
+                <div className="row">
+                  <span className="mono">{k.scope} kill</span>
+                  <span className="faint small">
+                    epoch {k.kill_epoch} &middot; by {k.actor_id} &middot; flatten {String(k.flatten)}
+                  </span>
+                </div>
+                <span className="tl-time">{k.recorded_at}</span>
+                {k.cleared && (
+                  <p className="faint small" style={{ margin: "2px 0 0" }}>
+                    cleared by {k.cleared.actor_id} at {k.cleared.recorded_at} &mdash;{" "}
+                    {k.cleared.reason}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
 }
+
+// Button tone per verb (presentation only; the action set stays legalActions').
+const LIFECYCLE_BTN_CLASS: Record<OpsAction["verb"], string> = {
+  activate: "btn btn-primary",
+  promote: "btn btn-primary",
+  demote: "btn",
+  pause: "btn",
+  resume: "btn",
+  unlock: "btn btn-danger",
+};
 
 // OS-26: buttons per the pinned display table; the server remains the sole
 // transition authority — any 422 surfaces verbatim, never pre-suppressed.
@@ -202,12 +209,14 @@ function LifecycleControls({
   };
 
   return (
-    <div style={card}>
-      <h3 style={{ fontSize: "1rem", marginTop: 0 }}>Lifecycle</h3>
+    <div className="card">
+      <h3 className="card-title">Lifecycle</h3>
       {error && <ErrorBanner message={error} />}
-      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+      <div className="field">
+        <span className="field-label">Reason</span>
         <input
-          style={{ ...input, minWidth: "16rem" }}
+          className="input"
+          style={{ minWidth: "16rem" }}
           placeholder="reason (required)"
           value={reason}
           onChange={(e) => {
@@ -215,11 +224,13 @@ function LifecycleControls({
             setArmed(null);
           }}
         />
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
         {actions.map((a) => (
           <button
             key={a.label}
             type="button"
-            style={armed === a.label ? dangerButton : button}
+            className={armed === a.label ? "btn btn-danger" : LIFECYCLE_BTN_CLASS[a.verb]}
             disabled={a.to === null || reason.trim() === "" || pending}
             onClick={() => onClick(a)}
           >
@@ -228,7 +239,7 @@ function LifecycleControls({
         ))}
       </div>
       {actions.some((a) => a.to === null) && (
-        <p style={{ color: "#555", fontSize: "0.85rem" }}>
+        <p className="muted small">
           Resume is disabled: pause provenance unknown (paused_from is null).
         </p>
       )}
@@ -290,27 +301,27 @@ function KillControls({
   };
 
   return (
-    <div style={card}>
-      <h3 style={{ fontSize: "1rem", marginTop: 0 }}>Kill</h3>
+    <div className="card">
+      <h3 className="card-title">Kill</h3>
       {error && <ErrorBanner message={error} />}
-      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
-        <label style={{ fontSize: "0.9rem" }}>
-          <input
-            type="checkbox"
-            checked={flatten}
-            onChange={(e) => setFlatten(e.target.checked)}
-          />{" "}
-          flatten positions
-        </label>
+      <label className="checkbox-row">
         <input
-          style={input}
+          type="checkbox"
+          checked={flatten}
+          onChange={(e) => setFlatten(e.target.checked)}
+        />
+        flatten positions
+      </label>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input
+          className="input"
           placeholder='type "KILL" to confirm'
           value={ack}
           onChange={(e) => setAck(e.target.value)}
         />
         <button
           type="button"
-          style={dangerButton}
+          className="btn btn-danger"
           disabled={ack !== "KILL" || pending}
           onClick={() => void kill()}
         >
@@ -318,36 +329,40 @@ function KillControls({
         </button>
       </div>
       {clearable && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.6rem",
-            flexWrap: "wrap",
-            marginTop: "0.75rem",
-          }}
-        >
-          <span style={{ ...mono, fontSize: "0.85rem", color: "#555" }}>
+        <>
+          <hr className="divider" />
+          <p className="faint small mono" style={{ margin: "0 0 6px" }}>
             clear kill at epoch {clearable.kill_epoch}:
-          </span>
-          <input
-            style={{ ...input, minWidth: "16rem" }}
-            placeholder="reason (required)"
-            value={clearReason}
-            onChange={(e) => setClearReason(e.target.value)}
-          />
-          <button
-            type="button"
-            style={button}
-            disabled={clearReason.trim() === "" || pending}
-            onClick={() => void clear()}
-          >
-            clear kill
-          </button>
-        </div>
+          </p>
+          <div className="row">
+            <input
+              className="input"
+              style={{ minWidth: "16rem" }}
+              placeholder="reason (required)"
+              value={clearReason}
+              onChange={(e) => setClearReason(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={clearReason.trim() === "" || pending}
+              onClick={() => void clear()}
+            >
+              clear kill
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
+}
+
+// Presentation-only tone for the alerts timeline; kind stays the open set.
+function alertTone(kind: string): string | undefined {
+  const k = kind.toLowerCase();
+  if (k.includes("critical") || k.includes("error")) return "tl-red";
+  if (k.includes("warn")) return "tl-yellow";
+  return undefined;
 }
 
 // OS-24: newest-first alerts feed with the shared Pager; kind verbatim (open
@@ -359,40 +374,43 @@ function AlertsSection({ strategyId }: { strategyId: string }) {
 
   return (
     <>
-      <h3 style={{ fontSize: "1rem", marginTop: "1rem" }}>Alerts</h3>
-      {alerts.error && <ErrorBanner message={alerts.error} />}
-      {!alerts.data && !alerts.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
+      <div className="card">
+        <h3 className="card-title">Alerts</h3>
+        {alerts.error && <ErrorBanner message={alerts.error} />}
+        {!alerts.data && !alerts.error && <div className="skeleton" style={{ height: 60 }} />}
+        {alerts.data &&
+          (alerts.data.items.length === 0 ? (
+            <div className="empty">No alerts.</div>
+          ) : (
+            <ul className="timeline">
+              {alerts.data.items.map((alert) => (
+                <li key={alert.alert_id} className={alertTone(alert.kind)}>
+                  <div className="row">
+                    <span className="mono">{alert.kind}</span>
+                    <span className="tl-time">{alert.recorded_at}</span>
+                  </div>
+                  {alert.details_json && (
+                    <details>
+                      <summary className="faint small" style={{ cursor: "pointer" }}>
+                        details
+                      </summary>
+                      <pre className="codeblock" style={{ whiteSpace: "pre-wrap" }}>
+                        {formatDetailsJson(alert.details_json)}
+                      </pre>
+                    </details>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ))}
+      </div>
       {alerts.data && (
-        <>
-          <div style={card}>
-            {alerts.data.items.length === 0 && <p style={{ color: "#555" }}>No alerts.</p>}
-            {alerts.data.items.map((alert) => (
-              <div key={alert.alert_id} style={{ padding: "0.35rem 0" }}>
-                <span style={warnBadge}>{alert.kind}</span>{" "}
-                <span style={{ color: "#555", fontSize: "0.85rem" }}>{alert.recorded_at}</span>
-                <pre
-                  style={{
-                    ...mono,
-                    fontSize: "0.8rem",
-                    background: "#f8f8f8",
-                    padding: "0.4rem 0.6rem",
-                    borderRadius: "4px",
-                    margin: "0.3rem 0 0",
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  {formatDetailsJson(alert.details_json)}
-                </pre>
-              </div>
-            ))}
-          </div>
-          <Pager
-            page={alerts.data.page}
-            total={alerts.data.total}
-            limit={alerts.data.limit}
-            onPage={setPage}
-          />
-        </>
+        <Pager
+          page={alerts.data.page}
+          total={alerts.data.total}
+          limit={alerts.data.limit}
+          onPage={setPage}
+        />
       )}
     </>
   );
@@ -407,67 +425,57 @@ function PaperGateSection({ strategyId }: { strategyId: string }) {
   const view = paperGateView(gate.data, gate.errorStatus);
 
   return (
-    <>
-      <h3 style={{ fontSize: "1rem", marginTop: "1rem" }}>Paper gate</h3>
+    <div className="card">
+      <h3 className="card-title">Paper gate</h3>
       {view.rateLimited && (
-        <p style={{ color: "#9a6700", fontSize: "0.85rem" }}>
-          Rate limited — showing the last fetched report.
-        </p>
+        <div className="banner banner-warn">
+          <span aria-hidden>&#9888;</span>
+          <span>Rate limited — showing the last fetched report.</span>
+        </div>
       )}
       {gate.error && !view.rateLimited && <ErrorBanner message={gate.error} />}
-      {!view.report && !gate.error && <p style={{ color: "#555" }}>Loading&hellip;</p>}
+      {!view.report && !gate.error && <div className="skeleton" style={{ height: 60 }} />}
       {view.report && (
-        <div style={card}>
-          <p style={{ marginTop: 0 }}>
+        <>
+          <div className="row">
             {view.report.passed ? (
-              <span style={okBadge}>passed</span>
+              <span className="badge badge-green">PASS</span>
             ) : (
-              <span style={warnBadge}>not passed</span>
-            )}{" "}
-            <span style={{ color: "#555", fontSize: "0.85rem" }}>
+              <span className="badge badge-red">FAIL</span>
+            )}
+            <span className="faint small mono">
               window started {view.report.window_started_at ?? "—"} &middot; evaluated{" "}
               {view.report.evaluated_at}
             </span>
-          </p>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" }}>
+          </div>
+          <table className="tbl" style={{ marginTop: 10 }}>
             <thead>
               <tr>
-                {["Condition", "Passed", "Measured", "Required"].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      borderBottom: "1px solid #eee",
-                      padding: "0.3rem 0.6rem 0.3rem 0",
-                      textAlign: "left",
-                      color: "#555",
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
+                <th>Condition</th>
+                <th>Passed</th>
+                <th>Measured</th>
+                <th>Required</th>
               </tr>
             </thead>
             <tbody>
               {view.report.conditions.map((c) => (
                 <tr key={c.name}>
-                  <td style={{ borderBottom: "1px solid #eee", padding: "0.3rem 0.6rem 0.3rem 0" }}>
-                    {c.name}
+                  <td>{c.name}</td>
+                  <td>
+                    {c.passed ? (
+                      <span className="badge badge-green">yes</span>
+                    ) : (
+                      <span className="badge badge-red">no</span>
+                    )}
                   </td>
-                  <td style={{ borderBottom: "1px solid #eee", padding: "0.3rem 0.6rem 0.3rem 0" }}>
-                    {c.passed ? <span style={okBadge}>yes</span> : <span style={dangerBadge}>no</span>}
-                  </td>
-                  <td style={{ ...mono, borderBottom: "1px solid #eee", padding: "0.3rem 0.6rem 0.3rem 0" }}>
-                    {c.measured}
-                  </td>
-                  <td style={{ ...mono, borderBottom: "1px solid #eee", padding: "0.3rem 0.6rem 0.3rem 0" }}>
-                    {c.required}
-                  </td>
+                  <td className="mono-cell">{c.measured}</td>
+                  <td className="mono-cell">{c.required}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </>
       )}
-    </>
+    </div>
   );
 }
