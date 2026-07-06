@@ -724,6 +724,112 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   100% { background-position: -200% 0; }
 }
 
+/* Binance-style order book / trades column beside the chart. The depth bar
+   is an absolutely positioned first child; text cells sit above it. */
+.chart-flex { display: flex; gap: 14px; align-items: stretch; }
+.chart-main { flex: 1 1 auto; min-width: 0; }
+.depth-panel {
+  flex: 0 0 250px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  padding: 8px 10px;
+}
+@media (max-width: 960px) {
+  .chart-flex { flex-direction: column; }
+  .depth-panel { flex: 1 1 auto; }
+}
+
+.depth-tabs { display: flex; gap: 12px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.depth-tab {
+  background: none;
+  border: none;
+  padding: 2px 0 6px;
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.depth-tab:hover { color: var(--text); }
+.depth-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.depth-head {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-3);
+  padding: 2px 2px 4px;
+}
+.depth-head span:nth-child(n+2) { text-align: right; }
+.depth-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 6px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 2.5px 2px;
+}
+/* The bar is child 1, so the price cell is child 2 (left-aligned like
+   Binance) and qty/total are children 3-4. */
+.depth-row > span:nth-child(n+3) { text-align: right; }
+.depth-bar { position: absolute; top: 0; right: 0; bottom: 0; z-index: 0; pointer-events: none; }
+.depth-row > *:not(.depth-bar) { position: relative; z-index: 1; }
+.depth-row.ask .depth-bar { background: rgba(229, 83, 75, 0.1); }
+.depth-row.bid .depth-bar { background: rgba(63, 185, 112, 0.1); }
+html[data-theme="light"] .depth-row.ask .depth-bar { background: rgba(210, 66, 60, 0.14); }
+html[data-theme="light"] .depth-row.bid .depth-bar { background: rgba(30, 158, 88, 0.14); }
+.depth-price.ask { color: var(--red); }
+.depth-price.bid { color: var(--green); }
+
+.depth-mid {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+  margin: 2px 0;
+}
+
+.trade-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.9fr;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 2.5px 2px;
+}
+.trade-row > span:nth-child(n+2) { text-align: right; }
+.trade-row.buy > :first-child { color: var(--green); }
+.trade-row.sell > :first-child { color: var(--red); }
+
+.depth-skel { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+.depth-skel-line {
+  height: 9px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--bg-subtle) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: ta-shimmer 1.2s ease-in-out infinite;
+}
+.depth-empty { font-size: 12px; color: var(--text-3); padding: 10px 0; }
+
 /* ---------- Misc ---------- */
 
 /* ---------- Preference toggles (locale + theme) ---------- */

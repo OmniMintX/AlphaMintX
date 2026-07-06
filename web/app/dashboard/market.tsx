@@ -28,6 +28,7 @@ import { ApiError, requestMarketAnalysis } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n, type MessageKey } from "../../src/lib/i18n";
 import { CandleChart, type IndicatorFlags } from "./candle-chart";
+import { DepthPanel } from "./depth-panel";
 
 const MARKET_POLL_MS = 15_000;
 
@@ -648,7 +649,15 @@ function ChartBody({
   if (!data) return <div className="skeleton" style={{ height: 380 }} />;
   return (
     <>
-      <CandleChart candles={data} indicators={indicators} />
+      {/* Chart on the left, order book / trades column on the right; the
+          key remounts the depth panel with clean state on pair/market
+          switch. TaReadout stays below the row at full width. */}
+      <div className="chart-flex">
+        <div className="chart-main">
+          <CandleChart candles={data} indicators={indicators} />
+        </div>
+        <DepthPanel market={market} symbol={symbol} key={`${market}:${symbol}`} />
+      </div>
       <TaReadout
         candles={data}
         market={market}

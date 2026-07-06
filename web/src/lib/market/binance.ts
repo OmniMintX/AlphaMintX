@@ -213,3 +213,60 @@ export async function fetchCandles(
     volume: Number(k[5]),
   }));
 }
+
+// One order book level; price/qty stay strings (ADR-0003).
+export interface DepthLevel {
+  price: string;
+  qty: string;
+}
+
+// Both sides best-first: bids descending by price, asks ascending —
+// exactly the order the API returns them in.
+export interface DepthSnapshot {
+  bids: DepthLevel[];
+  asks: DepthLevel[];
+}
+
+// Order book snapshot for either market. Raw shape on both endpoints is
+// { bids: [price, qty][], asks: [price, qty][] }. Note: futures accepts
+// only limits 5/10/20/50/100/500/1000, and 20 costs request weight 2.
+export async function fetchDepth(
+  market: "spot" | "futures",
+  symbol: string,
+  limit = 20,
+): Promise<DepthSnapshot> {
+  const path = `/depth?symbol=${symbol}&limit=${limit}`;
+  const raw =
+    market === "spot"
+      ? await getJSON<{ bids: [string, string][]; asks: [string, string][] }>(path)
+      : await getFapiJSON<{ bids: [string, string][]; asks: [string, string][] }>(path);
+  const toLevel = ([price, qty]: [string, string]): DepthLevel => ({ price, qty });
+  return { bids: raw.bids.map(toLevel), asks: raw.asks.map(toLevel) };
+}
+
+// One recent public trade; isBuyerMaker true means the taker sold.
+export interface RecentTrade {
+  id: number;
+  price: string;
+  qty: string;
+  time: number; // ms epoch
+  isBuyerMaker: boolean;
+}
+
+// Recent trades for either market, NEWEST FIRST (the API returns
+// oldest→newest, so we reverse a mapped copy). Extra raw fields
+// (quoteQty, isBestMatch, ...) are dropped.
+export async function fetchRecentTrades(
+  market: "spot" | "futures",
+  symbol: string,
+  limit = 30,
+): Promise<RecentTrade[]> {
+  const path = `/trades?symbol=${symbol}&limit=${limit}`;
+  const raw =
+    market === "spot"
+      ? await getJSON<RecentTrade[]>(path)
+      : await getFapiJSON<RecentTrade[]>(path);
+  return raw
+    .map(({ id, price, qty, time, isBuyerMaker }) => ({ id, price, qty, time, isBuyerMaker }))
+    .reverse();
+}

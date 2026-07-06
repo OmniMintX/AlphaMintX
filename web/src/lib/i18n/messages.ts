@@ -167,6 +167,16 @@ export const messages = {
     en: "Automated technical readout — not financial advice.",
     vi: "Nhận định kỹ thuật tự động — không phải khuyến nghị đầu tư.",
   },
+  // ---- order book / trades side panel ----
+  "market.depth.tab.book": { en: "Order book", vi: "Sổ lệnh" },
+  "market.depth.tab.trades": { en: "Trades", vi: "Giao dịch" },
+  "market.depth.price": { en: "Price", vi: "Giá" },
+  "market.depth.amount": { en: "Amount", vi: "KL" },
+  "market.depth.total": { en: "Total", vi: "Tổng" },
+  "market.depth.time": { en: "Time", vi: "Giờ" },
+  "market.depth.spread": { en: "Spread", vi: "Chênh lệch" },
+  "market.depth.unavailable": { en: "Order book unavailable.", vi: "Không tải được sổ lệnh." },
+  "market.trades.unavailable": { en: "Trades unavailable.", vi: "Không tải được giao dịch." },
   "dash.empty": { en: "No strategies yet.", vi: "Chưa có chiến lược nào." },
   "dash.empty.hint": {
     en: "Strategies appear here once they are registered with the control plane.",
