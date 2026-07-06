@@ -29,6 +29,20 @@ const DECISION_TONES: Record<string, string> = {
   escalate: "badge-yellow",
 };
 
+const DECISION_LABEL_KEYS: Record<RiskVerdict["decision"], MessageKey> = {
+  approve: "run.decision.approve",
+  clip: "run.decision.clip",
+  reject: "run.decision.reject",
+  escalate: "run.decision.escalate",
+};
+
+const OUTCOME_LABEL_KEYS: Record<ApprovalDecision["outcome"], MessageKey> = {
+  approved: "run.outcome.approved",
+  approved_but_blocked: "run.outcome.approved_but_blocked",
+  rejected: "run.outcome.rejected",
+  timeout: "run.outcome.timeout",
+};
+
 function approvalTone(approval: ApprovalDecision): { li: string; badge: string } {
   if (approval.outcome === "approved") {
     return approval.submitted === false
@@ -218,7 +232,7 @@ export function VerdictSection({ verdict }: { verdict: RiskVerdict }) {
       <div className="card">
         <div className="row">
           <span className={`badge ${DECISION_TONES[verdict.decision] ?? "badge-neutral"}`}>
-            {verdict.decision}
+            {t(DECISION_LABEL_KEYS[verdict.decision])}
           </span>
           {verdict.clipped_size_quote && (
             <span className="mono muted small">
@@ -388,7 +402,9 @@ export function ApprovalsSection({ approvals }: { approvals: ApprovalDecision[] 
             return (
               <li key={approval.approval_id} className={tone.li}>
                 <div className="row">
-                  <span className={`badge ${tone.badge}`}>{approval.outcome}</span>
+                  <span className={`badge ${tone.badge}`}>
+                    {t(OUTCOME_LABEL_KEYS[approval.outcome])}
+                  </span>
                   <span>{t(approvalLabelKey(approval))}</span>
                 </div>
                 <div className="small muted">

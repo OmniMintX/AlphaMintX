@@ -573,8 +573,8 @@ function TokensCard({ tenants }: { tenants: Tenant[] }) {
                     value={principal}
                     onChange={(e) => setPrincipal(e.target.value as "user" | "agent")}
                   >
-                    <option value="user">user</option>
-                    <option value="agent">agent</option>
+                    <option value="user">{t("admin.principal.user")}</option>
+                    <option value="agent">{t("admin.principal.agent")}</option>
                   </select>
                 </label>
                 {principal === "user" ? (

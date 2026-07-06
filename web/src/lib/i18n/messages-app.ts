@@ -76,6 +76,8 @@ export const messagesApp = {
   "admin.tokens.mint": { en: "Mint token", vi: "Tạo token" },
   "admin.tokens.cancel": { en: "Cancel", vi: "Hủy" },
   "admin.tokens.principal": { en: "Principal", vi: "Chủ thể" },
+  "admin.principal.user": { en: "User", vi: "Người dùng" },
+  "admin.principal.agent": { en: "Agent", vi: "Agent" },
   "admin.tokens.strategy": { en: "Strategy ID", vi: "ID chiến lược" },
   "admin.tokens.label": { en: "Label", vi: "Nhãn" },
   "admin.tokens.label.ph": {
