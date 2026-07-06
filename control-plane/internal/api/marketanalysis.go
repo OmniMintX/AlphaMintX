@@ -80,8 +80,8 @@ func analysisPrompt(req marketAnalysisRequest) string {
 		"conclusion (bullish/bearish/neutral). Then finish with a decisive final block:\n"+
 		"1. %q — pick exactly one, in bold, with a confidence level (low/medium/high)\n"+
 		"2. If BUY or SELL: an entry zone, a stop-loss, and a take-profit level, each derived "+
-		"ONLY from levels present in the snapshot (last close, SMA/EMA values, Bollinger bands) "+
-		"and each with a one-line justification\n"+
+		"ONLY from levels present in the snapshot (last close, swing highs/lows, SMA/EMA "+
+		"values, Bollinger bands) and each with a one-line justification\n"+
 		"3. If WAIT: the specific condition that would flip the call (e.g. an RSI or MACD "+
 		"threshold, a reclaim/loss of a moving average in the snapshot)\n"+
 		"Include the caveat that this is not financial advice and the deterministic risk gate "+

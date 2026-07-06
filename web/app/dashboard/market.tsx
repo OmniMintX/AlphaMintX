@@ -393,22 +393,54 @@ function taSignals(ta: TaSnapshot): { rows: TaRow[]; verdict: Verdict } {
   return { rows, verdict };
 }
 
+// Highest high / lowest low over the last n candles — the swing anchors the
+// agent may cite as support/resistance.
+function swingRange(candles: Candle[], n: number): { high: number; low: number } {
+  let high = NaN;
+  let low = NaN;
+  for (let j = Math.max(candles.length - n, 0); j < candles.length; j++) {
+    const c = candles[j];
+    if (!c) continue;
+    if (!Number.isFinite(high) || c.high > high) high = c.high;
+    if (!Number.isFinite(low) || c.low < low) low = c.low;
+  }
+  return { high, low };
+}
+
 // Plain-text snapshot for the agent (≤4000 chars; wire text stays English).
 function buildTaSummary(
   symbol: string,
   market: DeskTab,
   interval: Interval,
   changePct: string | undefined,
+  candles: Candle[],
   ta: TaSnapshot,
   verdict: Verdict,
 ): string {
+  const histDir = !Number.isFinite(ta.macdHist) || !Number.isFinite(ta.macdHistPrev)
+    ? "n/a"
+    : ta.macdHist > ta.macdHistPrev
+      ? "rising"
+      : ta.macdHist < ta.macdHistPrev
+        ? "falling"
+        : "flat";
+  const r20 = swingRange(candles, 20);
+  const r50 = swingRange(candles, 50);
+  const recent = candles
+    .slice(-10)
+    .map((c) => fmtNum(c.close))
+    .join(" ");
   const lines = [
     `${displayPair(symbol)} ${market} ${interval}`,
     `last close: ${fmtNum(ta.close)}`,
     `24h change: ${changePct ? fmtPct(changePct) : "n/a"}`,
+    `recent closes (oldest->newest, last 10 candles): ${recent}`,
+    `swing high/low last 20 candles: ${fmtNum(r20.high)} / ${fmtNum(r20.low)}`,
+    `swing high/low last 50 candles: ${fmtNum(r50.high)} / ${fmtNum(r50.low)}`,
     `RSI(14): ${fmtNum(ta.rsi14)}`,
-    `MACD(12,26,9): macd=${fmtNum(ta.macdLine)} signal=${fmtNum(ta.macdSignal)} hist=${fmtNum(ta.macdHist)}`,
+    `MACD(12,26,9): macd=${fmtNum(ta.macdLine)} signal=${fmtNum(ta.macdSignal)} hist=${fmtNum(ta.macdHist)} (histogram ${histDir})`,
     `SMA: 7=${fmtNum(ta.sma7)} 25=${fmtNum(ta.sma25)} 99=${fmtNum(ta.sma99)}`,
+    `SMA7/SMA25 cross in last 3 candles: ${ta.cross ?? "none"}`,
     `EMA: 12=${fmtNum(ta.ema12)} 26=${fmtNum(ta.ema26)}`,
     `BOLL(20,2): upper=${fmtNum(ta.bollUpper)} middle=${fmtNum(ta.bollMiddle)} lower=${fmtNum(ta.bollLower)}`,
     `technical verdict: ${VERDICT_EN[verdict]}`,
@@ -447,7 +479,7 @@ function TaReadout({
     setAsking(true);
     setAskError(null);
     try {
-      const summary = buildTaSummary(symbol, market, interval, changePct, ta, verdict);
+      const summary = buildTaSummary(symbol, market, interval, changePct, candles, ta, verdict);
       setAnalysis(await requestMarketAnalysis(symbol, market, interval, locale, summary));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
