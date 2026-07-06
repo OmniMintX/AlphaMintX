@@ -7,6 +7,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { PrefsToggles } from "./prefs";
+
 export function AuthCard({
   title,
   sub,
@@ -29,6 +31,9 @@ export function AuthCard({
         <p className="auth-sub">{sub}</p>
         {children}
         <div className="auth-foot">{foot}</div>
+        <div className="auth-prefs">
+          <PrefsToggles />
+        </div>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { fetchMe, logout } from "../src/lib/api/client";
 import type { SessionUser } from "../src/lib/api/schema";
+import { useI18n } from "../src/lib/i18n";
 
 function Icon({ d }: { d: string }) {
   return (
@@ -71,31 +72,32 @@ export function SidebarNav() {
   // Settings/Admin are platform_admin-only surfaces (tenant owners 403 in
   // v1), so the links are hidden for everyone else.
   const user = useSessionUser();
+  const { t } = useI18n();
   return (
     <>
       <div className="nav-group">
-        <div className="nav-label">Operations</div>
+        <div className="nav-label">{t("nav.group.operations")}</div>
         <NavItem href="/dashboard" icon="dashboard" exact>
-          Dashboard
+          {t("nav.dashboard")}
         </NavItem>
         <NavItem href="/strategies" icon="strategies">
-          Strategies
+          {t("nav.strategies")}
         </NavItem>
       </div>
       <div className="nav-group">
-        <div className="nav-label">Audit</div>
+        <div className="nav-label">{t("nav.group.audit")}</div>
         <NavItem href="/reasoning" icon="reasoning">
-          Reasoning viewer
+          {t("nav.reasoning")}
         </NavItem>
       </div>
       {user?.role === "platform_admin" && (
         <div className="nav-group">
-          <div className="nav-label">Platform</div>
+          <div className="nav-label">{t("nav.group.platform")}</div>
           <NavItem href="/settings" icon="settings">
-            Settings
+            {t("nav.settings")}
           </NavItem>
           <NavItem href="/admin" icon="admin">
-            Admin
+            {t("nav.admin")}
           </NavItem>
         </div>
       )}
@@ -108,6 +110,7 @@ export function SidebarNav() {
 // path already hard-redirects via usePoll on the page's own data fetches).
 export function SessionFooter() {
   const user = useSessionUser();
+  const { t } = useI18n();
 
   async function signOut() {
     try {
@@ -129,7 +132,7 @@ export function SessionFooter() {
         </div>
       )}
       <button type="button" className="btn btn-ghost session-signout" onClick={signOut}>
-        Sign out
+        {t("nav.signout")}
       </button>
     </div>
   );

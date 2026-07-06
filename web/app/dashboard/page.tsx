@@ -10,42 +10,16 @@ import { useCallback, useState } from "react";
 
 import { fetchStrategies } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
+import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner, Pager, StateBadge } from "../strategies/ui";
 
-const INVARIANTS = [
-  "LLMs never place orders directly. Only the Go OMS talks to exchanges; every order passes the deterministic Risk Gate first.",
-  "SL/TP live on the exchange, not in slow LLM loops; no open position without an exchange-resident stop-loss while require_stop_loss=true.",
-  "Autonomy ladder per strategy (L0\u2013L3); promotion to real money requires a code-enforced paper-gate.",
-  "Kill-switch at 3 tiers (strategy / tenant / platform): cancel ENTRY orders, preserve protective stops, no auto-restart. Circuit breaker on daily loss demotes to L0 for the UTC day.",
-  "Risk limits are set by humans (Admin) \u2014 a hard ceiling neither Trader users nor AI agents can raise.",
-  "Exchange API keys are write-only after save (field-level encryption); trade-only, never withdrawal-enabled.",
-  "Track record is immutable/append-only; backtests free of lookahead bias; strategy code identical across backtest / paper / live.",
-] as const;
+const INVARIANT_KEYS = ["inv.1", "inv.2", "inv.3", "inv.4", "inv.5", "inv.6", "inv.7"] as const;
 
 const LADDER = [
-  {
-    level: "L0 Advisor",
-    tone: "badge-neutral",
-    detail: "Proposals persisted and shown only; no OMS submission.",
-  },
-  {
-    level: "L1 Copilot",
-    tone: "badge-accent",
-    detail:
-      "OMS submits only after per-proposal human approval; no decision within the timeout (default 600 s) \u21d2 auto-reject.",
-  },
-  {
-    level: "L2 Semi-auto",
-    tone: "badge-yellow",
-    detail:
-      "OMS submits automatically within the L2 envelope; above-envelope proposals escalate through the L1 approve flow.",
-  },
-  {
-    level: "L3 Full-auto",
-    tone: "badge-green",
-    detail:
-      "OMS submits any gate-approved proposal; kill-switch and risk limits still apply.",
-  },
+  { code: "L0", key: "l0", tone: "badge-neutral" },
+  { code: "L1", key: "l1", tone: "badge-accent" },
+  { code: "L2", key: "l2", tone: "badge-yellow" },
+  { code: "L3", key: "l3", tone: "badge-green" },
 ] as const;
 
 // "2026-07-04T12:00:00Z" -> "2026-07-04 12:00" (UTC, deterministic).
@@ -54,6 +28,7 @@ function fmtTime(iso: string): string {
 }
 
 export default function DashboardPage() {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
   const load = useCallback(() => fetchStrategies(page), [page]);
   const { data, error } = usePoll(load);
@@ -69,45 +44,45 @@ export default function DashboardPage() {
   return (
     <>
       <div className="page-head">
-        <h1 className="page-title">Dashboard</h1>
-        <p className="page-sub">
-          Live control-plane view &mdash; strategy fleet, lifecycle states, and safety
-          posture, polled every 10 s.
-        </p>
+        <h1 className="page-title">{t("dash.title")}</h1>
+        <p className="page-sub">{t("dash.sub")}</p>
       </div>
 
       <div className="grid grid-4">
         <div className="stat">
-          <div className="stat-label">Total strategies</div>
+          <div className="stat-label">{t("dash.stat.total")}</div>
           <div className="stat-value">{data ? data.total : "\u2014"}</div>
-          <div className="stat-meta">Registered across all tenants.</div>
+          <div className="stat-meta">{t("dash.stat.total.meta")}</div>
         </div>
         <div className="stat">
-          <div className="stat-label">Live</div>
+          <div className="stat-label">{t("dash.stat.live")}</div>
           <div className="stat-value">{data ? live : "\u2014"}</div>
           <div className="stat-meta">
-            Trading real money (L1&ndash;L3){partial ? ", of current page" : ""}.
+            {t("dash.stat.live.meta")}
+            {partial ? t("dash.ofpage") : ""}.
           </div>
         </div>
         <div className="stat">
-          <div className="stat-label">Paper</div>
+          <div className="stat-label">{t("dash.stat.paper")}</div>
           <div className="stat-value">{data ? paper : "\u2014"}</div>
           <div className="stat-meta">
-            Simulated fills, no exchange orders{partial ? ", of current page" : ""}.
+            {t("dash.stat.paper.meta")}
+            {partial ? t("dash.ofpage") : ""}.
           </div>
         </div>
         <div className="stat">
-          <div className="stat-label">Attention</div>
+          <div className="stat-label">{t("dash.stat.attention")}</div>
           <div className="stat-value">{data ? attention : "\u2014"}</div>
           <div className="stat-meta">
-            Killed or paused &mdash; operator review{partial ? ", of current page" : ""}.
+            {t("dash.stat.attention.meta")}
+            {partial ? t("dash.ofpage") : ""}.
           </div>
         </div>
       </div>
 
       <section className="section">
         <h2 className="section-title">
-          Strategies
+          {t("dash.strategies")}
           {data && <span className="count">{data.total}</span>}
         </h2>
         {error && <ErrorBanner message={error} />}
@@ -122,17 +97,17 @@ export default function DashboardPage() {
           <>
             <div className="table-wrap">
               {items.length === 0 ? (
-                <div className="empty">No strategies yet.</div>
+                <div className="empty">{t("dash.empty")}</div>
               ) : (
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>State</th>
-                      <th>Tenant</th>
-                      <th>ID</th>
-                      <th>Created</th>
-                      <th>Updated</th>
+                      <th>{t("tbl.name")}</th>
+                      <th>{t("tbl.state")}</th>
+                      <th>{t("tbl.tenant")}</th>
+                      <th>{t("tbl.id")}</th>
+                      <th>{t("tbl.created")}</th>
+                      <th>{t("tbl.updated")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -168,14 +143,14 @@ export default function DashboardPage() {
 
       <section className="section">
         <h2 className="section-title">
-          Safety invariants
-          <span className="count">{INVARIANTS.length}</span>
+          {t("dash.invariants")}
+          <span className="count">{INVARIANT_KEYS.length}</span>
         </h2>
         <div className="grid grid-2">
-          {INVARIANTS.map((text, i) => (
-            <div className="card" key={i}>
+          {INVARIANT_KEYS.map((key, i) => (
+            <div className="card" key={key}>
               <h3 className="card-title">{String(i + 1).padStart(2, "0")}</h3>
-              <p className="page-sub">{text}</p>
+              <p className="page-sub">{t(key)}</p>
             </div>
           ))}
         </div>
@@ -183,25 +158,22 @@ export default function DashboardPage() {
 
       <section className="section">
         <h2 className="section-title">
-          Autonomy ladder
+          {t("dash.ladder")}
           <span className="count">{LADDER.length}</span>
         </h2>
         <div className="grid grid-4">
-          {LADDER.map(({ level, tone, detail }) => {
-            const [code, ...rest] = level.split(" ");
-            return (
-              <div className="card" key={level}>
-                <h3 className="card-title row">
-                  <span className={`badge ${tone}`}>
-                    <span className="dot" />
-                    {code}
-                  </span>
-                  {rest.join(" ")}
-                </h3>
-                <p className="small muted">{detail}</p>
-              </div>
-            );
-          })}
+          {LADDER.map(({ code, key, tone }) => (
+            <div className="card" key={key}>
+              <h3 className="card-title row">
+                <span className={`badge ${tone}`}>
+                  <span className="dot" />
+                  {code}
+                </span>
+                {t(`ladder.${key}.name`)}
+              </h3>
+              <p className="small muted">{t(`ladder.${key}.detail`)}</p>
+            </div>
+          ))}
         </div>
       </section>
     </>

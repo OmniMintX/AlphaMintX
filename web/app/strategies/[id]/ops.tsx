@@ -32,6 +32,7 @@ import {
   type SafetyStatus,
 } from "../../../src/lib/api/schema";
 import { usePoll } from "../../../src/lib/api/usePoll";
+import { useI18n } from "../../../src/lib/i18n";
 import {
   defaultFlatten,
   formatDetailsJson,
@@ -55,12 +56,13 @@ export function OpsPanel({
   strategyId: string;
   onLifecycleChange: () => void;
 }) {
+  const { t } = useI18n();
   const loadSafety = useCallback(() => fetchSafety(strategyId), [strategyId]);
   const safety = usePoll(loadSafety);
 
   return (
     <section className="section">
-      <h2 className="section-title">Operations</h2>
+      <h2 className="section-title">{t("strat.ops.title")}</h2>
       {safety.error && <ErrorBanner message={safety.error} />}
       {!safety.data && !safety.error && (
         <div className="grid grid-2" style={{ marginBottom: 12 }}>
@@ -97,7 +99,15 @@ export function OpsPanel({
 
 // OS-23: banner severity comes from the server's active_kill predicate,
 // never a client-side re-derivation.
+const WD_LABEL_KEYS = {
+  off: "strat.ops.wd.off",
+  none: "strat.ops.wd.none",
+  ok: "strat.ops.wd.ok",
+  stale: "strat.ops.wd.stale",
+} as const;
+
 function SafetyCard({ safety }: { safety: SafetyStatus }) {
+  const { t } = useI18n();
   const standing = unclearedKills(safety.kills);
   const wd = watchdogView(safety.watchdog);
   const wdTone = { off: "badge-neutral", none: "badge-neutral", ok: "badge-green", stale: "badge-yellow" }[
@@ -105,39 +115,46 @@ function SafetyCard({ safety }: { safety: SafetyStatus }) {
   ];
   return (
     <div className="card">
-      <h3 className="card-title">Safety</h3>
+      <h3 className="card-title">{t("strat.ops.safety")}</h3>
       {standing.length > 0 && (
         <div className={`banner ${safety.active_kill ? "banner-error" : "banner-warn"}`}>
           <span aria-hidden>&#9888;</span>
           <div>
             <strong>
-              {safety.active_kill ? "KILL ACTIVE" : "Standing kill (not currently acting)"}
+              {safety.active_kill ? t("strat.ops.killactive") : t("strat.ops.standingkill")}
             </strong>
             {standing.map((k) => (
               <p key={k.event_id} className="mono small" style={{ margin: "4px 0 0" }}>
-                scope {k.scope} &middot; by {k.actor_id} &middot; {k.recorded_at} &middot; flatten{" "}
-                {String(k.flatten)} &middot; epoch {k.kill_epoch}
+                {t("strat.ops.killmeta", {
+                  scope: k.scope,
+                  actor: k.actor_id,
+                  at: k.recorded_at,
+                  flatten: String(k.flatten),
+                  epoch: k.kill_epoch,
+                })}
               </p>
             ))}
           </div>
         </div>
       )}
       <dl className="kv">
-        <dt>Breaker</dt>
+        <dt>{t("strat.ops.breaker")}</dt>
         <dd>
           {safety.breaker.active_today ? (
             <span className="badge badge-red">
               <span className="dot" />
-              breaker today
+              {t("strat.ops.breaker.today")}
               {safety.breaker.event ? ` (${safety.breaker.event.recorded_at})` : ""}
             </span>
           ) : (
-            <span className="badge badge-green">no breaker today</span>
+            <span className="badge badge-green">{t("strat.ops.breaker.none")}</span>
           )}
         </dd>
-        <dt>Watchdog</dt>
+        <dt>{t("strat.ops.watchdog")}</dt>
         <dd>
-          <span className={`badge ${wdTone}`}>{wd.label}</span>
+          <span className={`badge ${wdTone}`}>
+            {t(WD_LABEL_KEYS[wd.tone], { s: safety.watchdog.seconds_since ?? 0 })}
+          </span>
         </dd>
       </dl>
       {safety.kills.length > 0 && (
@@ -147,16 +164,23 @@ function SafetyCard({ safety }: { safety: SafetyStatus }) {
             {safety.kills.map((k) => (
               <li key={k.event_id} className={k.cleared === null ? "tl-red" : undefined}>
                 <div className="row">
-                  <span className="mono">{k.scope} kill</span>
+                  <span className="mono">{t("strat.ops.kill.item", { scope: k.scope })}</span>
                   <span className="faint small">
-                    epoch {k.kill_epoch} &middot; by {k.actor_id} &middot; flatten {String(k.flatten)}
+                    {t("strat.ops.kill.meta", {
+                      epoch: k.kill_epoch,
+                      actor: k.actor_id,
+                      flatten: String(k.flatten),
+                    })}
                   </span>
                 </div>
                 <span className="tl-time">{k.recorded_at}</span>
                 {k.cleared && (
                   <p className="faint small" style={{ margin: "2px 0 0" }}>
-                    cleared by {k.cleared.actor_id} at {k.cleared.recorded_at} &mdash;{" "}
-                    {k.cleared.reason}
+                    {t("strat.ops.kill.cleared", {
+                      actor: k.cleared.actor_id,
+                      at: k.cleared.recorded_at,
+                      reason: k.cleared.reason,
+                    })}
                   </p>
                 )}
               </li>
@@ -190,6 +214,7 @@ function LifecycleControls({
   safety: SafetyStatus;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const [reason, setReason] = useState("");
   const [armed, setArmed] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -223,14 +248,14 @@ function LifecycleControls({
 
   return (
     <div className="card">
-      <h3 className="card-title">Lifecycle</h3>
+      <h3 className="card-title">{t("strat.ops.lifecycle")}</h3>
       {error && <ErrorBanner message={error} />}
       <div className="field">
-        <span className="field-label">Reason</span>
+        <span className="field-label">{t("strat.ops.reason")}</span>
         <input
           className="input"
           style={{ minWidth: "16rem" }}
-          placeholder="reason (required)"
+          placeholder={t("strat.ops.reason.ph")}
           value={reason}
           onChange={(e) => {
             setReason(e.target.value);
@@ -247,14 +272,12 @@ function LifecycleControls({
             disabled={a.to === null || reason.trim() === "" || pending}
             onClick={() => onClick(a)}
           >
-            {armed === a.label ? `confirm ${a.label}` : a.label}
+            {armed === a.label ? t("strat.ops.confirm", { label: a.label }) : a.label}
           </button>
         ))}
       </div>
       {actions.some((a) => a.to === null) && (
-        <p className="muted small">
-          Resume is disabled: pause provenance unknown (paused_from is null).
-        </p>
+        <p className="muted small">{t("strat.ops.resume.disabled")}</p>
       )}
     </div>
   );
@@ -272,6 +295,7 @@ function KillControls({
   safety: SafetyStatus;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const [flatten, setFlatten] = useState(() => defaultFlatten(safety.lifecycle_state));
   const [ack, setAck] = useState("");
   const [clearReason, setClearReason] = useState("");
@@ -315,7 +339,7 @@ function KillControls({
 
   return (
     <div className="card">
-      <h3 className="card-title">Kill</h3>
+      <h3 className="card-title">{t("strat.ops.kill")}</h3>
       {error && <ErrorBanner message={error} />}
       <label className="checkbox-row">
         <input
@@ -323,12 +347,12 @@ function KillControls({
           checked={flatten}
           onChange={(e) => setFlatten(e.target.checked)}
         />
-        flatten positions
+        {t("strat.ops.flatten")}
       </label>
       <div className="row" style={{ marginTop: 8 }}>
         <input
           className="input"
-          placeholder='type "KILL" to confirm'
+          placeholder={t("strat.ops.kill.ack.ph")}
           value={ack}
           onChange={(e) => setAck(e.target.value)}
         />
@@ -338,20 +362,20 @@ function KillControls({
           disabled={ack !== "KILL" || pending}
           onClick={() => void kill()}
         >
-          kill strategy
+          {t("strat.ops.kill.btn")}
         </button>
       </div>
       {clearable && (
         <>
           <hr className="divider" />
           <p className="faint small mono" style={{ margin: "0 0 6px" }}>
-            clear kill at epoch {clearable.kill_epoch}:
+            {t("strat.ops.clear.at", { epoch: clearable.kill_epoch })}
           </p>
           <div className="row">
             <input
               className="input"
               style={{ minWidth: "16rem" }}
-              placeholder="reason (required)"
+              placeholder={t("strat.ops.reason.ph")}
               value={clearReason}
               onChange={(e) => setClearReason(e.target.value)}
             />
@@ -361,7 +385,7 @@ function KillControls({
               disabled={clearReason.trim() === "" || pending}
               onClick={() => void clear()}
             >
-              clear kill
+              {t("strat.ops.clear.btn")}
             </button>
           </div>
         </>
@@ -381,6 +405,7 @@ function alertTone(kind: string): string | undefined {
 // OS-24: newest-first alerts feed with the shared Pager; kind verbatim (open
 // set); details_json parsed defensively, shown raw on parse failure.
 function AlertsSection({ strategyId }: { strategyId: string }) {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
   const loadAlerts = useCallback(() => fetchAlerts(strategyId, page), [strategyId, page]);
   const alerts = usePoll(loadAlerts);
@@ -388,12 +413,12 @@ function AlertsSection({ strategyId }: { strategyId: string }) {
   return (
     <>
       <div className="card">
-        <h3 className="card-title">Alerts</h3>
+        <h3 className="card-title">{t("strat.ops.alerts")}</h3>
         {alerts.error && <ErrorBanner message={alerts.error} />}
         {!alerts.data && !alerts.error && <div className="skeleton" style={{ height: 60 }} />}
         {alerts.data &&
           (alerts.data.items.length === 0 ? (
-            <div className="empty">No alerts.</div>
+            <div className="empty">{t("strat.ops.alerts.empty")}</div>
           ) : (
             <ul className="timeline">
               {alerts.data.items.map((alert) => (
@@ -405,7 +430,7 @@ function AlertsSection({ strategyId }: { strategyId: string }) {
                   {alert.details_json && (
                     <details>
                       <summary className="faint small" style={{ cursor: "pointer" }}>
-                        details
+                        {t("strat.ops.details")}
                       </summary>
                       <pre className="codeblock" style={{ whiteSpace: "pre-wrap" }}>
                         {formatDetailsJson(alert.details_json)}
@@ -433,17 +458,18 @@ function AlertsSection({ strategyId }: { strategyId: string }) {
 // token's 60/min bucket). On a 429 the last-rendered report stays up with a
 // rate-limited note; the interval is never tightened.
 function PaperGateSection({ strategyId }: { strategyId: string }) {
+  const { t } = useI18n();
   const loadGate = useCallback(() => fetchPaperGate(strategyId), [strategyId]);
   const gate = usePoll(loadGate, PAPER_GATE_POLL_INTERVAL_MS);
   const view = paperGateView(gate.data, gate.errorStatus);
 
   return (
     <div className="card">
-      <h3 className="card-title">Paper gate</h3>
+      <h3 className="card-title">{t("strat.ops.gate")}</h3>
       {view.rateLimited && (
         <div className="banner banner-warn">
           <span aria-hidden>&#9888;</span>
-          <span>Rate limited — showing the last fetched report.</span>
+          <span>{t("strat.ops.gate.ratelimited")}</span>
         </div>
       )}
       {gate.error && !view.rateLimited && <ErrorBanner message={gate.error} />}
@@ -457,17 +483,19 @@ function PaperGateSection({ strategyId }: { strategyId: string }) {
               <span className="badge badge-red">FAIL</span>
             )}
             <span className="faint small mono">
-              window started {view.report.window_started_at ?? "—"} &middot; evaluated{" "}
-              {view.report.evaluated_at}
+              {t("strat.ops.gate.window", {
+                start: view.report.window_started_at ?? "—",
+                end: view.report.evaluated_at,
+              })}
             </span>
           </div>
           <table className="tbl" style={{ marginTop: 10 }}>
             <thead>
               <tr>
-                <th>Condition</th>
-                <th>Passed</th>
-                <th>Measured</th>
-                <th>Required</th>
+                <th>{t("strat.ops.gate.condition")}</th>
+                <th>{t("strat.ops.gate.passed")}</th>
+                <th>{t("strat.ops.gate.measured")}</th>
+                <th>{t("strat.ops.gate.required")}</th>
               </tr>
             </thead>
             <tbody>
@@ -476,9 +504,9 @@ function PaperGateSection({ strategyId }: { strategyId: string }) {
                   <td>{c.name}</td>
                   <td>
                     {c.passed ? (
-                      <span className="badge badge-green">yes</span>
+                      <span className="badge badge-green">{t("strat.ops.yes")}</span>
                     ) : (
-                      <span className="badge badge-red">no</span>
+                      <span className="badge badge-red">{t("strat.ops.no")}</span>
                     )}
                   </td>
                   <td className="mono-cell">{c.measured}</td>
@@ -498,12 +526,13 @@ function PaperGateSection({ strategyId }: { strategyId: string }) {
 // (the five changeable fields; blank = unchanged), and the change audit
 // trail. Decimals stay strings end-to-end — never parsed to floats.
 function LimitsSection({ strategyId }: { strategyId: string }) {
+  const { t } = useI18n();
   const loadLimits = useCallback(() => fetchLimits(strategyId), [strategyId]);
   const limits = usePoll(loadLimits);
 
   return (
     <div className="card">
-      <h3 className="card-title">Risk limits</h3>
+      <h3 className="card-title">{t("strat.ops.limits")}</h3>
       {limits.error && <ErrorBanner message={limits.error} />}
       {!limits.data && !limits.error && <div className="skeleton" style={{ height: 120 }} />}
       {limits.data && (
@@ -524,10 +553,11 @@ function LimitsSection({ strategyId }: { strategyId: string }) {
 }
 
 function EffectiveLimits({ effective }: { effective: RiskLimits }) {
+  const { t } = useI18n();
   const q = effective.accounting_quote;
   return (
     <dl className="kv">
-      <dt>Symbol whitelist</dt>
+      <dt>{t("strat.ops.limits.whitelist")}</dt>
       <dd>
         {effective.symbol_whitelist.length === 0 ? (
           <span className="faint small">—</span>
@@ -539,29 +569,29 @@ function EffectiveLimits({ effective }: { effective: RiskLimits }) {
           ))
         )}
       </dd>
-      <dt>Max open positions</dt>
+      <dt>{t("strat.ops.limits.maxopen")}</dt>
       <dd className="mono">{effective.max_open_positions}</dd>
-      <dt>Per-position notional cap</dt>
+      <dt>{t("strat.ops.limits.notionalcap")}</dt>
       <dd className="mono">
         {effective.per_position_notional_cap_quote} {q}
       </dd>
-      <dt>Daily loss limit</dt>
+      <dt>{t("strat.ops.limits.dailyloss")}</dt>
       <dd className="mono">
         {effective.daily_loss_limit_quote} {q}
       </dd>
-      <dt>Max drawdown pct</dt>
+      <dt>{t("strat.ops.limits.maxdd")}</dt>
       <dd className="mono">{effective.max_drawdown_pct}</dd>
-      <dt>Max loss at stop</dt>
+      <dt>{t("strat.ops.limits.lossatstop")}</dt>
       <dd className="mono">
         {effective.max_loss_at_stop_quote} {q}
       </dd>
-      <dt>Stop distance pct (min–max)</dt>
+      <dt>{t("strat.ops.limits.stopdist")}</dt>
       <dd className="mono">
         {effective.min_stop_distance_pct} – {effective.max_stop_distance_pct}
       </dd>
-      <dt>Max orders / minute</dt>
+      <dt>{t("strat.ops.limits.maxorders")}</dt>
       <dd className="mono">{effective.max_orders_per_minute}</dd>
-      <dt>Require stop loss</dt>
+      <dt>{t("strat.ops.limits.requiresl")}</dt>
       <dd>
         {effective.require_stop_loss ? (
           <span className="badge badge-green">ON</span>
@@ -569,24 +599,24 @@ function EffectiveLimits({ effective }: { effective: RiskLimits }) {
           <span className="badge badge-neutral">off</span>
         )}
       </dd>
-      <dt>Allocated capital</dt>
+      <dt>{t("strat.ops.limits.capital")}</dt>
       <dd className="mono">
         {effective.allocated_capital_quote} {q}
       </dd>
-      <dt>Accounting quote</dt>
+      <dt>{t("strat.ops.limits.quote")}</dt>
       <dd className="mono">{q}</dd>
-      <dt>Staleness threshold</dt>
+      <dt>{t("strat.ops.limits.staleness")}</dt>
       <dd className="mono">{effective.staleness_threshold_seconds}s</dd>
-      <dt>L1 approval timeout</dt>
+      <dt>{t("strat.ops.limits.l1timeout")}</dt>
       <dd className="mono">{effective.l1_approval_timeout_seconds}s</dd>
-      <dt>L2 envelope</dt>
+      <dt>{t("strat.ops.limits.l2env")}</dt>
       <dd>
         {effective.l2_envelope === null ? (
-          <span className="faint small">none</span>
+          <span className="faint small">{t("strat.ops.limits.none")}</span>
         ) : (
           <>
             <span className="mono">
-              max size {effective.l2_envelope.max_size_quote} {q}
+              {t("strat.ops.limits.maxsize")} {effective.l2_envelope.max_size_quote} {q}
             </span>{" "}
             {effective.l2_envelope.allowed_symbols.map((s) => (
               <span key={s} className="badge badge-neutral" style={{ marginRight: 4 }}>
@@ -613,6 +643,7 @@ function LimitsEditForm({
   effective: RiskLimits;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const [maxOpen, setMaxOpen] = useState("");
   const [maxOrders, setMaxOrders] = useState("");
   const [notionalCap, setNotionalCap] = useState("");
@@ -664,9 +695,9 @@ function LimitsEditForm({
           <div className="banner banner-error" role="alert">
             <span aria-hidden>&#9888;</span>
             <div>
-              <strong>Not permitted: this credential lacks the required role.</strong>
+              <strong>{t("strat.ops.limits.forbidden")}</strong>
               <p className="small" style={{ margin: "4px 0 0" }}>
-                Limit changes need an admin/owner user token — {error.message}
+                {t("strat.ops.limits.forbidden.hint", { message: error.message })}
               </p>
             </div>
           </div>
@@ -675,12 +706,15 @@ function LimitsEditForm({
         ))}
       {appliedCount !== null && (
         <p className="faint small">
-          Applied — {appliedCount} change{appliedCount === 1 ? "" : "s"} recorded.
+          {t(
+            appliedCount === 1 ? "strat.ops.limits.applied.one" : "strat.ops.limits.applied.many",
+            { count: appliedCount },
+          )}
         </p>
       )}
       <div className="row">
         <label className="field">
-          <span className="field-label">Max open positions</span>
+          <span className="field-label">{t("strat.ops.limits.maxopen")}</span>
           <input
             className="input"
             type="number"
@@ -691,7 +725,7 @@ function LimitsEditForm({
           />
         </label>
         <label className="field">
-          <span className="field-label">Max orders / minute</span>
+          <span className="field-label">{t("strat.ops.limits.maxorders")}</span>
           <input
             className="input"
             type="number"
@@ -702,7 +736,9 @@ function LimitsEditForm({
           />
         </label>
         <label className="field">
-          <span className="field-label">Per-position notional cap ({effective.accounting_quote})</span>
+          <span className="field-label">
+            {t("strat.ops.limits.notionalcap")} ({effective.accounting_quote})
+          </span>
           <input
             className="input"
             placeholder={effective.per_position_notional_cap_quote}
@@ -711,7 +747,9 @@ function LimitsEditForm({
           />
         </label>
         <label className="field">
-          <span className="field-label">Daily loss limit ({effective.accounting_quote})</span>
+          <span className="field-label">
+            {t("strat.ops.limits.dailyloss")} ({effective.accounting_quote})
+          </span>
           <input
             className="input"
             placeholder={effective.daily_loss_limit_quote}
@@ -720,7 +758,9 @@ function LimitsEditForm({
           />
         </label>
         <label className="field">
-          <span className="field-label">Max loss at stop ({effective.accounting_quote})</span>
+          <span className="field-label">
+            {t("strat.ops.limits.lossatstop")} ({effective.accounting_quote})
+          </span>
           <input
             className="input"
             placeholder={effective.max_loss_at_stop_quote}
@@ -736,31 +776,32 @@ function LimitsEditForm({
           disabled={pending || nothingEntered}
           onClick={() => void submit()}
         >
-          Apply changes
+          {t("strat.ops.limits.apply")}
         </button>
-        <span className="faint small">Blank fields are left unchanged.</span>
+        <span className="faint small">{t("strat.ops.limits.blankhint")}</span>
       </div>
     </>
   );
 }
 
 function LimitChangeHistory({ changes }: { changes: LimitChangeRow[] }) {
+  const { t } = useI18n();
   const sorted = [...changes].sort((a, b) => b.changed_at.localeCompare(a.changed_at));
   return (
     <details>
       <summary className="faint small" style={{ cursor: "pointer" }}>
-        Change history ({changes.length})
+        {t("strat.ops.history", { count: changes.length })}
       </summary>
       {sorted.length === 0 ? (
-        <div className="empty">No changes recorded.</div>
+        <div className="empty">{t("strat.ops.history.empty")}</div>
       ) : (
         <table className="tbl" style={{ marginTop: 8 }}>
           <thead>
             <tr>
-              <th>Changed at</th>
-              <th>Field</th>
-              <th>Change</th>
-              <th>Actor</th>
+              <th>{t("strat.ops.history.at")}</th>
+              <th>{t("strat.ops.history.field")}</th>
+              <th>{t("strat.ops.history.change")}</th>
+              <th>{t("strat.ops.history.actor")}</th>
             </tr>
           </thead>
           <tbody>

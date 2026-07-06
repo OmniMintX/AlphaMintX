@@ -15,6 +15,7 @@ import {
 } from "../../src/lib/api/client";
 import type { BinanceEnv, PlatformSecret } from "../../src/lib/api/schema";
 import { usePoll } from "../../src/lib/api/usePoll";
+import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner } from "../strategies/ui";
 
 function errText(err: unknown): string {
@@ -34,6 +35,7 @@ function findSecret<K extends PlatformSecret["kind"]>(
 }
 
 export default function SettingsPage() {
+  const { t } = useI18n();
   const secrets = usePoll(fetchPlatformSecrets);
   const binance = findSecret(secrets.data?.items, "binance");
   const llm = findSecret(secrets.data?.items, "llm");
@@ -41,12 +43,8 @@ export default function SettingsPage() {
   return (
     <>
       <div className="page-head">
-        <h1 className="page-title">Platform settings</h1>
-        <p className="page-sub">
-          Exchange and LLM credentials for the platform. Values are write-only &mdash;
-          once saved they are never displayed again, only the key&rsquo;s last 4
-          characters.
-        </p>
+        <h1 className="page-title">{t("settings.title")}</h1>
+        <p className="page-sub">{t("settings.sub")}</p>
       </div>
       {secrets.error && <ErrorBanner message={secrets.error} />}
       {!secrets.data && !secrets.error && (
@@ -72,6 +70,7 @@ function BinanceCard({
   current: Extract<PlatformSecret, { kind: "binance" }> | undefined;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [env, setEnv] = useState<BinanceEnv>("testnet");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -98,17 +97,22 @@ function BinanceCard({
 
   return (
     <div className="card">
-      <h3 className="card-title">Binance API keys</h3>
+      <h3 className="card-title">{t("settings.binance.title")}</h3>
       {error && <ErrorBanner message={error} />}
-      {saved && <p className="faint small">Saved &mdash; the stored values will not be shown again.</p>}
+      {saved && <p className="faint small">{t("settings.saved")}</p>}
       <p className="small muted">
         {current
-          ? `Configured — env ${current.meta.env}, key ••••${current.meta.api_key_last4}, updated ${fmtTime(current.updated_at)} by ${current.updated_by}`
-          : "Not configured"}
+          ? t("settings.binance.configured", {
+              env: current.meta.env,
+              last4: current.meta.api_key_last4,
+              time: fmtTime(current.updated_at),
+              by: current.updated_by,
+            })
+          : t("settings.notconfigured")}
       </p>
       <div className="row">
         <label className="field">
-          <span className="field-label">Environment</span>
+          <span className="field-label">{t("settings.env")}</span>
           <select
             className="select"
             value={env}
@@ -119,7 +123,7 @@ function BinanceCard({
           </select>
         </label>
         <label className="field">
-          <span className="field-label">API key</span>
+          <span className="field-label">{t("settings.apikey")}</span>
           <input
             className="input"
             type="password"
@@ -129,7 +133,7 @@ function BinanceCard({
           />
         </label>
         <label className="field">
-          <span className="field-label">API secret</span>
+          <span className="field-label">{t("settings.apisecret")}</span>
           <input
             className="input"
             type="password"
@@ -142,7 +146,7 @@ function BinanceCard({
       {env === "prod" && (
         <div className="banner banner-warn" style={{ marginTop: 10 }}>
           <span aria-hidden>&#9888;</span>
-          <span>prod keys trade real funds &mdash; double-check before saving.</span>
+          <span>{t("settings.prodwarn")}</span>
         </div>
       )}
       <div className="row" style={{ marginTop: 10 }}>
@@ -152,9 +156,9 @@ function BinanceCard({
           disabled={pending || apiKey.trim() === "" || apiSecret.trim() === ""}
           onClick={() => void submit()}
         >
-          Save
+          {t("settings.save")}
         </button>
-        <span className="faint small">Write-only: values are never displayed again.</span>
+        <span className="faint small">{t("settings.writeonly")}</span>
       </div>
     </div>
   );
@@ -167,6 +171,7 @@ function LlmCard({
   current: Extract<PlatformSecret, { kind: "llm" }> | undefined;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [timeoutSecs, setTimeoutSecs] = useState("30");
@@ -195,17 +200,23 @@ function LlmCard({
 
   return (
     <div className="card">
-      <h3 className="card-title">LLM provider</h3>
+      <h3 className="card-title">{t("settings.llm.title")}</h3>
       {error && <ErrorBanner message={error} />}
-      {saved && <p className="faint small">Saved &mdash; the stored values will not be shown again.</p>}
+      {saved && <p className="faint small">{t("settings.saved")}</p>}
       <p className="small muted">
         {current
-          ? `Configured — ${current.meta.base_url}, key ••••${current.meta.api_key_last4}, timeout ${current.meta.timeout_seconds} s, updated ${fmtTime(current.updated_at)} by ${current.updated_by}`
-          : "Not configured"}
+          ? t("settings.llm.configured", {
+              base_url: current.meta.base_url,
+              last4: current.meta.api_key_last4,
+              timeout: current.meta.timeout_seconds,
+              time: fmtTime(current.updated_at),
+              by: current.updated_by,
+            })
+          : t("settings.notconfigured")}
       </p>
       <div className="row">
         <label className="field">
-          <span className="field-label">Base URL</span>
+          <span className="field-label">{t("settings.baseurl")}</span>
           <input
             className="input"
             style={{ minWidth: "16rem" }}
@@ -215,7 +226,7 @@ function LlmCard({
           />
         </label>
         <label className="field">
-          <span className="field-label">API key</span>
+          <span className="field-label">{t("settings.apikey")}</span>
           <input
             className="input"
             type="password"
@@ -225,7 +236,7 @@ function LlmCard({
           />
         </label>
         <label className="field">
-          <span className="field-label">Timeout (seconds)</span>
+          <span className="field-label">{t("settings.timeout")}</span>
           <input
             className="input"
             type="number"
@@ -243,9 +254,9 @@ function LlmCard({
           disabled={pending || baseUrl.trim() === "" || apiKey.trim() === "" || !timeoutValid}
           onClick={() => void submit()}
         >
-          Save
+          {t("settings.save")}
         </button>
-        <span className="faint small">Write-only: values are never displayed again.</span>
+        <span className="faint small">{t("settings.writeonly")}</span>
       </div>
     </div>
   );

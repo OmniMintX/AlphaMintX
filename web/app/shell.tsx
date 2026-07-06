@@ -9,12 +9,15 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { useI18n } from "../src/lib/i18n";
 import { SessionFooter, SidebarNav } from "./nav";
+import { PrefsToggles } from "./prefs";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/signup", "/bootstrap"]);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { t } = useI18n();
   if (PUBLIC_PATHS.has(pathname)) return <>{children}</>;
   return (
     <div className="shell">
@@ -25,11 +28,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="env-tag">TESTNET</span>
         </div>
         <SidebarNav />
+        <PrefsToggles />
         <SessionFooter />
         <div className="sidebar-foot">
-          plane boundary enforced
+          {t("shell.foot.1")}
           <br />
-          LLMs never touch orders
+          {t("shell.foot.2")}
         </div>
       </aside>
       <main className="main">{children}</main>

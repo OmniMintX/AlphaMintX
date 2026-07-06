@@ -30,7 +30,37 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.24);
 }
 
+/* Light theme: same token names, applied when the pre-paint script (or the
+   toggle) sets data-theme="light" on <html>. Dark stays the default. */
+html[data-theme="light"] {
+  --bg: #f6f7f9;
+  --bg-subtle: #eef0f4;
+  --surface: #ffffff;
+  --surface-2: #f3f4f7;
+  --surface-hover: #e9ebf0;
+  --border: #dfe2e8;
+  --border-strong: #c9cdd6;
+  --text: #171a20;
+  --text-2: #555d6b;
+  --text-3: #878f9c;
+  --accent: #4d58c4;
+  --accent-strong: #3d47b2;
+  --accent-bg: rgba(77, 88, 196, 0.1);
+  --green: #1e9e58;
+  --green-bg: rgba(30, 158, 88, 0.12);
+  --yellow: #a97a14;
+  --yellow-bg: rgba(169, 122, 20, 0.12);
+  --red: #d2423c;
+  --red-bg: rgba(210, 66, 60, 0.1);
+  --cyan: #1d7f9e;
+  --cyan-bg: rgba(29, 127, 158, 0.12);
+  --shadow: 0 1px 2px rgba(16, 20, 28, 0.08), 0 4px 16px rgba(16, 20, 28, 0.06);
+}
+
 * { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
 
 html, body { margin: 0; padding: 0; }
 
@@ -429,6 +459,35 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--text-2); }
 
 /* ---------- Misc ---------- */
+
+/* ---------- Preference toggles (locale + theme) ---------- */
+
+.prefs-row { display: flex; gap: 8px; align-items: center; padding: 8px 10px; }
+.landing-nav .prefs-row, .auth-prefs .prefs-row { padding: 0; }
+.auth-prefs { display: flex; justify-content: center; margin-top: 14px; }
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.seg-btn:hover { color: var(--text); background: var(--surface-hover); }
+.seg-btn.active { background: var(--accent-bg); color: var(--accent-strong); }
 
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .spread { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

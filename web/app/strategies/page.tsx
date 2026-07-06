@@ -8,9 +8,11 @@ import { useCallback, useState } from "react";
 
 import { fetchStrategies } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
+import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner, Pager, StateBadge } from "./ui";
 
 export default function StrategiesPage() {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
   const load = useCallback(() => fetchStrategies(page), [page]);
   const { data, error } = usePoll(load);
@@ -18,10 +20,8 @@ export default function StrategiesPage() {
   return (
     <>
       <header className="page-head">
-        <h1 className="page-title">Strategies</h1>
-        <p className="page-sub">
-          Lifecycle state per strategy; open one for its runs and reasoning traces.
-        </p>
+        <h1 className="page-title">{t("strat.title")}</h1>
+        <p className="page-sub">{t("strat.sub")}</p>
       </header>
       {error && <ErrorBanner message={error} />}
       {!data && !error && (
@@ -35,17 +35,17 @@ export default function StrategiesPage() {
         <>
           <div className="table-wrap">
             {data.items.length === 0 ? (
-              <div className="empty">No strategies yet.</div>
+              <div className="empty">{t("dash.empty")}</div>
             ) : (
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>State</th>
-                    <th>Tenant</th>
-                    <th>Strategy ID</th>
-                    <th>Created</th>
-                    <th>Updated</th>
+                    <th>{t("tbl.name")}</th>
+                    <th>{t("tbl.state")}</th>
+                    <th>{t("tbl.tenant")}</th>
+                    <th>{t("strat.tbl.strategyid")}</th>
+                    <th>{t("tbl.created")}</th>
+                    <th>{t("tbl.updated")}</th>
                   </tr>
                 </thead>
                 <tbody>

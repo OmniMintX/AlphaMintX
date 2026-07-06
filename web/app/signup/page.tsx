@@ -9,9 +9,11 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
 import { login, signup } from "../../src/lib/api/client";
+import { useI18n } from "../../src/lib/i18n";
 import { AuthCard, authErrText } from "../auth-card";
 
 export default function SignupPage() {
+  const { t } = useI18n();
   const [tenantName, setTenantName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,18 +41,18 @@ export default function SignupPage() {
 
   return (
     <AuthCard
-      title="Create a workspace"
-      sub="A tenant plus its owner account — you can invite the team later."
+      title={t("signup.title")}
+      sub={t("signup.sub")}
       foot={
         <>
-          Already have an account? <Link href="/login">Sign in</Link>
+          {t("signup.have")} <Link href="/login">{t("login.title")}</Link>
         </>
       }
     >
       <form className="auth-form" onSubmit={onSubmit}>
         {error && <div className="banner banner-error">{error}</div>}
         <label className="field">
-          <span className="field-label">Workspace name</span>
+          <span className="field-label">{t("signup.workspace")}</span>
           <input
             className="input"
             type="text"
@@ -61,7 +63,7 @@ export default function SignupPage() {
           />
         </label>
         <label className="field">
-          <span className="field-label">Email</span>
+          <span className="field-label">{t("auth.email")}</span>
           <input
             className="input"
             type="email"
@@ -72,7 +74,7 @@ export default function SignupPage() {
           />
         </label>
         <label className="field">
-          <span className="field-label">Password</span>
+          <span className="field-label">{t("auth.password")}</span>
           <input
             className="input"
             type="password"
@@ -83,7 +85,7 @@ export default function SignupPage() {
           />
         </label>
         <button type="submit" className="btn btn-primary auth-submit" disabled={pending}>
-          {pending ? "Creating\u2026" : "Create workspace"}
+          {pending ? t("signup.pending") : t("signup.title")}
         </button>
       </form>
     </AuthCard>

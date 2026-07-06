@@ -5,6 +5,7 @@
 
 import { hasNextPage, hasPrevPage, totalPages } from "../../src/lib/api/pagination";
 import type { LifecycleState } from "../../src/lib/api/schema";
+import { useI18n } from "../../src/lib/i18n";
 
 // Legacy inline-style tokens kept for compatibility; new code uses classes.
 export const section = { marginTop: "1.5rem" } as const;
@@ -55,12 +56,11 @@ export function ErrorBanner({ message }: { message: string }) {
 // Draft / advisory: proposals and verdicts are persisted and shown;
 // nothing is ever submitted to any OMS.
 export function AdvisoryBanner() {
+  const { t } = useI18n();
   return (
     <div className="banner banner-info">
       <span aria-hidden>&#9432;</span>
-      <span>
-        Advisory only: proposals and verdicts are shown here but never submitted to the OMS.
-      </span>
+      <span>{t("ui.banner.advisory")}</span>
     </div>
   );
 }
@@ -68,13 +68,11 @@ export function AdvisoryBanner() {
 // Paper simulation: approve/clip verdicts auto-execute on the paper OMS
 // (persistence-and-api.md §L0 / L1 execution semantics); no exchange orders.
 export function PaperBanner() {
+  const { t } = useI18n();
   return (
     <div className="banner banner-info">
       <span aria-hidden>&#9432;</span>
-      <span>
-        Paper trading: approved verdicts execute against the paper OMS (simulated fills);
-        nothing reaches a live exchange.
-      </span>
+      <span>{t("ui.banner.paper")}</span>
     </div>
   );
 }
@@ -90,6 +88,7 @@ export function Pager({
   limit: number;
   onPage: (page: number) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="pager">
       <button
@@ -98,11 +97,11 @@ export function Pager({
         disabled={!hasPrevPage(page)}
         onClick={() => onPage(page - 1)}
       >
-        &larr; Prev
+        {t("ui.pager.prev")}
       </button>
       <span>
-        Page {page} of {totalPages(total, limit)}
-        <span className="faint"> &middot; {total} total</span>
+        {t("ui.pager.page", { page, pages: totalPages(total, limit) })}
+        <span className="faint"> &middot; {t("ui.pager.total", { total })}</span>
       </span>
       <button
         type="button"
@@ -110,7 +109,7 @@ export function Pager({
         disabled={!hasNextPage(page, total, limit)}
         onClick={() => onPage(page + 1)}
       >
-        Next &rarr;
+        {t("ui.pager.next")}
       </button>
     </div>
   );

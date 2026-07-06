@@ -1,10 +1,13 @@
+"use client";
+
 // Phase-0 reasoning viewer placeholder: renders the golden fixtures through the
 // zod contract schemas. Phase 1 replaces the fixtures with persisted traces
-// fetched from the control-plane API. Server component; no client JS.
+// fetched from the control-plane API. Client component for i18n.
 
 import proposalFixture from "../../../contracts/fixtures/proposal_open_long.json";
 import verdictFixture from "../../../contracts/fixtures/verdict_reject_daily_loss.json";
 import { riskVerdictSchema, tradeProposalSchema } from "../../src/lib/contract/schema";
+import { useI18n } from "../../src/lib/i18n";
 
 const proposal = tradeProposalSchema.parse(proposalFixture);
 const verdict = riskVerdictSchema.parse(verdictFixture);
@@ -23,19 +26,20 @@ const DECISION_TONES: Record<string, string> = {
 };
 
 export default function ReasoningPage() {
+  const { t } = useI18n();
   return (
     <>
       <header className="page-head">
-        <h1 className="page-title">Reasoning viewer</h1>
+        <h1 className="page-title">{t("reason.title")}</h1>
         <p className="page-sub">
-          Golden-fixture trace (Phase 0). Proposal{" "}
-          <span className="mono">{proposal.proposal_id}</span> &rarr; verdict{" "}
+          {t("reason.sub.1")}{" "}
+          <span className="mono">{proposal.proposal_id}</span> &rarr; {t("reason.sub.2")}{" "}
           <span className="mono">{verdict.verdict_id}</span>.
         </p>
       </header>
 
       <section className="section">
-        <h2 className="section-title">Proposal</h2>
+        <h2 className="section-title">{t("reason.proposal")}</h2>
         <div className="card">
           <div className="row">
             <strong>{proposal.action}</strong>
@@ -43,18 +47,18 @@ export default function ReasoningPage() {
           </div>
           <hr className="divider" />
           <dl className="kv">
-            <dt>confidence</dt>
+            <dt>{t("run.k.confidence")}</dt>
             <dd className="mono">{proposal.confidence}</dd>
-            <dt>size (quote)</dt>
+            <dt>{t("run.k.size")}</dt>
             <dd className="mono">{proposal.size_quote}</dd>
-            <dt>entry</dt>
+            <dt>{t("run.k.entry")}</dt>
             <dd>
               {proposal.entry.type}
               {proposal.entry.limit_price ? ` @ ${proposal.entry.limit_price}` : ""}
             </dd>
-            <dt>stop loss</dt>
+            <dt>{t("run.k.stoploss")}</dt>
             <dd className="mono">{proposal.stop_loss ?? "n/a"}</dd>
-            <dt>take profit</dt>
+            <dt>{t("run.k.takeprofit")}</dt>
             <dd className="mono">{proposal.take_profit ?? "n/a"}</dd>
           </dl>
           <p>{proposal.reasoning}</p>
@@ -62,7 +66,7 @@ export default function ReasoningPage() {
       </section>
 
       <section className="section">
-        <h2 className="section-title">Analyst summaries</h2>
+        <h2 className="section-title">{t("run.analysts")}</h2>
         <div className="grid grid-3">
           {(["market", "news", "fundamental"] as const).map((role) => {
             const s = proposal.analyst_summaries[role];
@@ -83,14 +87,14 @@ export default function ReasoningPage() {
       </section>
 
       <section className="section">
-        <h2 className="section-title">Debate</h2>
+        <h2 className="section-title">{t("run.debate")}</h2>
         <div className="card">
           <p className="muted">{proposal.debate_summary}</p>
         </div>
       </section>
 
       <section className="section">
-        <h2 className="section-title">Risk Gate verdict</h2>
+        <h2 className="section-title">{t("run.verdict")}</h2>
         <div className="card">
           <div className="row">
             <span className={`badge ${DECISION_TONES[verdict.decision] ?? "badge-neutral"}`}>
@@ -105,11 +109,11 @@ export default function ReasoningPage() {
             ))}
           </ul>
           <dl className="kv">
-            <dt>evaluated at</dt>
+            <dt>{t("reason.k.evaluatedat")}</dt>
             <dd className="mono">{verdict.evaluated_at}</dd>
-            <dt>daily realized PnL</dt>
+            <dt>{t("reason.k.dailypnl")}</dt>
             <dd className="mono">{verdict.limits_snapshot.daily_realized_pnl_quote}</dd>
-            <dt>daily loss limit</dt>
+            <dt>{t("reason.k.dailyloss")}</dt>
             <dd className="mono">{verdict.limits_snapshot.daily_loss_limit_quote}</dd>
           </dl>
         </div>

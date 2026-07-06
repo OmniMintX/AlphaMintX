@@ -1,55 +1,25 @@
-// Public marketing landing (the dashboard moved to /dashboard): a dark
-// SaaS front door on the same globals.css token system. Server-rendered,
-// no data fetches — the CTAs route to /login and /signup.
+"use client";
+
+// Public marketing landing (the dashboard moved to /dashboard): a SaaS
+// front door on the same globals.css token system. Copy lives in the i18n
+// catalog (en/vi); the CTAs route to /login and /signup.
 
 import Link from "next/link";
 
+import { useI18n } from "../src/lib/i18n";
+import { PrefsToggles } from "./prefs";
+
 const FEATURES = [
-  {
-    title: "Plane boundary",
-    tone: "badge-accent",
-    tag: "CORE",
-    detail:
-      "LLMs never place orders. Models propose; the deterministic Risk Gate and the Go OMS dispose \u2014 every order, every time.",
-  },
-  {
-    title: "Autonomy ladder",
-    tone: "badge-green",
-    tag: "L0\u2013L3",
-    detail:
-      "Per-strategy ladder from advisor to full-auto. Promotion to real money requires a code-enforced paper-gate, not a checkbox.",
-  },
-  {
-    title: "Kill-switch tiers",
-    tone: "badge-red",
-    tag: "SAFETY",
-    detail:
-      "Strategy, tenant, and platform kills cancel entries, preserve protective stops, and never auto-restart.",
-  },
-  {
-    title: "Human risk limits",
-    tone: "badge-yellow",
-    tag: "ADMIN",
-    detail:
-      "Limits are a hard ceiling set by humans \u2014 neither trader users nor AI agents can raise them at runtime.",
-  },
-  {
-    title: "Copilot approvals",
-    tone: "badge-cyan",
-    tag: "L1",
-    detail:
-      "Per-proposal human approval with a hard timeout: no decision means auto-reject, never a silent submit.",
-  },
-  {
-    title: "Immutable record",
-    tone: "badge-neutral",
-    tag: "AUDIT",
-    detail:
-      "Append-only track record and full reasoning traces \u2014 identical strategy code across backtest, paper, and live.",
-  },
+  { key: "plane", tone: "badge-accent", tag: "CORE" },
+  { key: "ladder", tone: "badge-green", tag: "L0\u2013L3" },
+  { key: "kill", tone: "badge-red", tag: "SAFETY" },
+  { key: "limits", tone: "badge-yellow", tag: "ADMIN" },
+  { key: "approvals", tone: "badge-cyan", tag: "L1" },
+  { key: "record", tone: "badge-neutral", tag: "AUDIT" },
 ] as const;
 
 export default function LandingPage() {
+  const { t } = useI18n();
   return (
     <div className="landing">
       <header className="landing-nav">
@@ -58,11 +28,12 @@ export default function LandingPage() {
           AlphaMintX
         </span>
         <nav className="row">
+          <PrefsToggles />
           <Link href="/login" className="btn btn-ghost">
-            Sign in
+            {t("landing.signin")}
           </Link>
           <Link href="/signup" className="btn btn-primary">
-            Get started
+            {t("landing.getstarted")}
           </Link>
         </nav>
       </header>
@@ -70,47 +41,38 @@ export default function LandingPage() {
       <section className="hero">
         <span className="badge badge-accent">
           <span className="dot" />
-          LLM-driven trading, human-governed
+          {t("landing.badge")}
         </span>
-        <h1 className="hero-title">
-          Autonomous trading with deterministic guardrails
-        </h1>
-        <p className="hero-sub">
-          AlphaMintX runs LLM strategy agents behind a hard plane boundary:
-          models propose, the deterministic Risk Gate and OMS dispose. Climb
-          the autonomy ladder from advisor to full-auto &mdash; with
-          kill-switches at every tier and an append-only audit trail.
-        </p>
+        <h1 className="hero-title">{t("landing.title")}</h1>
+        <p className="hero-sub">{t("landing.sub")}</p>
         <div className="hero-cta">
           <Link href="/signup" className="btn btn-primary">
-            Create a workspace
+            {t("landing.cta.create")}
           </Link>
           <Link href="/login" className="btn">
-            Sign in
+            {t("landing.signin")}
           </Link>
         </div>
       </section>
 
       <section className="landing-section">
         <div className="grid grid-3">
-          {FEATURES.map(({ title, tone, tag, detail }) => (
-            <div className="card" key={title}>
+          {FEATURES.map(({ key, tone, tag }) => (
+            <div className="card" key={key}>
               <h3 className="card-title row">
                 <span className={`badge ${tone}`}>
                   <span className="dot" />
                   {tag}
                 </span>
-                {title}
+                {t(`feature.${key}.title`)}
               </h3>
-              <p className="small muted">{detail}</p>
+              <p className="small muted">{t(`feature.${key}.detail`)}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <footer className="landing-foot">
-        plane boundary enforced &mdash; LLMs never touch orders
-      </footer>
+      <footer className="landing-foot">{t("landing.foot")}</footer>
     </div>
   );
 }

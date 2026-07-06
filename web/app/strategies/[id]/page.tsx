@@ -10,11 +10,13 @@ import { useCallback, useState } from "react";
 
 import { fetchRuns, fetchStrategy } from "../../../src/lib/api/client";
 import { usePoll } from "../../../src/lib/api/usePoll";
+import { useI18n } from "../../../src/lib/i18n";
 import { isAdvisoryOnly, isPaperSimulated } from "../../../src/lib/view/run";
 import { AdvisoryBanner, ErrorBanner, Pager, PaperBanner, StateBadge } from "../ui";
 import { OpsPanel } from "./ops";
 
 export default function StrategyDetailPage() {
+  const { t } = useI18n();
   const { id } = useParams<{ id: string }>();
   const [page, setPage] = useState(1);
 
@@ -26,7 +28,7 @@ export default function StrategyDetailPage() {
   return (
     <>
       <div className="breadcrumbs">
-        <Link href="/strategies">Strategies</Link>
+        <Link href="/strategies">{t("strat.title")}</Link>
         <span className="sep">/</span>
         <span className="truncate">{strategy.data?.name ?? id}</span>
       </div>
@@ -45,9 +47,9 @@ export default function StrategyDetailPage() {
             </h1>
             <div className="row small faint mono">
               <span>{strategy.data.strategy_id}</span>
-              <span>tenant {strategy.data.tenant_id}</span>
-              <span>created {strategy.data.created_at}</span>
-              <span>updated {strategy.data.updated_at}</span>
+              <span>{t("strat.meta.tenant", { id: strategy.data.tenant_id })}</span>
+              <span>{t("strat.meta.created", { ts: strategy.data.created_at })}</span>
+              <span>{t("strat.meta.updated", { ts: strategy.data.updated_at })}</span>
             </div>
           </header>
           {isAdvisoryOnly(strategy.data.lifecycle_state) && <AdvisoryBanner />}
@@ -57,7 +59,7 @@ export default function StrategyDetailPage() {
 
       <section className="section">
         <h2 className="section-title">
-          Runs
+          {t("strat.runs")}
           {runs.data && <span className="count">{runs.data.total}</span>}
         </h2>
         {runs.error && <ErrorBanner message={runs.error} />}
@@ -72,14 +74,14 @@ export default function StrategyDetailPage() {
           <>
             <div className="table-wrap">
               {runs.data.items.length === 0 ? (
-                <div className="empty">No runs yet.</div>
+                <div className="empty">{t("strat.runs.empty")}</div>
               ) : (
                 <table className="tbl">
                   <thead>
                     <tr>
-                      <th>Tick</th>
-                      <th>Run ID</th>
-                      <th>Status</th>
+                      <th>{t("strat.tbl.tick")}</th>
+                      <th>{t("strat.tbl.runid")}</th>
+                      <th>{t("strat.tbl.status")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -87,17 +89,19 @@ export default function StrategyDetailPage() {
                       <tr key={run.run_id}>
                         <td>
                           <Link href={`/strategies/${id}/runs/${run.run_id}`}>
-                            Tick {run.tick_number}
+                            {t("strat.tick", { n: run.tick_number })}
                           </Link>
                         </td>
                         <td className="mono-cell">{run.run_id}</td>
                         <td>
                           {run.completed_at ? (
-                            <span className="badge badge-green">completed {run.completed_at}</span>
+                            <span className="badge badge-green">
+                              {t("strat.run.completed", { ts: run.completed_at })}
+                            </span>
                           ) : (
                             <span className="badge badge-yellow">
                               <span className="dot" />
-                              in progress
+                              {t("strat.run.inprogress")}
                             </span>
                           )}
                         </td>

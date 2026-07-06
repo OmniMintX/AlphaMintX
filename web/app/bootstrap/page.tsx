@@ -8,9 +8,11 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
 import { bootstrap, login } from "../../src/lib/api/client";
+import { useI18n } from "../../src/lib/i18n";
 import { AuthCard, authErrText } from "../auth-card";
 
 export default function BootstrapPage() {
+  const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -37,18 +39,18 @@ export default function BootstrapPage() {
 
   return (
     <AuthCard
-      title="Bootstrap platform admin"
-      sub="One-time first-run setup — creates the platform admin account."
+      title={t("bootstrap.title")}
+      sub={t("bootstrap.sub")}
       foot={
         <>
-          Already bootstrapped? <Link href="/login">Sign in</Link>
+          {t("bootstrap.done")} <Link href="/login">{t("login.title")}</Link>
         </>
       }
     >
       <form className="auth-form" onSubmit={onSubmit}>
         {error && <div className="banner banner-error">{error}</div>}
         <label className="field">
-          <span className="field-label">Email</span>
+          <span className="field-label">{t("auth.email")}</span>
           <input
             className="input"
             type="email"
@@ -59,7 +61,7 @@ export default function BootstrapPage() {
           />
         </label>
         <label className="field">
-          <span className="field-label">Password</span>
+          <span className="field-label">{t("auth.password")}</span>
           <input
             className="input"
             type="password"
@@ -70,7 +72,7 @@ export default function BootstrapPage() {
           />
         </label>
         <button type="submit" className="btn btn-primary auth-submit" disabled={pending}>
-          {pending ? "Bootstrapping\u2026" : "Create admin"}
+          {pending ? t("bootstrap.pending") : t("bootstrap.submit")}
         </button>
       </form>
     </AuthCard>

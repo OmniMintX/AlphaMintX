@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { createTenant, fetchTenants, fetchUsers } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
+import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner } from "../strategies/ui";
 
 function errText(err: unknown): string {
@@ -26,14 +27,12 @@ function shortId(id: string): string {
 }
 
 export default function AdminPage() {
+  const { t } = useI18n();
   return (
     <>
       <div className="page-head">
-        <h1 className="page-title">Admin</h1>
-        <p className="page-sub">
-          Platform directory &mdash; tenants and users. Read-only aside from tenant
-          creation.
-        </p>
+        <h1 className="page-title">{t("nav.admin")}</h1>
+        <p className="page-sub">{t("admin.sub")}</p>
       </div>
       <div className="grid">
         <TenantsCard />
@@ -44,6 +43,7 @@ export default function AdminPage() {
 }
 
 function TenantsCard() {
+  const { t } = useI18n();
   const tenants = usePoll(fetchTenants);
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
@@ -65,7 +65,7 @@ function TenantsCard() {
 
   return (
     <div className="card">
-      <h3 className="card-title">Tenants</h3>
+      <h3 className="card-title">{t("admin.tenants")}</h3>
       {tenants.error && <ErrorBanner message={tenants.error} />}
       {!tenants.data && !tenants.error && <div className="skeleton" style={{ height: 80 }} />}
       {tenants.data && (
@@ -75,7 +75,7 @@ function TenantsCard() {
             <input
               className="input"
               style={{ minWidth: "16rem" }}
-              placeholder="tenant name"
+              placeholder={t("admin.tenantname.placeholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -85,28 +85,28 @@ function TenantsCard() {
               disabled={pending || name.trim() === ""}
               onClick={() => void create()}
             >
-              Create
+              {t("admin.create")}
             </button>
           </div>
           {tenants.data.items.length === 0 ? (
-            <div className="empty">No tenants yet.</div>
+            <div className="empty">{t("admin.notenants")}</div>
           ) : (
             <table className="tbl" style={{ marginTop: 10 }}>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Name</th>
-                  <th>Created</th>
+                  <th>{t("tbl.id")}</th>
+                  <th>{t("tbl.name")}</th>
+                  <th>{t("tbl.created")}</th>
                 </tr>
               </thead>
               <tbody>
-                {tenants.data.items.map((t) => (
-                  <tr key={t.tenant_id}>
-                    <td className="mono-cell" title={t.tenant_id}>
-                      {shortId(t.tenant_id)}
+                {tenants.data.items.map((tn) => (
+                  <tr key={tn.tenant_id}>
+                    <td className="mono-cell" title={tn.tenant_id}>
+                      {shortId(tn.tenant_id)}
                     </td>
-                    <td>{t.name}</td>
-                    <td className="mono-cell">{fmtTime(t.created_at)}</td>
+                    <td>{tn.name}</td>
+                    <td className="mono-cell">{fmtTime(tn.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -119,25 +119,26 @@ function TenantsCard() {
 }
 
 function UsersCard() {
+  const { t } = useI18n();
   const users = usePoll(fetchUsers);
 
   return (
     <div className="card">
-      <h3 className="card-title">Users</h3>
+      <h3 className="card-title">{t("admin.users")}</h3>
       {users.error && <ErrorBanner message={users.error} />}
       {!users.data && !users.error && <div className="skeleton" style={{ height: 80 }} />}
       {users.data &&
         (users.data.items.length === 0 ? (
-          <div className="empty">No users.</div>
+          <div className="empty">{t("admin.nousers")}</div>
         ) : (
           <table className="tbl">
             <thead>
               <tr>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Tenant</th>
-                <th>Created</th>
-                <th>Status</th>
+                <th>{t("auth.email")}</th>
+                <th>{t("admin.tbl.role")}</th>
+                <th>{t("tbl.tenant")}</th>
+                <th>{t("tbl.created")}</th>
+                <th>{t("admin.tbl.status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -152,12 +153,16 @@ function UsersCard() {
                     </span>
                   </td>
                   <td className="mono-cell" title={u.tenant_id ?? undefined}>
-                    {u.tenant_id ? shortId(u.tenant_id) : <span className="faint">platform</span>}
+                    {u.tenant_id ? (
+                      shortId(u.tenant_id)
+                    ) : (
+                      <span className="faint">{t("admin.platform")}</span>
+                    )}
                   </td>
                   <td className="mono-cell">{fmtTime(u.created_at)}</td>
                   <td>
                     {u.disabled ? (
-                      <span className="badge badge-red">disabled</span>
+                      <span className="badge badge-red">{t("admin.disabled")}</span>
                     ) : (
                       <span className="faint small">&mdash;</span>
                     )}

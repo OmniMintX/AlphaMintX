@@ -8,9 +8,11 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
 import { login } from "../../src/lib/api/client";
+import { useI18n } from "../../src/lib/i18n";
 import { AuthCard, authErrText } from "../auth-card";
 
 export default function LoginPage() {
+  const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,20 +33,20 @@ export default function LoginPage() {
 
   return (
     <AuthCard
-      title="Sign in"
-      sub="Session-based access — your token never reaches the browser."
+      title={t("login.title")}
+      sub={t("login.sub")}
       foot={
         <>
-          No account? <Link href="/signup">Create a workspace</Link>
+          {t("login.noaccount")} <Link href="/signup">{t("signup.title")}</Link>
           <span className="faint"> · </span>
-          <Link href="/bootstrap">First-run bootstrap</Link>
+          <Link href="/bootstrap">{t("login.bootstrap")}</Link>
         </>
       }
     >
       <form className="auth-form" onSubmit={onSubmit}>
         {error && <div className="banner banner-error">{error}</div>}
         <label className="field">
-          <span className="field-label">Email</span>
+          <span className="field-label">{t("auth.email")}</span>
           <input
             className="input"
             type="email"
@@ -55,7 +57,7 @@ export default function LoginPage() {
           />
         </label>
         <label className="field">
-          <span className="field-label">Password</span>
+          <span className="field-label">{t("auth.password")}</span>
           <input
             className="input"
             type="password"
@@ -66,7 +68,7 @@ export default function LoginPage() {
           />
         </label>
         <button type="submit" className="btn btn-primary auth-submit" disabled={pending}>
-          {pending ? "Signing in\u2026" : "Sign in"}
+          {pending ? t("login.pending") : t("login.title")}
         </button>
       </form>
     </AuthCard>
