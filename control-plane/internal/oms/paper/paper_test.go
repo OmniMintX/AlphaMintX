@@ -692,3 +692,60 @@ func TestRealizedPnLSubtractsFees(t *testing.T) {
 		})
 	}
 }
+
+// Increasing a position re-averages the entry price quantity-weighted
+// (orders.go applyFill, opening/increasing branch); the round-trip PnL
+// prices the whole lot at that average.
+func TestWeightedAverageEntryOnIncrease(t *testing.T) {
+	o := newTestOMS(t, FillModel{MarketSlippageBps: "0", TakerFeeBps: "10", MakerFeeBps: "5"})
+	if _, err := o.SubmitEntry(marketEntry()); err != nil { // 10 @ 100, fee 1
+		t.Fatalf("first entry: %v", err)
+	}
+	add := marketEntry()
+	add.SizeQuote = decimal.NewFromInt(1200)
+	add.MarkPrice = decimal.NewFromInt(120)
+	if _, err := o.SubmitEntry(add); err != nil { // 10 @ 120, fee 1.2
+		t.Fatalf("second entry: %v", err)
+	}
+	pos, ok := o.Position(stratID, sym)
+	if !ok || !pos.QtyBase.Equal(d("20")) || !pos.EntryPrice.Equal(d("110")) {
+		t.Fatalf("position qty=%s entry=%s (ok=%v), want 20 @ 110", pos.QtyBase, pos.EntryPrice, ok)
+	}
+	if _, err := o.Flatten(stratID, sym, decimal.NewFromInt(130)); err != nil { // fee 20 × 130 × 0.001 = 2.6
+		t.Fatalf("Flatten: %v", err)
+	}
+	// gross (130−110) × 20 = 400; fees 1 + 1.2 + 2.6 = 4.8
+	if got := o.RealizedPnL(stratID, sym); !got.Equal(d("395.2")) {
+		t.Errorf("realized PnL = %s, want 395.2", got)
+	}
+}
+
+// An opposite-side entry larger than the open position realizes PnL on the
+// closed quantity ONLY and re-opens the remainder at the fill price
+// (orders.go applyFill, reducing/flipping branch).
+func TestFlipRealizesClosedQtyAndReopensAtFillPrice(t *testing.T) {
+	o := newTestOMS(t, FillModel{MarketSlippageBps: "0", TakerFeeBps: "10", MakerFeeBps: "5"})
+	if _, err := o.SubmitEntry(marketEntry()); err != nil { // long 10 @ 100, fee 1
+		t.Fatalf("long entry: %v", err)
+	}
+	flip := marketEntry()
+	flip.Side = SideSell
+	flip.SizeQuote = decimal.NewFromInt(3000)
+	flip.MarkPrice = decimal.NewFromInt(120)
+	flip.StopPrice = decimal.NewFromInt(126)
+	if _, err := o.SubmitEntry(flip); err != nil { // sell 25 @ 120, fee 3
+		t.Fatalf("flip entry: %v", err)
+	}
+	pos, ok := o.Position(stratID, sym)
+	if !ok || !pos.QtyBase.Equal(d("-15")) || !pos.EntryPrice.Equal(d("120")) {
+		t.Fatalf("position qty=%s entry=%s (ok=%v), want -15 @ 120", pos.QtyBase, pos.EntryPrice, ok)
+	}
+	// Realized on the closed 10 only: gross (120−100) × 10 = 200; fees 1 + 3.
+	if got := o.RealizedPnL(stratID, sym); !got.Equal(d("196")) {
+		t.Errorf("realized PnL = %s, want 196", got)
+	}
+	// The flipped lot keeps accumulating lifecycle fees (never went flat).
+	if !pos.FeesQuote.Equal(d("4")) {
+		t.Errorf("fees_quote = %s, want 4", pos.FeesQuote)
+	}
+}
