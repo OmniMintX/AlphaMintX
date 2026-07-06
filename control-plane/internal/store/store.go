@@ -55,6 +55,15 @@ var ErrDuplicateTokenHash = errors.New("DUPLICATE_TOKEN_HASH")
 // owner tokens; checked in the SAME transaction as the insert).
 var ErrOwnerExists = errors.New("OWNER_TOKEN_EXISTS")
 
+// ErrEmailExists: the email is already taken by another user
+// (multi-tenant-rbac.md §Password auth, 409 EMAIL_EXISTS).
+var ErrEmailExists = errors.New("EMAIL_EXISTS")
+
+// ErrPlatformAdminExists: bootstrap found an existing platform_admin user
+// (multi-tenant-rbac.md §Password auth: bootstrap runs exactly once,
+// checked in the SAME transaction as the insert; 409 BOOTSTRAP_COMPLETE).
+var ErrPlatformAdminExists = errors.New("PLATFORM_ADMIN_EXISTS")
+
 // ErrMeteringConflict: a metering re-import disagrees with the stored
 // record for the same request_id (billing-and-metering.md §Metering
 // ingest, 409 METERING_CONFLICT — the whole batch is rejected).

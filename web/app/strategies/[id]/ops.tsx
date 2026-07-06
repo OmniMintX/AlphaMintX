@@ -5,8 +5,9 @@
 // PINNED OS-26 display table, strategy-tier kill and clear controls, alerts
 // feed, the paper-gate report, and the DB-backed risk-limits settings card.
 // Mutations go through the same-origin
-// proxies (the OPERATOR_TOKEN never reaches this bundle); every upstream
-// error surfaces verbatim via ApiError (OS-30) — never remapped or retried.
+// /api/cp session proxy (no credential ever reaches this bundle); every
+// upstream error surfaces verbatim via ApiError (OS-30) — never remapped or
+// retried.
 
 import { useCallback, useEffect, useState } from "react";
 

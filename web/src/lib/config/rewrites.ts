@@ -1,12 +1,12 @@
-// Same-origin proxy rules (persistence-and-api.md §Auth): the control-plane
-// serves no CORS headers by design, so the browser reaches it through the
-// Next server. Reuses CONTROLPLANE_API_BASE_URL — the same server-side var
-// the approvals route handler already requires. Rewrites are baked into the
-// build (routes-manifest.json), so the var must be set at `next build` time.
+// Superseded by the /api/cp/[...path] session proxy: the build-time /api/v1
+// rewrite existed for the READ-token era, where the browser fetched the
+// control-plane directly through the Next server. Every read now rides the
+// amx_session cookie through the runtime catch-all route, so exposing a
+// cookieless /api/v1 passthrough would only bypass the session layer — this
+// always returns no rules and next.config.ts no longer calls it. Delete once
+// stale callers are ruled out (this migration could not remove files).
 export function controlPlaneRewrites(
-  base: string | undefined,
+  _base: string | undefined,
 ): { source: string; destination: string }[] {
-  const origin = base?.trim().replace(/\/+$/, "");
-  if (!origin) return [];
-  return [{ source: "/api/v1/:path*", destination: `${origin}/api/v1/:path*` }];
+  return [];
 }

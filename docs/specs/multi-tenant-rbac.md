@@ -13,10 +13,11 @@ Companion to `docs/specs/persistence-and-api.md` (store, §Auth),
   "Tenant A cannot read or affect tenant B data (isolation tests)" — plus the
   Phase 2 scope items: tenant isolation, RBAC enforcement, per-tenant
   kill-switch.
-- Non-goals (v1): no `users` table or per-user identity beyond token
-  `label` + `created_by`; no OIDC/JWT; no policy engine (roles are a fixed
+- Non-goals (v1): no OIDC/JWT; no policy engine (roles are a fixed
   enum); no platform-scope kill endpoint (Phase 3 drills); no per-tenant
-  billing endpoints (separate billing spec); no Postgres migration.
+  billing endpoints (separate billing spec); no Postgres migration. The
+  original "no `users` table" non-goal is SUPERSEDED by §Password auth and
+  web sessions below, which adds per-user email/password identity.
   `backtest.db` stays single-tenant dev tooling, explicitly OUT of tenancy
   scope: `backtestctl` is an offline operator CLI, not a tenant-facing API.
 
@@ -207,6 +208,9 @@ DB principals:
 | `POST /api/v1/tenants` | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST /api/v1/ops/backups/run` (env-admin ONLY — ops-backup.md OB-6) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `GET /api/v1/ops/backups` (env-admin ONLY — ops-backup.md OB-7) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `GET /api/v1/platform/secrets`, `POST .../secrets/binance`, `POST .../secrets/llm` (env-admin ONLY — platform-secrets.md) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `GET /api/v1/agent/llm-config` (agent tokens ONLY, any agent — platform-secrets.md) | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `GET /api/v1/tenants`, `GET /api/v1/users` (env-admin ONLY — platform-secrets.md §Admin listings) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `GET /health` | unauthenticated | | | | |
 
 Env classes (platform-scoped, §Principals): read ⇒ all strategy-data GETs,
@@ -215,20 +219,25 @@ any tenant, incl. `GET .../paper-gate` and the operator-surface reads
 operator-surface.md) (NOT the token-metadata routes — the
 most-exposed credential gets the least surface); operator ⇒
 `POST .../approvals` only, any tenant; agent ⇒ its two ingestion routes
-only; env-admin ⇒ `POST .../limits`, `POST .../kill`,
+plus `GET /api/v1/agent/llm-config` (platform-secrets.md — the route has
+no strategy path segment, so any agent token passes); env-admin ⇒
+`POST .../limits`, `POST .../kill`,
 `POST .../lifecycle`, all three `.../kill/clear` routes (the platform
 clear is env-admin ONLY), all `/api/v1/tokens` routes,
 `POST /api/v1/strategies` (any existing tenant named in the body), and
 `POST /api/v1/tenants` — any tenant, and NO strategy-data reads (the read
-class already exists); its platform reads are the billing feeds and the
-global alert feed `GET /api/v1/alerts` (operator-surface.md OS-19).
+class already exists); its platform reads are the billing feeds, the
+global alert feed `GET /api/v1/alerts` (operator-surface.md OS-19), the
+platform-secrets metadata list, and the admin-console listings
+`GET /api/v1/tenants` / `GET /api/v1/users` (platform-secrets.md).
 
 - Reads at viewer+ preserve Phase 1 semantics (READ_TOKEN never authorizes a
   POST); `POST .../approvals` at trader+ preserves operator semantics
   (`decided_by` attribution unchanged).
 - No user role may POST proposals or traces; agent tokens MUST NOT be
-  accepted by any endpoint outside their two ingestion routes — including
-  every NEW endpoint.
+  accepted by any endpoint outside their two ingestion routes, the
+  heartbeat receiver, and `GET /api/v1/agent/llm-config`
+  (platform-secrets.md) — including every NEW endpoint.
 
 **Status semantics (normative).** Checks run in this order — auth, then
 role/class, then tenant-scoped object resolution — so an insufficient role
@@ -431,3 +440,60 @@ persistence-and-api.md.
   `CONTROLPLANE_ADMIN_TOKEN`, no DB tokens) passes the existing `api` tests
   unchanged — guaranteed by construction (§Principals: env classes keep
   Phase 1 wire behavior verbatim).
+
+## Password auth and web sessions (normative)
+
+Adds a browser-facing email/password surface BESIDE the bearer-token
+surfaces above; nothing about env or DB tokens changes.
+
+- **Tables (additive, §Migration note mechanism 1).** `users` (`user_id`
+  PK; `tenant_id` nullable REFERENCES tenants — NULL iff
+  `role = 'platform_admin'`; `email` UNIQUE, trimmed and lowercased on
+  write; `password_hash` — bcrypt via `golang.org/x/crypto/bcrypt` at
+  DefaultCost; `role` IN
+  (`owner`,`admin`,`trader`,`viewer`,`platform_admin`); `created_at`;
+  `disabled_at`), `web_sessions` (`session_id` PK; `user_id`; `token_hash`
+  UNIQUE = hex(SHA-256(plaintext)); `created_at`; `expires_at`;
+  `revoked_at`), and append-only `user_events` (`event` IN
+  (`created`,`login`,`logout`), appended in the SAME transaction as its
+  mutation). `password_hash` and `token_hash` never cross the read
+  boundary (§No-read-back invariant binds them both).
+- **Session credential.** `amxs_` + 64 lowercase hex (32 CSPRNG bytes) —
+  prefix-distinct from `amx_` API tokens; plaintext returned exactly once
+  by login; expiry 7 days from mint; the session's ONLY legal mutation
+  sets `revoked_at` once (logout).
+- **Endpoints.**
+  - `POST /api/v1/auth/bootstrap` (public) — `{email, password}`; creates
+    the FIRST `platform_admin` user, gated transactionally: any existing
+    `platform_admin` (disabled included) ⇒ 409 `BOOTSTRAP_COMPLETE`.
+  - `POST /api/v1/auth/signup` (public) — `{tenant_name, email,
+    password}`; atomically creates a tenant (server-generated 32-hex
+    `tenant_id`) and its first `owner` user; a taken email ⇒ 409
+    `EMAIL_EXISTS` with the tenant rolled back.
+  - `POST /api/v1/auth/login` (public) — `{email, password}` ⇒
+    `{token, expires_at, user}`.
+  - `POST /api/v1/auth/logout`, `GET /api/v1/auth/me` — SESSION-ONLY
+    matrix rows: any authenticated session passes; API and env tokens are
+    403 (a session is a browser credential, not an automation surface).
+  - The three public POSTs keep the 1 MiB body cap; no bearer exists yet,
+    so the per-token rate limit does not apply to them in v1.
+- **Principal mapping.** A resolved session yields: `platform_admin` ⇒
+  the env-admin CLASS (the full env-admin surface, and like the env
+  admin, no strategy-data reads); any other role ⇒ the user class with
+  that role and tenant — every RBAC and tenancy rule above binds sessions
+  exactly as it binds DB tokens. Audit actor columns record the
+  `user_id` (stable and non-secret, the `token_id` precedent).
+- **Resolution order.** Env tokens first (unchanged), then `api_tokens`
+  by hash, then `web_sessions` by the SAME SHA-256 hash. Revocation,
+  expiry, and `disabled_at` are observed on EVERY request; all three are
+  indistinguishable from an unknown token — 401 `UNAUTHORIZED`, never
+  cached.
+- **Login uniformity.** EVERY login failure — unknown email, wrong
+  password, disabled user — answers 401 `INVALID_CREDENTIALS` with one
+  message body; a dummy bcrypt comparison equalizes unknown-email timing.
+  No account enumeration, and no password-policy detail leaks at login.
+- **Password policy.** 8..72 bytes (bcrypt's input limit); violations at
+  bootstrap/signup are 400 `SCHEMA_INVALID`.
+- **Error codes.** `INVALID_CREDENTIALS` (401), `EMAIL_EXISTS` (409),
+  `BOOTSTRAP_COMPLETE` (409); `SCHEMA_INVALID` and `UNAUTHORIZED` reused
+  with their existing meanings.

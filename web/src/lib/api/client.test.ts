@@ -1,30 +1,42 @@
-// Client-layer pure pieces: URL/query construction, bearer headers, the
-// approval POST payload, and ApiError body parsing (409 recorded outcome).
-// Plus the operator-surface additions (OS-31): safety/alerts/paper-gate GETs
-// (READ token attached), lifecycle/kill/clear POSTs (same-origin, no auth
-// header, exact bodies), and the OS-29 409 no-auto-retry rule.
+// Client-layer pure pieces: URL/query construction, the approval POST
+// payload, and ApiError body parsing (409 recorded outcome). Plus the
+// session-shell wiring: every GET/POST goes same-origin through /api/cp
+// (cookie-authenticated server-side — NO auth header or token in this
+// bundle), the auth helpers hit /api/auth/*, and the OS-29 409
+// no-auto-retry rule still holds.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiError,
+  CP_PROXY_BASE,
   PAPER_GATE_POLL_INTERVAL_MS,
   POLL_INTERVAL_MS,
-  authHeaders,
+  bootstrap,
   buildApprovalPayload,
   buildClearPayload,
   buildKillPayload,
   buildLifecyclePayload,
   buildUrl,
   clearStrategyKill,
+  createTenant,
   fetchAlerts,
   fetchLimits,
+  fetchMe,
   fetchPaperGate,
+  fetchPlatformSecrets,
   fetchSafety,
+  fetchTenants,
+  fetchUsers,
+  login,
+  logout,
   postKill,
   postKillClear,
   postLifecycle,
   postLimits,
+  setBinanceSecret,
+  setLlmSecret,
+  signup,
 } from "./client";
 import {
   approvalRequestSchema,
@@ -51,10 +63,9 @@ describe("buildUrl", () => {
   });
 });
 
-describe("authHeaders", () => {
-  it("emits a bearer header only when a token is configured", () => {
-    expect(authHeaders("tok-123")).toEqual({ authorization: "Bearer tok-123" });
-    expect(authHeaders(undefined)).toEqual({});
+describe("CP_PROXY_BASE", () => {
+  it("is the same-origin session proxy base", () => {
+    expect(CP_PROXY_BASE).toBe("/api/cp");
   });
 });
 
@@ -185,9 +196,7 @@ describe("ops fetchers and proxy POSTs", () => {
     vi.unstubAllEnvs();
   });
 
-  it("GETs safety/alerts/paper-gate with the READ token on the API base", async () => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "http://cp.local");
-    vi.stubEnv("NEXT_PUBLIC_READ_TOKEN", "read-tok");
+  it("GETs safety/alerts/paper-gate same-origin through /api/cp with no auth header", async () => {
     const mock = stubFetch(
       jsonResponse(200, safetyBody),
       jsonResponse(200, { items: [], total: 0, page: 2, limit: 20 }),
@@ -198,23 +207,18 @@ describe("ops fetchers and proxy POSTs", () => {
     await fetchAlerts(STRATEGY_ID, 2);
     await fetchPaperGate(STRATEGY_ID);
 
-    expect(mock.mock.calls[0]?.[0]).toBe(`http://cp.local/api/v1/strategies/${STRATEGY_ID}/safety`);
+    expect(mock.mock.calls[0]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/safety`);
     expect(mock.mock.calls[1]?.[0]).toBe(
-      `http://cp.local/api/v1/strategies/${STRATEGY_ID}/alerts?page=2&limit=20`,
+      `/api/cp/strategies/${STRATEGY_ID}/alerts?page=2&limit=20`,
     );
-    expect(mock.mock.calls[2]?.[0]).toBe(
-      `http://cp.local/api/v1/strategies/${STRATEGY_ID}/paper-gate`,
-    );
+    expect(mock.mock.calls[2]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/paper-gate`);
     for (const call of mock.mock.calls) {
-      expect(call[1]).toMatchObject({
-        headers: { authorization: "Bearer read-tok" },
-        cache: "no-store",
-      });
+      // The session cookie rides along automatically; no token in the bundle.
+      expect(call[1]).toEqual({ cache: "no-store" });
     }
   });
 
   it("POSTs lifecycle/kill/clear same-origin with exact bodies and NO auth header", async () => {
-    vi.stubEnv("NEXT_PUBLIC_READ_TOKEN", "read-tok");
     const mock = stubFetch(
       jsonResponse(200, {
         strategy_id: STRATEGY_ID,
@@ -246,15 +250,15 @@ describe("ops fetchers and proxy POSTs", () => {
     // observed_epoch threaded from the displayed kill epoch (OS-29).
     await postKillClear(STRATEGY_ID, buildClearPayload("resolved", 5));
 
-    expect(mock.mock.calls[0]?.[0]).toBe(`/api/strategies/${STRATEGY_ID}/lifecycle`);
-    expect(mock.mock.calls[1]?.[0]).toBe(`/api/strategies/${STRATEGY_ID}/kill`);
-    expect(mock.mock.calls[2]?.[0]).toBe(`/api/strategies/${STRATEGY_ID}/kill/clear`);
+    expect(mock.mock.calls[0]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/lifecycle`);
+    expect(mock.mock.calls[1]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/kill`);
+    expect(mock.mock.calls[2]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/kill/clear`);
     expect(mock.mock.calls[0]?.[1]?.body).toBe('{"to":"paper","reason":"resume"}');
     expect(mock.mock.calls[1]?.[1]?.body).toBe('{"flatten":true}');
     expect(mock.mock.calls[2]?.[1]?.body).toBe('{"reason":"resolved","observed_epoch":5}');
     for (const call of mock.mock.calls) {
-      // The operator credential never reaches this client (OS-32): the proxy
-      // POST carries content-type only.
+      // No credential ever reaches this client (OS-32): the proxy POST
+      // carries content-type only.
       expect(call[1]?.headers).toEqual({ "content-type": "application/json" });
     }
   });
@@ -333,24 +337,18 @@ describe("risk limits fetcher and proxy POST", () => {
     vi.unstubAllEnvs();
   });
 
-  it("GETs limits with the READ token on the API base and parses the status", async () => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "http://cp.local");
-    vi.stubEnv("NEXT_PUBLIC_READ_TOKEN", "read-tok");
+  it("GETs limits same-origin through /api/cp and parses the status", async () => {
     const mock = stubFetch(jsonResponse(200, limitsBody));
 
     const status = await fetchLimits(STRATEGY_ID);
 
-    expect(mock.mock.calls[0]?.[0]).toBe(`http://cp.local/api/v1/strategies/${STRATEGY_ID}/limits`);
-    expect(mock.mock.calls[0]?.[1]).toMatchObject({
-      headers: { authorization: "Bearer read-tok" },
-      cache: "no-store",
-    });
+    expect(mock.mock.calls[0]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/limits`);
+    expect(mock.mock.calls[0]?.[1]).toEqual({ cache: "no-store" });
     expect(status.effective.daily_loss_limit_quote).toBe("250.00");
     expect(status.effective.l2_envelope).toBeNull();
   });
 
   it("POSTs limit changes same-origin with the exact body and NO auth header", async () => {
-    vi.stubEnv("NEXT_PUBLIC_READ_TOKEN", "read-tok");
     const mock = stubFetch(jsonResponse(200, { changes: [limitChangeRow] }));
 
     const res = await postLimits(
@@ -358,11 +356,11 @@ describe("risk limits fetcher and proxy POST", () => {
       buildLimitChanges({ max_open_positions: 5, per_position_notional_cap_quote: "1500.00" }),
     );
 
-    expect(mock.mock.calls[0]?.[0]).toBe(`/api/strategies/${STRATEGY_ID}/limits`);
+    expect(mock.mock.calls[0]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/limits`);
     expect(mock.mock.calls[0]?.[1]?.body).toBe(
       '{"changes":{"max_open_positions":5,"per_position_notional_cap_quote":"1500.00"}}',
     );
-    // The operator credential never reaches this client: content-type only.
+    // No credential ever reaches this client: content-type only.
     expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
     expect(res.changes[0]?.new_value).toBe("5");
   });
@@ -375,5 +373,217 @@ describe("risk limits fetcher and proxy POST", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(403);
     expect((err as ApiError).body?.code).toBe("FORBIDDEN");
+  });
+});
+
+// ---- Platform settings & admin (platform_admin only) --------------------------------
+
+const binanceSecret = {
+  kind: "binance",
+  meta: { env: "testnet", api_key_last4: "wfK4" },
+  updated_at: "2026-07-05T09:00:00Z",
+  updated_by: "root@example.com",
+};
+
+const llmSecret = {
+  kind: "llm",
+  meta: { base_url: "https://api.openai.com/v1", api_key_last4: "ab12", timeout_seconds: 30 },
+  updated_at: "2026-07-05T09:01:00Z",
+  updated_by: "root@example.com",
+};
+
+const tenant = { tenant_id: "t-1", name: "Acme Trading", created_at: "2026-07-01T00:00:00Z" };
+
+const adminUser = {
+  user_id: "u-1",
+  email: "op@example.com",
+  tenant_id: "t-1",
+  role: "owner",
+  created_at: "2026-07-01T00:00:00Z",
+  disabled: false,
+};
+
+describe("platform settings and admin helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("GETs /platform/secrets same-origin and parses both meta variants", async () => {
+    const mock = stubFetch(jsonResponse(200, { items: [binanceSecret, llmSecret] }));
+
+    const res = await fetchPlatformSecrets();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/platform/secrets");
+    expect(mock.mock.calls[0]?.[1]).toEqual({ cache: "no-store" });
+    const [binance, llm] = res.items;
+    expect(binance?.kind).toBe("binance");
+    if (binance?.kind === "binance") expect(binance.meta.env).toBe("testnet");
+    expect(llm?.kind).toBe("llm");
+    if (llm?.kind === "llm") expect(llm.meta.timeout_seconds).toBe(30);
+  });
+
+  it("setBinanceSecret POSTs the exact write-only body and parses the metadata echo", async () => {
+    const mock = stubFetch(jsonResponse(200, { secret: binanceSecret }));
+
+    const res = await setBinanceSecret("testnet", "AKfull-key", "s3cr3t");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/platform/secrets/binance");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"env":"testnet","api_key":"AKfull-key","api_secret":"s3cr3t"}',
+    );
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.secret.kind).toBe("binance");
+  });
+
+  it("setLlmSecret POSTs {base_url, api_key, timeout_seconds} exactly", async () => {
+    const mock = stubFetch(jsonResponse(200, { secret: llmSecret }));
+
+    const res = await setLlmSecret("https://api.openai.com/v1", "sk-x", 30);
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/platform/secrets/llm");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"base_url":"https://api.openai.com/v1","api_key":"sk-x","timeout_seconds":30}',
+    );
+    expect(res.secret.kind).toBe("llm");
+  });
+
+  it("GETs /tenants and /users same-origin with no auth header", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { items: [tenant] }),
+      jsonResponse(200, { items: [adminUser] }),
+    );
+
+    const tenants = await fetchTenants();
+    const users = await fetchUsers();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tenants");
+    expect(mock.mock.calls[1]?.[0]).toBe("/api/cp/users");
+    for (const call of mock.mock.calls) {
+      expect(call[1]).toEqual({ cache: "no-store" });
+    }
+    expect(tenants.items[0]?.name).toBe("Acme Trading");
+    expect(users.items[0]?.disabled).toBe(false);
+  });
+
+  it("createTenant POSTs {name} and parses the created tenant directly (no envelope)", async () => {
+    const mock = stubFetch(jsonResponse(200, tenant));
+
+    const res = await createTenant("Acme Trading");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tenants");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"name":"Acme Trading"}');
+    expect(res.tenant_id).toBe("t-1");
+  });
+
+  it("surfaces 403 and 503 VAULT_UNAVAILABLE verbatim as ApiError", async () => {
+    stubFetch(
+      jsonResponse(403, { code: "FORBIDDEN", message: "platform_admin required" }),
+      jsonResponse(503, { code: "VAULT_UNAVAILABLE", message: "vault key not provisioned" }),
+    );
+
+    const forbidden = await fetchPlatformSecrets().catch((e: unknown) => e);
+    expect(forbidden).toBeInstanceOf(ApiError);
+    expect((forbidden as ApiError).status).toBe(403);
+    expect((forbidden as ApiError).body?.code).toBe("FORBIDDEN");
+
+    const vault = await setBinanceSecret("prod", "k", "s").catch((e: unknown) => e);
+    expect(vault).toBeInstanceOf(ApiError);
+    expect((vault as ApiError).status).toBe(503);
+    expect((vault as ApiError).body?.code).toBe("VAULT_UNAVAILABLE");
+  });
+});
+
+// ---- Auth helpers (session shell) --------------------------------------------------
+
+const SESSION_USER = {
+  user_id: "u-1",
+  email: "op@example.com",
+  tenant_id: "t-1",
+  role: "owner",
+};
+
+describe("auth helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("login POSTs /api/auth/login with the exact body and parses {user}", async () => {
+    const mock = stubFetch(jsonResponse(200, { user: SESSION_USER }));
+
+    const res = await login("op@example.com", "hunter22");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/auth/login");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"email":"op@example.com","password":"hunter22"}',
+    );
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.user.email).toBe("op@example.com");
+  });
+
+  it("login surfaces a 401 INVALID_CREDENTIALS verbatim as ApiError", async () => {
+    stubFetch(jsonResponse(401, { code: "INVALID_CREDENTIALS", message: "bad email or password" }));
+    const err = await login("op@example.com", "wrong").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
+    expect((err as ApiError).body?.code).toBe("INVALID_CREDENTIALS");
+  });
+
+  it("logout POSTs /api/auth/logout with an empty object body", async () => {
+    const mock = stubFetch(jsonResponse(200, {}));
+
+    await logout();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/auth/logout");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe("{}");
+  });
+
+  it("signup POSTs /api/auth/signup with the tenant_name body", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, {
+        tenant: { tenant_id: "t-1", name: "Acme Trading", created_at: "2026-07-06T10:00:00Z" },
+        user: { user_id: "u-1", email: "op@example.com", tenant_id: "t-1", role: "owner" },
+      }),
+    );
+
+    const res = await signup("Acme Trading", "op@example.com", "hunter22");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/auth/signup");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"tenant_name":"Acme Trading","email":"op@example.com","password":"hunter22"}',
+    );
+    expect(res.tenant.tenant_id).toBe("t-1");
+    expect(res.user.role).toBe("owner");
+  });
+
+  it("bootstrap POSTs /api/auth/bootstrap and parses the admin response", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, {
+        user: { user_id: "u-0", email: "root@example.com", tenant_id: null, role: "platform_admin" },
+      }),
+    );
+
+    const res = await bootstrap("root@example.com", "hunter22");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/auth/bootstrap");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"email":"root@example.com","password":"hunter22"}',
+    );
+    expect(res.user.role).toBe("platform_admin");
+  });
+
+  it("fetchMe GETs /api/auth/me uncached and 401s as ApiError on no session", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { user: SESSION_USER, session_id: "sess-1" }),
+      jsonResponse(401, { code: "UNAUTHENTICATED", message: "no session" }),
+    );
+
+    const me = await fetchMe();
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/auth/me");
+    expect(mock.mock.calls[0]?.[1]).toEqual({ cache: "no-store" });
+    expect(me.role).toBe("owner");
+
+    const err = await fetchMe().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
   });
 });

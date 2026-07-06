@@ -36,6 +36,26 @@ func (s *Store) GetTenant(tenantID string) (Tenant, error) {
 	return t, err
 }
 
+// ListTenants returns every tenant ordered created_at then tenant_id (the
+// admin-console listing; env-admin ONLY at the API layer).
+func (s *Store) ListTenants() ([]Tenant, error) {
+	rows, err := s.db.Query(`SELECT tenant_id, name, created_at FROM tenants
+		ORDER BY created_at, tenant_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tenant
+	for rows.Next() {
+		var t Tenant
+		if err := rows.Scan(&t.TenantID, &t.Name, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // CreateTenantWithOwnerToken atomically creates a tenant AND mints its
 // first owner token + created audit event (multi-tenant-rbac.md §Tenancy
 // rules: the tenant-creation response mints the initial owner token).

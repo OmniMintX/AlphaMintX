@@ -104,6 +104,11 @@ type Config struct {
 	// OB-6/OB-7); nil (no CONTROLPLANE_BACKUP_DIR) leaves them
 	// unregistered (404). Mode-independent: paper deployments wire it too.
 	Backup BackupEngine
+	// Vault seals/opens the platform-secret payloads (platform-secrets.md);
+	// nil answers the four secret routes 503 VAULT_UNAVAILABLE. The routes
+	// stay registered either way — the permission matrix is the total
+	// route set.
+	Vault SecretVault
 	// SafetyDriver is the OPTIONAL on-demand effects drive invoked by the
 	// kill handlers after their row is acknowledged (safety-wiring.md
 	// §API surface); nil in paper mode — no drive runs, the persisted row
@@ -243,6 +248,17 @@ func New(cfg Config) *Server {
 		"GET /api/v1/ops/backups":                        s.handleListBackups,
 		"GET /api/v1/ops/restore":                        s.handleGetRestoreStatus,
 		"POST /api/v1/ops/restore/ack":                   s.handlePostRestoreAck,
+		"POST /api/v1/auth/bootstrap":                    s.handleAuthBootstrap,
+		"POST /api/v1/auth/signup":                       s.handleAuthSignup,
+		"POST /api/v1/auth/login":                        s.handleAuthLogin,
+		"POST /api/v1/auth/logout":                       s.handleAuthLogout,
+		"GET /api/v1/auth/me":                            s.handleAuthMe,
+		"GET /api/v1/platform/secrets":                   s.handleListPlatformSecrets,
+		"POST /api/v1/platform/secrets/binance":          s.handleSetBinanceSecret,
+		"POST /api/v1/platform/secrets/llm":              s.handleSetLLMSecret,
+		"GET /api/v1/agent/llm-config":                   s.handleAgentLLMConfig,
+		"GET /api/v1/tenants":                            s.handleListTenants,
+		"GET /api/v1/users":                              s.handleListUsers,
 	}
 	for _, perm := range Permissions() {
 		switch perm.Requires {

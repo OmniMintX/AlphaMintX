@@ -3,8 +3,11 @@
 // verify the web tier alongside `controlplane --version`.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const { readFileSync } = await import("node:fs");
-  const { join } = await import("node:path");
+  // webpackIgnore: middleware.ts adds an edge compile of this file, and
+  // webpack must not try to bundle node builtins there — the runtime guard
+  // above means these imports only ever execute under node.
+  const { readFileSync } = await import(/* webpackIgnore: true */ "node:fs");
+  const { join } = await import(/* webpackIgnore: true */ "node:path");
   let buildID = "dev";
   try {
     buildID = readFileSync(join(process.cwd(), ".next", "BUILD_ID"), "utf8").trim();

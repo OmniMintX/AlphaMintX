@@ -15,8 +15,13 @@ type RoutePermission struct {
 	// (env AND DB agent tokens — own strategy only, guard-enforced),
 	// env-admin.
 	Classes []string
-	// Public marks the single unauthenticated route (GET /health).
+	// Public marks the unauthenticated routes: GET /health and the three
+	// password-auth POSTs (bootstrap, signup, login).
 	Public bool
+	// Session marks the web-session-only routes (logout, me): ANY
+	// authenticated session principal passes; API and env tokens never do
+	// (Roles and Classes are empty on these rows).
+	Session bool
 	// Requires names optional wiring the route depends on: "" always
 	// registered, requiresIngestion (limits + runtime state),
 	// requiresLimits (a limits provider), requiresLiveOMS (a
@@ -33,8 +38,12 @@ const (
 )
 
 // allows reports whether the principal's role (user class) or class (env
-// and agent classes) may call the route.
+// and agent classes) may call the route. Session rows admit exactly the
+// web-session principals, whatever their role or class.
 func (p RoutePermission) allows(pr principal) bool {
+	if p.Session {
+		return pr.sessionID != ""
+	}
 	if pr.class == classUser {
 		return slices.Contains(p.Roles, pr.role)
 	}
@@ -138,5 +147,30 @@ func Permissions() []RoutePermission {
 		// unlike the backup routes, no CONTROLPLANE_BACKUP_DIR required.
 		{Method: "GET", Path: "/api/v1/ops/restore", Classes: []string{classRead, classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/ops/restore/ack", Classes: []string{classEnvAdmin}},
+		// Password auth (multi-tenant-rbac.md §Password auth and web
+		// sessions): bootstrap, signup, and login are unauthenticated by
+		// construction (credentials ARE the body); logout and me are
+		// session-only — an API or env token is 403 (a session is a
+		// browser credential, not an automation surface).
+		{Method: "POST", Path: "/api/v1/auth/bootstrap", Public: true},
+		{Method: "POST", Path: "/api/v1/auth/signup", Public: true},
+		{Method: "POST", Path: "/api/v1/auth/login", Public: true},
+		{Method: "POST", Path: "/api/v1/auth/logout", Session: true},
+		{Method: "GET", Path: "/api/v1/auth/me", Session: true},
+		// Platform secrets (platform-secrets.md): the three admin routes
+		// are env-admin ONLY — env admin token + platform_admin sessions,
+		// NOT tenant owners in v1 — and return metadata views only; the
+		// agent llm-config read is agent tokens ONLY (any agent — the
+		// route has no {id}, so the strategy-scope guard does not apply)
+		// and is the ONE endpoint returning a secret value. Always
+		// registered; a nil vault answers 503 VAULT_UNAVAILABLE.
+		{Method: "GET", Path: "/api/v1/platform/secrets", Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/platform/secrets/binance", Classes: []string{classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/platform/secrets/llm", Classes: []string{classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/agent/llm-config", Classes: []string{classAgent}},
+		// Admin-console listings (platform-secrets.md §Admin listings):
+		// platform-wide views, env-admin ONLY — never a tenant surface.
+		{Method: "GET", Path: "/api/v1/tenants", Classes: []string{classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/users", Classes: []string{classEnvAdmin}},
 	}
 }

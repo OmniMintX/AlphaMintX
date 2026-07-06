@@ -180,4 +180,28 @@ CREATE TABLE IF NOT EXISTS kill_clear_events (clear_id TEXT PRIMARY KEY,  -- app
       OR (scope = 'platform' AND strategy_id IS NULL AND tenant_id IS NULL)));
 CREATE INDEX IF NOT EXISTS idx_kill_clear_scope
   ON kill_clear_events (scope, strategy_id, tenant_id, cleared_epoch);
+CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY,             -- multi-tenant-rbac.md §Password auth
+  tenant_id TEXT REFERENCES tenants,                                    -- NULL iff role = 'platform_admin'
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,                                          -- bcrypt; write-only after save
+  role TEXT NOT NULL CHECK (role IN ('owner','admin','trader','viewer','platform_admin')),
+  created_at TEXT NOT NULL, disabled_at TEXT,
+  CHECK ((role = 'platform_admin' AND tenant_id IS NULL)
+      OR (role <> 'platform_admin' AND tenant_id IS NOT NULL)));
+CREATE TABLE IF NOT EXISTS web_sessions (session_id TEXT PRIMARY KEY,   -- mutable snapshot; ONLY legal
+  user_id TEXT NOT NULL REFERENCES users,                               -- mutation sets revoked_at once
+  token_hash TEXT NOT NULL UNIQUE,                                      -- hex(SHA-256(amxs_ plaintext))
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT);
+CREATE TABLE IF NOT EXISTS user_events (event_id TEXT PRIMARY KEY,      -- append-only user audit
+  user_id TEXT NOT NULL REFERENCES users,
+  event TEXT NOT NULL CHECK (event IN ('created','login','logout')),
+  actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_secrets (   -- mutable snapshot (platform-secrets.md)
+  kind TEXT PRIMARY KEY CHECK (kind IN ('binance','llm')),
+  payload_ciphertext TEXT NOT NULL,             -- vault-sealed (AES-256-GCM), never plaintext
+  meta_json TEXT NOT NULL,                      -- non-secret display metadata ONLY
+  updated_at TEXT NOT NULL, updated_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS secret_events (event_id TEXT PRIMARY KEY,    -- append-only secret audit
+  kind TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('set','rotated')),
+  actor_id TEXT NOT NULL, recorded_at TEXT NOT NULL);
 `

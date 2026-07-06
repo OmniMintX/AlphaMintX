@@ -144,10 +144,20 @@ after its submission retries — a defect alert, never a routine skip.
 
 | Variable | Meaning |
 |---|---|
-| `MINTROUTER_BASE_URL` | Base URL of the mintrouter relay (e.g. `https://mintrouter.internal`). Required in live mode. |
-| `MINTROUTER_API_KEY` | Bearer key. **Secret**: MUST NOT be logged, MUST NOT appear in argv/process lists, MUST NOT be echoed in error messages or traces. Read from env only. Required in live mode. |
-| `MINTROUTER_TIMEOUT_SECONDS` | Per-**attempt** hard timeout; the overall per-call deadline is 3 × this (§1). Default `60`. |
+| `MINTROUTER_BASE_URL` | Base URL of the mintrouter relay (e.g. `https://mintrouter.internal`). Optional in live mode when the control-plane vault holds an LLM config. |
+| `MINTROUTER_API_KEY` | Bearer key. **Secret**: MUST NOT be logged, MUST NOT appear in argv/process lists, MUST NOT be echoed in error messages or traces. Optional in live mode when the control-plane vault holds an LLM config. |
+| `MINTROUTER_TIMEOUT_SECONDS` | Per-**attempt** hard timeout; the overall per-call deadline is 3 × this (§1). Default `60`. When set, it wins over a control-plane-fetched `timeout_seconds`. |
 | `ALPHAMINTX_LLM_MODE` | `stub` (default; `StubLLM`, no network, zero cost) or `live` (mintrouter client). Any other value is a startup error. |
 
-Live mode MUST fail fast at startup when `MINTROUTER_BASE_URL` or
-`MINTROUTER_API_KEY` is missing. Stub mode MUST NOT require either.
+Live-mode config resolution order (`llm/factory.py`): **env override →
+control-plane vault → startup error**. When BOTH `MINTROUTER_BASE_URL` and
+`MINTROUTER_API_KEY` are set, they win and no control-plane call is made.
+Otherwise, when `ALPHAMINTX_CONTROLPLANE_BASE_URL` and
+`ALPHAMINTX_STRATEGY_TOKEN` are both present, the factory issues one
+synchronous `GET /api/v1/agent/llm-config` (bearer-authenticated, 10 s timeout)
+and uses the returned `{base_url, api_key, timeout_seconds}`; a `404
+NOT_CONFIGURED`, any other non-2xx, a timeout, or a transport error is a
+startup `LLMConfigError` that never echoes the token or the response body. When
+neither the full env pair nor a reachable control-plane config exists, live
+mode MUST fail fast naming both options. Stub mode requires none of these and
+never fetches.

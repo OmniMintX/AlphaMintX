@@ -1,17 +1,9 @@
-// Typed fetch wrapper for the Phase 1 control-plane HTTP API
-// (docs/specs/persistence-and-api.md §HTTP API). Base URL and the read token
-// come from the environment — never hardcoded:
-//   NEXT_PUBLIC_API_BASE_URL   control-plane origin ("" = same origin)
-//   NEXT_PUBLIC_READ_TOKEN     READ_TOKEN, GETs only (never authorizes POSTs)
-// In the same-origin deployment the empty base URL resolves against the Next
-// server, which proxies /api/v1/* to the control-plane via build-time
-// rewrites (CONTROLPLANE_API_BASE_URL, src/lib/config/rewrites.ts).
-// NEXT_PUBLIC_API_BASE_URL remains the explicit cross-origin escape hatch —
-// it requires a fronting proxy, since the control-plane serves no CORS
-// headers.
-// The OPERATOR_TOKEN is server-only: approvals POST to the same-origin route
-// handler (app/api/strategies/[id]/approvals/route.ts), which attaches it —
-// the approve credential is never inlined into a client bundle.
+// Typed fetch wrapper for the control-plane HTTP API, session edition: every
+// read and mutation goes through a same-origin Next route. Data traffic hits
+// /api/cp/<path> (the catch-all session proxy, app/api/cp/[...path]/route.ts,
+// which attaches the HttpOnly amx_session cookie's bearer server-side) and
+// auth flows hit /api/auth/*. No token or base URL is ever inlined into this
+// bundle — the browser never sees a credential.
 
 import type { z } from "zod";
 
@@ -19,21 +11,33 @@ import {
   alertsPageSchema,
   apiErrorBodySchema,
   approvalDecisionSchema,
+  bootstrapResponseSchema,
   killClearResponseSchema,
   killResponseSchema,
   lifecycleResponseSchema,
   limitChangeResponseSchema,
   limitsStatusSchema,
+  loginResponseSchema,
+  logoutResponseSchema,
   paperGateReportSchema,
+  platformSecretsResponseSchema,
   runDetailSchema,
   runsPageSchema,
   safetyStatusSchema,
+  secretWriteResponseSchema,
+  meResponseSchema,
+  signupResponseSchema,
   strategiesPageSchema,
   strategySchema,
+  tenantSchema,
+  tenantsResponseSchema,
+  usersResponseSchema,
   type AlertsPage,
   type ApiErrorBody,
   type ApprovalDecision,
   type ApprovalRequest,
+  type BinanceEnv,
+  type BootstrapResponse,
   type KillClearRequest,
   type KillClearResponse,
   type KillRequest,
@@ -44,12 +48,21 @@ import {
   type LimitChangeRequest,
   type LimitChangeResponse,
   type LimitsStatus,
+  type LoginResponse,
+  type LogoutResponse,
   type PaperGateReport,
+  type PlatformSecretsResponse,
   type RunDetail,
   type RunsPage,
   type SafetyStatus,
+  type SecretWriteResponse,
+  type SessionUser,
+  type SignupResponse,
   type StrategiesPage,
   type Strategy,
+  type Tenant,
+  type TenantsResponse,
+  type UsersResponse,
 } from "./schema";
 import { DEFAULT_LIMIT } from "./pagination";
 
@@ -61,13 +74,9 @@ export const POLL_INTERVAL_MS = 10_000;
 // 6 x POLL_INTERVAL_MS (60 s) and never tighter — including on a 429.
 export const PAPER_GATE_POLL_INTERVAL_MS = 6 * POLL_INTERVAL_MS;
 
-export function apiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-}
-
-function readToken(): string | undefined {
-  return process.env.NEXT_PUBLIC_READ_TOKEN || undefined;
-}
+// Same-origin base of the catch-all session proxy: /api/cp/<cp-path> maps to
+// `${CP}/api/v1/<cp-path>` server-side.
+export const CP_PROXY_BASE = "/api/cp";
 
 export type QueryParams = Record<string, string | number | undefined>;
 
@@ -78,10 +87,6 @@ export function buildUrl(base: string, path: string, query?: QueryParams): strin
   }
   const qs = params.toString();
   return `${base}${path}${qs ? `?${qs}` : ""}`;
-}
-
-export function authHeaders(token: string | undefined): Record<string, string> {
-  return token ? { authorization: `Bearer ${token}` } : {};
 }
 
 // Body of POST .../approvals: {verdict_id, approved: bool}.
@@ -135,56 +140,55 @@ async function parseResponse<T>(res: Response, schema: z.ZodType<T>): Promise<T>
   return schema.parse(json);
 }
 
+// Same-origin GET through the session proxy: the cookie rides along
+// automatically and no auth header is ever attached here.
 async function apiGet<T>(path: string, schema: z.ZodType<T>, query?: QueryParams): Promise<T> {
-  const res = await fetch(buildUrl(apiBaseUrl(), path, query), {
-    headers: authHeaders(readToken()),
-    cache: "no-store",
-  });
+  const res = await fetch(buildUrl(CP_PROXY_BASE, path, query), { cache: "no-store" });
   return parseResponse(res, schema);
 }
 
 export function fetchStrategies(page = 1, limit = DEFAULT_LIMIT): Promise<StrategiesPage> {
-  return apiGet("/api/v1/strategies", strategiesPageSchema, { page, limit });
+  return apiGet("/strategies", strategiesPageSchema, { page, limit });
 }
 
 export function fetchStrategy(strategyId: string): Promise<Strategy> {
-  return apiGet(`/api/v1/strategies/${strategyId}`, strategySchema);
+  return apiGet(`/strategies/${strategyId}`, strategySchema);
 }
 
 export function fetchRuns(strategyId: string, page = 1, limit = DEFAULT_LIMIT): Promise<RunsPage> {
-  return apiGet(`/api/v1/strategies/${strategyId}/runs`, runsPageSchema, { page, limit });
+  return apiGet(`/strategies/${strategyId}/runs`, runsPageSchema, { page, limit });
 }
 
 export function fetchRunDetail(strategyId: string, runId: string): Promise<RunDetail> {
-  return apiGet(`/api/v1/strategies/${strategyId}/runs/${runId}`, runDetailSchema);
+  return apiGet(`/strategies/${strategyId}/runs/${runId}`, runDetailSchema);
 }
 
 // Composite safety status (operator-surface.md OS-7): lifecycle state,
 // binding kills with their clears, breaker-today, watchdog liveness.
 export function fetchSafety(strategyId: string): Promise<SafetyStatus> {
-  return apiGet(`/api/v1/strategies/${strategyId}/safety`, safetyStatusSchema);
+  return apiGet(`/strategies/${strategyId}/safety`, safetyStatusSchema);
 }
 
 // Per-strategy safety_alerts feed (OS-15/OS-16), newest first; pages are
 // per-poll snapshots under LIMIT/OFFSET.
 export function fetchAlerts(strategyId: string, page = 1, limit = DEFAULT_LIMIT): Promise<AlertsPage> {
-  return apiGet(`/api/v1/strategies/${strategyId}/alerts`, alertsPageSchema, { page, limit });
+  return apiGet(`/strategies/${strategyId}/alerts`, alertsPageSchema, { page, limit });
 }
 
 // The LC-23 paper-gate report (LC-24 read). Poll at
 // PAPER_GATE_POLL_INTERVAL_MS only — this GET self-charges the rate bucket.
 export function fetchPaperGate(strategyId: string): Promise<PaperGateReport> {
-  return apiGet(`/api/v1/strategies/${strategyId}/paper-gate`, paperGateReportSchema);
+  return apiGet(`/strategies/${strategyId}/paper-gate`, paperGateReportSchema);
 }
 
 // DB-backed risk limits: effective values, changeable fields, and the
 // change audit trail.
 export function fetchLimits(strategyId: string): Promise<LimitsStatus> {
-  return apiGet(`/api/v1/strategies/${strategyId}/limits`, limitsStatusSchema);
+  return apiGet(`/strategies/${strategyId}/limits`, limitsStatusSchema);
 }
 
-// POSTs to a same-origin Next proxy route (which holds the OPERATOR_TOKEN;
-// this client never sees it and attaches no auth header). Upstream errors
+// POSTs to a same-origin Next route (the session proxy attaches the cookie's
+// bearer server-side; this client attaches no auth header). Upstream errors
 // pass through verbatim and surface as ApiError (OS-30).
 async function proxyPost<T>(path: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
   const res = await fetch(path, {
@@ -205,7 +209,7 @@ export function postApproval(
   strategyId: string,
   payload: ApprovalRequest,
 ): Promise<ApprovalDecision> {
-  return proxyPost(`/api/strategies/${strategyId}/approvals`, payload, approvalDecisionSchema);
+  return proxyPost(`/api/cp/strategies/${strategyId}/approvals`, payload, approvalDecisionSchema);
 }
 
 // One lifecycle transition (OS-27). Any 422 (ILLEGAL_TRANSITION,
@@ -215,12 +219,12 @@ export function postLifecycle(
   strategyId: string,
   payload: LifecycleRequest,
 ): Promise<LifecycleResponse> {
-  return proxyPost(`/api/strategies/${strategyId}/lifecycle`, payload, lifecycleResponseSchema);
+  return proxyPost(`/api/cp/strategies/${strategyId}/lifecycle`, payload, lifecycleResponseSchema);
 }
 
 // Strategy-tier kill (OS-28); the response acknowledges persistence only.
 export function postKill(strategyId: string, payload: KillRequest): Promise<KillResponse> {
-  return proxyPost(`/api/strategies/${strategyId}/kill`, payload, killResponseSchema);
+  return proxyPost(`/api/cp/strategies/${strategyId}/kill`, payload, killResponseSchema);
 }
 
 // Runtime risk-limit changes through the same-origin proxy; the response
@@ -230,7 +234,7 @@ export function postLimits(
   strategyId: string,
   payload: LimitChangeRequest,
 ): Promise<LimitChangeResponse> {
-  return proxyPost(`/api/strategies/${strategyId}/limits`, payload, limitChangeResponseSchema);
+  return proxyPost(`/api/cp/strategies/${strategyId}/limits`, payload, limitChangeResponseSchema);
 }
 
 // Strategy-tier clear (OS-29).
@@ -238,7 +242,7 @@ export function postKillClear(
   strategyId: string,
   payload: KillClearRequest,
 ): Promise<KillClearResponse> {
-  return proxyPost(`/api/strategies/${strategyId}/kill/clear`, payload, killClearResponseSchema);
+  return proxyPost(`/api/cp/strategies/${strategyId}/kill/clear`, payload, killClearResponseSchema);
 }
 
 // Clears the displayed standing strategy kill (OS-29): observed_epoch is the
@@ -257,4 +261,93 @@ export async function clearStrategyKill(
     if (err instanceof ApiError && err.status === 409) refetchSafety();
     throw err;
   }
+}
+
+// ---- Platform settings & admin (platform_admin only) ------------------------------
+// All six go through the same /api/cp session proxy; a non-admin session
+// surfaces the upstream 403 verbatim as ApiError, and an unprovisioned vault
+// key surfaces 503 VAULT_UNAVAILABLE.
+
+// Stored-secret METADATA only (kind, last4, updated_at/by) — the values are
+// write-only and never come back over the wire.
+export function fetchPlatformSecrets(): Promise<PlatformSecretsResponse> {
+  return apiGet("/platform/secrets", platformSecretsResponseSchema);
+}
+
+// Stores the platform Binance credential; the response echoes the metadata
+// snapshot only, never the submitted key/secret.
+export function setBinanceSecret(
+  env: BinanceEnv,
+  apiKey: string,
+  apiSecret: string,
+): Promise<SecretWriteResponse> {
+  return proxyPost(
+    "/api/cp/platform/secrets/binance",
+    { env, api_key: apiKey, api_secret: apiSecret },
+    secretWriteResponseSchema,
+  );
+}
+
+// Stores the platform LLM provider credential (same write-only semantics).
+export function setLlmSecret(
+  baseUrl: string,
+  apiKey: string,
+  timeoutSeconds: number,
+): Promise<SecretWriteResponse> {
+  return proxyPost(
+    "/api/cp/platform/secrets/llm",
+    { base_url: baseUrl, api_key: apiKey, timeout_seconds: timeoutSeconds },
+    secretWriteResponseSchema,
+  );
+}
+
+export function fetchTenants(): Promise<TenantsResponse> {
+  return apiGet("/tenants", tenantsResponseSchema);
+}
+
+// POST /tenants answers the created tenant snapshot directly (no envelope).
+export function createTenant(name: string): Promise<Tenant> {
+  return proxyPost("/api/cp/tenants", { name }, tenantSchema);
+}
+
+export function fetchUsers(): Promise<UsersResponse> {
+  return apiGet("/users", usersResponseSchema);
+}
+
+// ---- Auth (session shell) --------------------------------------------------------
+// All auth flows hit the same-origin /api/auth/* routes. The session token is
+// moved into the HttpOnly amx_session cookie server-side — the login response
+// this client sees carries {"user": ...} only. Upstream errors (401
+// INVALID_CREDENTIALS, 409 EMAIL_TAKEN / CONFLICT) surface verbatim as
+// ApiError.
+
+export function login(email: string, password: string): Promise<LoginResponse> {
+  return proxyPost("/api/auth/login", { email, password }, loginResponseSchema);
+}
+
+export function logout(): Promise<LogoutResponse> {
+  return proxyPost("/api/auth/logout", {}, logoutResponseSchema);
+}
+
+export function signup(
+  tenantName: string,
+  email: string,
+  password: string,
+): Promise<SignupResponse> {
+  return proxyPost(
+    "/api/auth/signup",
+    { tenant_name: tenantName, email, password },
+    signupResponseSchema,
+  );
+}
+
+export function bootstrap(email: string, password: string): Promise<BootstrapResponse> {
+  return proxyPost("/api/auth/bootstrap", { email, password }, bootstrapResponseSchema);
+}
+
+// The current session identity; a missing/revoked session is a 401 ApiError.
+// The wire wraps the user next to its session_id — callers want the identity.
+export async function fetchMe(): Promise<SessionUser> {
+  const res = await fetch("/api/auth/me", { cache: "no-store" });
+  return (await parseResponse(res, meResponseSchema)).user;
 }

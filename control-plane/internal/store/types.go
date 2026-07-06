@@ -192,6 +192,30 @@ type APIToken struct {
 	RevokedAt  *string `json:"revoked_at"`
 }
 
+// User mirrors the users table MINUS password_hash: the bcrypt hash is
+// write-only after save (no-read-back invariant) and never crosses the
+// store boundary on reads — UserByEmail hands it to the login comparison
+// only. TenantID is NULL iff Role == "platform_admin" (table CHECK).
+type User struct {
+	UserID     string  `json:"user_id"`
+	TenantID   *string `json:"tenant_id"`
+	Email      string  `json:"email"`
+	Role       string  `json:"role"`
+	CreatedAt  string  `json:"created_at"`
+	DisabledAt *string `json:"disabled_at"`
+}
+
+// WebSession mirrors the web_sessions table MINUS token_hash (no-read-back
+// invariant): a mutable snapshot whose ONLY legal mutation sets revoked_at
+// once (multi-tenant-rbac.md §Password auth).
+type WebSession struct {
+	SessionID string  `json:"session_id"`
+	UserID    string  `json:"user_id"`
+	CreatedAt string  `json:"created_at"`
+	ExpiresAt string  `json:"expires_at"`
+	RevokedAt *string `json:"revoked_at"`
+}
+
 // RiskLimitChange mirrors the append-only risk_limit_changes table: one row
 // per changed field (old -> new, actor, timestamp), replayed rowid-ascending
 // into the effective-limits overlay (multi-tenant-rbac.md §Runtime limit

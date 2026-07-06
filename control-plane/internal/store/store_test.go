@@ -390,6 +390,20 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// row mutation — the append-only invariant holds.
 		"RestoreGateEngaged": true, "RestoreGateUserVersion": true,
 		"RestoreGateAlertPending": true, "ClearRestoreGate": true,
+		// Password auth + web sessions (multi-tenant-rbac.md §Password
+		// auth): users/web_sessions are mutable snapshots like api_tokens
+		// (disabled_at/revoked_at set at most once); user_events is
+		// append-only and written inside the same transactions.
+		"CreatePlatformAdmin": true, "CreateTenantWithOwnerUser": true,
+		"UserByEmail": true, "DisableUser": true,
+		"InsertWebSession": true, "WebSessionByHash": true, "RevokeWebSession": true,
+		// Platform secrets (platform-secrets.md): platform_secrets is a
+		// mutable snapshot exempt like strategy_state; UpsertPlatformSecret
+		// appends its secret_events audit row in the SAME transaction
+		// ('set'/'rotated', invariant 7); the two reads and the two
+		// admin-console listings are read-only.
+		"UpsertPlatformSecret": true, "GetPlatformSecret": true, "ListPlatformSecretMeta": true,
+		"ListTenants": true, "ListUsers": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

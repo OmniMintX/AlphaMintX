@@ -78,6 +78,19 @@ const (
 	// conflicts for partner scripts, never silent duplicates.
 	codeStrategyNameTaken    = "STRATEGY_NAME_TAKEN"
 	codeStrategyLimitReached = "STRATEGY_LIMIT_REACHED"
+	// Password-auth codes (multi-tenant-rbac.md §Password auth and web
+	// sessions): every login failure — unknown email, wrong password,
+	// disabled user — is the SAME 401 INVALID_CREDENTIALS (no account
+	// enumeration); the two 409s follow the TENANT_EXISTS precedent.
+	codeInvalidCredentials = "INVALID_CREDENTIALS"
+	codeEmailExists        = "EMAIL_EXISTS"
+	codeBootstrapComplete  = "BOOTSTRAP_COMPLETE"
+	// Platform-secrets codes (platform-secrets.md §API): 503 when no
+	// vault is wired (key file missing at startup is a startup failure,
+	// nil Config.Vault is the test/replay wiring); 404 on the agent
+	// llm-config read before the first set.
+	codeVaultUnavailable = "VAULT_UNAVAILABLE"
+	codeNotConfigured    = "NOT_CONFIGURED"
 	// Lifecycle and kill-clear codes (lifecycle-api.md §Error codes).
 	codeInvalidLifecycleState    = "INVALID_LIFECYCLE_STATE"
 	codeUseKillEndpoint          = "USE_KILL_ENDPOINT"

@@ -112,7 +112,14 @@ func TestRBACMatrix(t *testing.T) {
 		path := matrixPath(perm.Path)
 		t.Run(perm.Method+" "+perm.Path, func(t *testing.T) {
 			if perm.Public {
-				if rec := e.do(t, perm.Method, path, "", nil); rec.Code != http.StatusOK {
+				// No auth gate: the public POSTs (password auth) answer
+				// 400 to this empty body, never 401/403; the public GET
+				// (health) answers 200.
+				rec := e.do(t, perm.Method, path, "", nil)
+				if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
+					t.Errorf("public route: status = %d, want no auth gate", rec.Code)
+				}
+				if perm.Method == http.MethodGet && rec.Code != http.StatusOK {
 					t.Errorf("public route: status = %d, want 200", rec.Code)
 				}
 				return

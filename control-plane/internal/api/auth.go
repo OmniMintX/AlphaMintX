@@ -64,20 +64,32 @@ const (
 	RoleOwner  = "owner"
 )
 
+// RolePlatformAdmin is the password-auth platform operator role
+// (multi-tenant-rbac.md §Password auth): tenant_id NULL, sessions classify
+// as classEnvAdmin. It is NOT in roleRank — no token mint/revoke ceiling
+// names it.
+const RolePlatformAdmin = "platform_admin"
+
 // roleRank orders viewer < trader < admin < owner (mint/revoke ceilings).
 var roleRank = map[string]int{RoleViewer: 0, RoleTrader: 1, RoleAdmin: 2, RoleOwner: 3}
 
 // principal is the resolved request identity. Env classes are
 // platform-scoped (tenantID empty); DB tokens carry their tenant and their
-// token_id audit identity. rateKey is the rate-limiter key: the plaintext
-// for env tokens (Phase 1 behavior) and the token_hash for DB tokens, so
-// plaintext is never held in long-lived maps (§Security rules).
+// token_id audit identity; web sessions carry their session and user
+// identities (platform_admin sessions classify as classEnvAdmin, tenant
+// user sessions as classUser). rateKey is the rate-limiter key: the
+// plaintext for env tokens (Phase 1 behavior) and the credential hash for
+// DB tokens and sessions, so plaintext is never held in long-lived maps
+// (§Security rules).
 type principal struct {
 	class      string
 	role       string // classUser only
-	tenantID   string // DB tokens only
+	tenantID   string // DB tokens and tenant-user sessions only
 	strategyID string // classAgent: the token's strategy scope
 	tokenID    string // DB tokens: the stable, non-secret audit identity
+	sessionID  string // web sessions only
+	userID     string // web sessions: the stable, non-secret audit identity
+	email      string // web sessions only
 	rateKey    string
 }
 
@@ -86,12 +98,15 @@ type principal struct {
 func (p principal) tenantBound() bool { return p.tenantID != "" }
 
 // actorID is the audit identity recorded in actor columns: token_id for DB
-// principals, "env-admin" for the env admin, OperatorPrincipal otherwise
+// principals, user_id for web sessions (platform_admin sessions included),
+// "env-admin" for the env admin, OperatorPrincipal otherwise
 // (multi-tenant-rbac.md §Audit identity).
 func (s *Server) actorID(pr principal) string {
 	switch {
 	case pr.tokenID != "":
 		return pr.tokenID
+	case pr.userID != "":
+		return pr.userID
 	case pr.class == classEnvAdmin:
 		return "env-admin"
 	default:
@@ -110,7 +125,8 @@ func hashToken(tok string) string {
 // resolvePrincipal classifies a presented bearer. Env-token constant-time
 // comparisons run FIRST and short-circuit the DB lookup (classification
 // precedence, normative); the DB lookup observes revoked_at on EVERY
-// request — a revoked token is unknown (401), never cached.
+// request — a revoked token is unknown (401), never cached. A bearer
+// matching no api_tokens row falls through to the web-session lookup.
 func (s *Server) resolvePrincipal(tok string) (principal, bool, error) {
 	if tokenEqual(s.cfg.ReadToken, tok) {
 		return principal{class: classRead, rateKey: tok}, true, nil
@@ -129,7 +145,7 @@ func (s *Server) resolvePrincipal(tok string) (principal, bool, error) {
 	hash := hashToken(tok)
 	row, err := s.cfg.Store.TokenByHash(hash)
 	if errors.Is(err, store.ErrNotFound) {
-		return principal{}, false, nil
+		return s.resolveSession(hash)
 	}
 	if err != nil {
 		return principal{}, false, err
@@ -152,14 +168,51 @@ func (s *Server) resolvePrincipal(tok string) (principal, bool, error) {
 	return pr, true, nil
 }
 
+// resolveSession classifies a web-session bearer by its hash
+// (multi-tenant-rbac.md §Password auth and web sessions): revocation,
+// expiry, and a disabled user are each observed on EVERY request — all
+// three are indistinguishable from an unknown token (401, never cached).
+// platform_admin sessions map to classEnvAdmin; tenant users to classUser
+// with their role and tenant.
+func (s *Server) resolveSession(hash string) (principal, bool, error) {
+	ws, u, err := s.cfg.Store.WebSessionByHash(hash)
+	if errors.Is(err, store.ErrNotFound) {
+		return principal{}, false, nil
+	}
+	if err != nil {
+		return principal{}, false, err
+	}
+	if ws.RevokedAt != nil || u.DisabledAt != nil || formatTime(s.cfg.Now()) >= ws.ExpiresAt {
+		return principal{}, false, nil
+	}
+	pr := principal{sessionID: ws.SessionID, userID: u.UserID, email: u.Email, rateKey: hash}
+	if u.Role == RolePlatformAdmin {
+		pr.class = classEnvAdmin
+		return pr, true, nil
+	}
+	pr.class = classUser
+	pr.role = u.Role
+	if u.TenantID != nil {
+		pr.tenantID = *u.TenantID
+	}
+	return pr, true, nil
+}
+
 // guard enforces one permission-matrix row in the normative order — auth
 // (401), then role/class (403), then agent strategy scope (403
-// STRATEGY_SCOPE_MISMATCH) — before the per-token POST rate limit and body
-// cap. Tenant-scoped object resolution (404) is the handler's job, so an
-// insufficient role never reveals whether an object exists.
+// STRATEGY_SCOPE_MISMATCH, {id} routes only: routes without a strategy
+// path segment, like GET /api/v1/agent/llm-config, admit any agent token)
+// — before the per-token POST rate limit and body cap. Tenant-scoped
+// object resolution (404) is the handler's job, so an insufficient role
+// never reveals whether an object exists.
 func (s *Server) guard(perm RoutePermission, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if perm.Public {
+			// Public POSTs (password auth) still get the body cap; no
+			// principal exists yet, so no per-token rate key applies.
+			if r.Method != http.MethodGet {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			}
 			next(w, r)
 			return
 		}
@@ -181,7 +234,8 @@ func (s *Server) guard(perm RoutePermission, next http.HandlerFunc) http.Handler
 			writeError(w, http.StatusForbidden, codeForbidden, "token not valid for this endpoint")
 			return
 		}
-		if pr.class == classAgent && pr.strategyID != r.PathValue("id") {
+		if pr.class == classAgent && strings.Contains(perm.Path, "{id}") &&
+			pr.strategyID != r.PathValue("id") {
 			writeError(w, http.StatusForbidden, codeStrategyScopeMismatch,
 				"strategy outside the token scope")
 			return

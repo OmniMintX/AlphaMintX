@@ -34,6 +34,12 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs = POLL_INTERVAL_MS
         })
         .catch((err: unknown) => {
           if (cancelled) return;
+          // A 401 means no/expired session (the middleware only checks cookie
+          // presence; the control-plane is the authority) — go sign in.
+          if (err instanceof ApiError && err.status === 401 && typeof window !== "undefined") {
+            window.location.assign("/login");
+            return;
+          }
           setError(err instanceof Error ? err.message : String(err));
           setErrorStatus(err instanceof ApiError ? err.status : null);
         });

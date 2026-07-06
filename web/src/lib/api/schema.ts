@@ -411,6 +411,118 @@ export const killClearResponseSchema = z.strictObject({
   superseded_event_ids: z.array(uuid),
 });
 
+// ---- Platform secrets (Settings) -------------------------------------------------
+
+// Exchange environment for the platform Binance credential.
+export const binanceEnvSchema = z.enum(["testnet", "prod"]);
+
+// Stored-secret METADATA as served by GET /platform/secrets — a discriminated
+// union on kind. Secrets are WRITE-ONLY: the wire carries the key's last 4
+// characters and provenance, never the stored values.
+export const binanceSecretItemSchema = z.strictObject({
+  kind: z.literal("binance"),
+  meta: z.strictObject({
+    env: binanceEnvSchema,
+    api_key_last4: z.string().min(1),
+  }),
+  updated_at: utcTimestamp,
+  updated_by: z.string().min(1),
+});
+
+export const llmSecretItemSchema = z.strictObject({
+  kind: z.literal("llm"),
+  meta: z.strictObject({
+    base_url: z.string().min(1),
+    api_key_last4: z.string().min(1),
+    timeout_seconds: z.number().int().min(1),
+  }),
+  updated_at: utcTimestamp,
+  updated_by: z.string().min(1),
+});
+
+export const platformSecretSchema = z.discriminatedUnion("kind", [
+  binanceSecretItemSchema,
+  llmSecretItemSchema,
+]);
+
+// GET /platform/secrets envelope; items is empty when nothing is configured.
+export const platformSecretsResponseSchema = z.strictObject({
+  items: z.array(platformSecretSchema),
+});
+
+// POST /platform/secrets/{binance,llm} 200 envelope: the stored item's
+// metadata snapshot only — never the submitted values.
+export const secretWriteResponseSchema = z.strictObject({
+  secret: platformSecretSchema,
+});
+
+// ---- Tenants / users (Admin) ------------------------------------------------------
+
+// Tenant snapshot as served by GET/POST /tenants (and echoed inside signup).
+export const tenantSchema = z.strictObject({
+  tenant_id: z.string().min(1),
+  name: z.string().min(1),
+  created_at: utcTimestamp,
+});
+
+export const tenantsResponseSchema = z.strictObject({
+  items: z.array(tenantSchema),
+});
+
+// Directory row from GET /users: tenant_id is null for platform-scoped
+// users; role stays an open set — display only, never switched on
+// exhaustively.
+export const adminUserSchema = z.strictObject({
+  user_id: z.string().min(1),
+  email: z.string().min(1),
+  tenant_id: z.string().nullable(),
+  role: z.string().min(1),
+  created_at: utcTimestamp,
+  disabled: z.boolean(),
+});
+
+export const usersResponseSchema = z.strictObject({
+  items: z.array(adminUserSchema),
+});
+
+// ---- Auth (session shell) --------------------------------------------------------
+
+// The session identity as returned by /api/auth/me and inside the login
+// response: tenant_id is null (and role "platform_admin") for platform
+// admins. role is an open set — display only, never switched on exhaustively.
+export const sessionUserSchema = z.strictObject({
+  user_id: z.string().min(1),
+  email: z.string().min(1),
+  tenant_id: z.string().nullable(),
+  role: z.string().min(1),
+});
+
+// Body of the same-origin /api/auth/login response: {"user": ...} only — the
+// session token lives in the HttpOnly cookie and never reaches this bundle.
+export const loginResponseSchema = z.strictObject({
+  user: sessionUserSchema,
+});
+
+// Signup echoes the created tenant snapshot alongside the owner user
+// (multi-tenant-rbac.md §Password auth — verified against the live wire).
+export const signupResponseSchema = z.strictObject({
+  tenant: tenantSchema,
+  user: sessionUserSchema,
+});
+
+export const bootstrapResponseSchema = z.strictObject({
+  user: sessionUserSchema,
+});
+
+// GET /api/auth/me wraps the identity and names the session row backing it.
+export const meResponseSchema = z.strictObject({
+  user: sessionUserSchema,
+  session_id: z.string().min(1),
+});
+
+// Logout answers an empty object.
+export const logoutResponseSchema = z.strictObject({});
+
 // ---- Errors --------------------------------------------------------------------
 
 // Error codes named by the spec; servers may add more, so the schema accepts
@@ -467,3 +579,17 @@ export type KillRequest = z.infer<typeof killRequestSchema>;
 export type KillResponse = z.infer<typeof killResponseSchema>;
 export type KillClearRequest = z.infer<typeof killClearRequestSchema>;
 export type KillClearResponse = z.infer<typeof killClearResponseSchema>;
+export type BinanceEnv = z.infer<typeof binanceEnvSchema>;
+export type PlatformSecret = z.infer<typeof platformSecretSchema>;
+export type PlatformSecretsResponse = z.infer<typeof platformSecretsResponseSchema>;
+export type SecretWriteResponse = z.infer<typeof secretWriteResponseSchema>;
+export type Tenant = z.infer<typeof tenantSchema>;
+export type TenantsResponse = z.infer<typeof tenantsResponseSchema>;
+export type AdminUser = z.infer<typeof adminUserSchema>;
+export type UsersResponse = z.infer<typeof usersResponseSchema>;
+export type SessionUser = z.infer<typeof sessionUserSchema>;
+export type LoginResponse = z.infer<typeof loginResponseSchema>;
+export type SignupResponse = z.infer<typeof signupResponseSchema>;
+export type BootstrapResponse = z.infer<typeof bootstrapResponseSchema>;
+export type MeResponse = z.infer<typeof meResponseSchema>;
+export type LogoutResponse = z.infer<typeof logoutResponseSchema>;

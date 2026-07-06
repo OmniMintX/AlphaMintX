@@ -36,6 +36,7 @@ import (
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/runstate"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/safety"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/vault"
 )
 
 // sweepInterval is the periodic pending-approval expiry sweep; the sweep
@@ -127,9 +128,23 @@ func serve(dbPath string) error {
 	if err != nil {
 		return err
 	}
+
+	// The platform-secrets vault (platform-secrets.md §Key file): the key
+	// file lives OUTSIDE the DB file, auto-generated 0600 on first use;
+	// loose permissions refuse to start. Key material is never logged.
+	keyFile := os.Getenv("CONTROLPLANE_SECRETS_KEY_FILE")
+	if keyFile == "" {
+		keyFile = dbPath + ".secrets.key"
+	}
+	secretsVault, err := vault.Open(keyFile)
+	if err != nil {
+		return err
+	}
+
 	cfg := api.Config{
 		Store:                  st,
 		Marks:                  marks,
+		Vault:                  secretsVault,
 		ReadToken:              os.Getenv("CONTROLPLANE_READ_TOKEN"),
 		OperatorToken:          os.Getenv("CONTROLPLANE_OPERATOR_TOKEN"),
 		OperatorPrincipal:      operatorPrincipal,
@@ -194,13 +209,35 @@ func serve(dbPath string) error {
 		}
 	}
 
+	// UI-managed Binance credentials (platform-secrets.md §Startup
+	// wiring): env vars, when set, win as an explicit operator override;
+	// otherwise live mode sources key/secret/env from the encrypted
+	// vault. The prod-ack literal stays env-only (invariant 15: an
+	// explicit operator setting before real funds — a UI write alone can
+	// never flip a deployment to prod).
+	binanceEnv := os.Getenv("CONTROLPLANE_BINANCE_ENV")
+	binanceKey := os.Getenv("CONTROLPLANE_BINANCE_API_KEY")
+	binanceSecret := os.Getenv("CONTROLPLANE_BINANCE_API_SECRET")
+	if os.Getenv("CONTROLPLANE_OMS_MODE") == "live" && (binanceKey == "" || binanceSecret == "") {
+		vaultEnv, vaultKey, vaultSecret, ok, err := api.LoadBinanceSecret(st, secretsVault)
+		if err != nil {
+			return err
+		}
+		if ok {
+			binanceKey, binanceSecret = vaultKey, vaultSecret
+			if binanceEnv == "" {
+				binanceEnv = vaultEnv
+			}
+		}
+	}
+
 	// The live-OMS opt-in (live-oms-and-reconciler.md §Config): exactly one
 	// of the paper bridge or the live OMS fills the Submitter seam.
 	liveCfg, err := parseLiveOMS(
 		os.Getenv("CONTROLPLANE_OMS_MODE"),
-		os.Getenv("CONTROLPLANE_BINANCE_ENV"),
-		os.Getenv("CONTROLPLANE_BINANCE_API_KEY"),
-		os.Getenv("CONTROLPLANE_BINANCE_API_SECRET"),
+		binanceEnv,
+		binanceKey,
+		binanceSecret,
 		os.Getenv("CONTROLPLANE_LIVE_PROD_ACK"),
 		os.Getenv("CONTROLPLANE_LIVE_OMS_TUNING"),
 	)

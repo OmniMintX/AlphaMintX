@@ -17,11 +17,17 @@ import {
   limitChangeResponseSchema,
   limitsStatusSchema,
   paperGateReportSchema,
+  platformSecretSchema,
+  platformSecretsResponseSchema,
   runDetailSchema,
   runsPageSchema,
   safetyAlertSchema,
   safetyStatusSchema,
+  secretWriteResponseSchema,
   strategiesPageSchema,
+  tenantSchema,
+  tenantsResponseSchema,
+  usersResponseSchema,
 } from "./schema";
 
 const STRATEGY_ID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e";
@@ -560,5 +566,124 @@ describe("buildLimitChanges", () => {
   it("drops undefined keys and builds an empty body from an empty input", () => {
     expect(buildLimitChanges({ max_open_positions: undefined })).toEqual({ changes: {} });
     expect(buildLimitChanges({})).toEqual({ changes: {} });
+  });
+});
+
+// ---- Platform secrets & admin directory (Settings / Admin) ------------------------
+
+const binanceSecretItem = {
+  kind: "binance",
+  meta: { env: "testnet", api_key_last4: "wfK4" },
+  updated_at: "2026-07-05T09:00:00Z",
+  updated_by: "root@example.com",
+};
+
+const llmSecretItem = {
+  kind: "llm",
+  meta: { base_url: "https://api.openai.com/v1", api_key_last4: "ab12", timeout_seconds: 30 },
+  updated_at: "2026-07-05T09:01:00Z",
+  updated_by: "root@example.com",
+};
+
+describe("platformSecretSchema (discriminated union on kind)", () => {
+  it("parses the binance meta variant", () => {
+    const parsed = platformSecretSchema.parse(binanceSecretItem);
+    expect(parsed.kind).toBe("binance");
+    if (parsed.kind === "binance") {
+      expect(parsed.meta.env).toBe("testnet");
+      expect(parsed.meta.api_key_last4).toBe("wfK4");
+    }
+  });
+
+  it("parses the llm meta variant", () => {
+    const parsed = platformSecretSchema.parse(llmSecretItem);
+    expect(parsed.kind).toBe("llm");
+    if (parsed.kind === "llm") {
+      expect(parsed.meta.base_url).toBe("https://api.openai.com/v1");
+      expect(parsed.meta.timeout_seconds).toBe(30);
+    }
+  });
+
+  it("rejects a kind/meta mismatch (each variant is strict)", () => {
+    expect(
+      platformSecretSchema.safeParse({ ...binanceSecretItem, meta: llmSecretItem.meta }).success,
+    ).toBe(false);
+    expect(
+      platformSecretSchema.safeParse({ ...llmSecretItem, meta: binanceSecretItem.meta }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown keys on the item and inside meta (write-only: values never ride the wire)", () => {
+    expect(platformSecretSchema.safeParse({ ...binanceSecretItem, api_key: "leak" }).success).toBe(
+      false,
+    );
+    expect(
+      platformSecretSchema.safeParse({
+        ...binanceSecretItem,
+        meta: { ...binanceSecretItem.meta, api_key: "leak" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an unknown env", () => {
+    expect(
+      platformSecretSchema.safeParse({
+        ...binanceSecretItem,
+        meta: { ...binanceSecretItem.meta, env: "mainnet" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("platform secrets envelopes", () => {
+  it("parses an empty items list (nothing configured)", () => {
+    expect(platformSecretsResponseSchema.parse({ items: [] }).items).toEqual([]);
+  });
+
+  it("parses a mixed list and the write echo envelope", () => {
+    const list = platformSecretsResponseSchema.parse({
+      items: [binanceSecretItem, llmSecretItem],
+    });
+    expect(list.items).toHaveLength(2);
+    expect(secretWriteResponseSchema.parse({ secret: llmSecretItem }).secret.kind).toBe("llm");
+  });
+
+  it("rejects unknown envelope keys", () => {
+    expect(platformSecretsResponseSchema.safeParse({ items: [], extra: 1 }).success).toBe(false);
+    expect(
+      secretWriteResponseSchema.safeParse({ secret: binanceSecretItem, extra: 1 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("tenant / user directory schemas", () => {
+  const tenant = { tenant_id: "t-1", name: "Acme Trading", created_at: "2026-07-01T00:00:00Z" };
+  const user = {
+    user_id: "u-1",
+    email: "op@example.com",
+    tenant_id: "t-1",
+    role: "owner",
+    created_at: "2026-07-01T00:00:00Z",
+    disabled: false,
+  };
+
+  it("parses the tenants envelope and rejects unknown tenant keys", () => {
+    expect(tenantsResponseSchema.parse({ items: [tenant] }).items[0]?.name).toBe("Acme Trading");
+    expect(tenantSchema.safeParse({ ...tenant, extra: 1 }).success).toBe(false);
+  });
+
+  it("parses a platform-scoped user (tenant_id null) with an open-set role", () => {
+    const parsed = usersResponseSchema.parse({
+      items: [{ ...user, tenant_id: null, role: "platform_admin", disabled: true }],
+    });
+    expect(parsed.items[0]?.tenant_id).toBeNull();
+    expect(parsed.items[0]?.role).toBe("platform_admin");
+    expect(parsed.items[0]?.disabled).toBe(true);
+  });
+
+  it("rejects unknown user keys and a missing disabled flag", () => {
+    expect(usersResponseSchema.safeParse({ items: [{ ...user, extra: 1 }] }).success).toBe(false);
+    const { disabled: _disabled, ...partial } = user;
+    expect(usersResponseSchema.safeParse({ items: [partial] }).success).toBe(false);
   });
 });
