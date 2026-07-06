@@ -2,10 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,6 +23,14 @@ import (
 
 // Request bounds: the enumerated chart dimensions plus the snapshot cap.
 const analysisSummaryMaxChars = 4000
+
+// Interactive-call bounds: the config timeout targets the agent pipeline's
+// short calls; a full structured analysis from a large model routinely runs
+// past 30s, so this endpoint floors the wait and caps the answer length.
+const (
+	analysisTimeoutFloorSeconds = 90
+	analysisMaxTokens           = 1024
+)
 
 var (
 	analysisSymbolPattern = regexp.MustCompile(`^[A-Z0-9]{5,20}$`)
@@ -53,8 +64,9 @@ type chatMessage struct {
 }
 
 type chatCompletionRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -140,13 +152,19 @@ func (s *Server) handleMarketLLMAnalysis(w http.ResponseWriter, r *http.Request)
 	if model == "" {
 		model = llmDefaultModelDefault
 	}
+	// The configured timeout targets the agent pipeline's short calls; an
+	// interactive full analysis needs more headroom, so floor it here.
 	timeout := cfg.TimeoutSeconds
 	if timeout < llmTimeoutMin {
 		timeout = llmTimeoutDefault
 	}
+	if timeout < analysisTimeoutFloorSeconds {
+		timeout = analysisTimeoutFloorSeconds
+	}
 	body, err := json.Marshal(chatCompletionRequest{
-		Model:    model,
-		Messages: []chatMessage{{Role: "user", Content: analysisPrompt(req)}},
+		Model:     model,
+		Messages:  []chatMessage{{Role: "user", Content: analysisPrompt(req)}},
+		MaxTokens: analysisMaxTokens,
 	})
 	if err != nil {
 		s.writeInternal(w, r, err)
@@ -168,6 +186,14 @@ func (s *Server) handleMarketLLMAnalysis(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		// The error may embed the request URL; the key never appears in it,
 		// but the log still carries no upstream detail beyond the failure.
+		// A deadline hit means the model was too slow, not that the host is
+		// down — surface the two cases distinctly.
+		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+			s.cfg.Logf("api: market llm-analysis: llm provider timed out after %ds", timeout)
+			writeError(w, http.StatusBadGateway, codeLLMUpstream,
+				fmt.Sprintf("llm provider timed out after %ds", timeout))
+			return
+		}
 		s.cfg.Logf("api: market llm-analysis: llm provider unreachable")
 		writeError(w, http.StatusBadGateway, codeLLMUpstream, "llm provider unreachable")
 		return
