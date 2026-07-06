@@ -6,22 +6,28 @@
 // tenant) + platform_admin — a viewer/trader session 403s on the data fetch
 // and the denied message renders in place of the section content (same
 // treatment as the alerts feed). Every *_usd field is an ADR-0003 decimal
-// string rendered verbatim — never parsed to float.
+// string rendered verbatim — never parsed to float. Platform admins also get
+// the billing-ops card (close period / run reconcile) above the sections.
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState } from "react";
 
 import {
+  closeBillingPeriod,
   fetchInvoiceDetail,
   fetchInvoices,
+  fetchMe,
   fetchReconciliationDetail,
   fetchReconciliations,
+  fetchTenants,
+  runBillingReconcile,
 } from "../../src/lib/api/client";
 import type {
   Discrepancy,
   Invoice,
   InvoiceLine,
   ReconciliationRun,
+  SessionUser,
 } from "../../src/lib/api/schema";
 import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
@@ -105,28 +111,227 @@ function useDetail<T>(load: () => Promise<T>): { detail: T | null; error: string
   return { detail, error };
 }
 
+// Session identity for the ops-card gate; a failed fetch leaves it null
+// (identity is cosmetic — data fetches own the 401 redirect). Mirrors the
+// nav.tsx hook.
+function useSessionUser(): SessionUser | null {
+  const [user, setUser] = useState<SessionUser | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchMe()
+      .then((u) => {
+        if (!cancelled) setUser(u);
+      })
+      .catch(() => {
+        // identity is cosmetic here; data fetches own the 401 redirect
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return user;
+}
+
 export default function BillingPage() {
   const { t } = useI18n();
+  const user = useSessionUser();
+  // Bumped after a successful close/reconcile: each section's load callback
+  // depends on its key, so a bump gives usePoll a new identity and refetches.
+  const [invoicesKey, setInvoicesKey] = useState(0);
+  const [reconsKey, setReconsKey] = useState(0);
   return (
     <>
       <header className="page-head">
         <h1 className="page-title">{t("billing.title")}</h1>
         <p className="page-sub">{t("billing.sub")}</p>
       </header>
-      <InvoicesSection />
-      <ReconsSection />
+      {user?.role === "platform_admin" && (
+        <BillingOpsCard
+          onClosed={() => setInvoicesKey((k) => k + 1)}
+          onReconciled={() => setReconsKey((k) => k + 1)}
+        />
+      )}
+      <InvoicesSection refreshKey={invoicesKey} />
+      <ReconsSection refreshKey={reconsKey} />
     </>
+  );
+}
+
+// ---- billing ops (platform_admin only) ---------------------------------------
+
+// Normative YYYY-MM UTC month shape (mirrors billingPeriod in schema.ts).
+const PERIOD_PATTERN = /^[0-9]{4}-(0[1-9]|1[0-2])$/;
+
+// Close-period / run-reconcile controls over a shared (tenant, period) pair.
+// Backend errors (400 INVALID_PERIOD — including the running month, 404
+// UNKNOWN_TENANT, 409 PERIOD_CLOSED) surface verbatim in the card banner.
+function BillingOpsCard({
+  onClosed,
+  onReconciled,
+}: {
+  onClosed: () => void;
+  onReconciled: () => void;
+}) {
+  const { t } = useI18n();
+  const tenants = usePoll(fetchTenants);
+  const [tenantId, setTenantId] = useState("");
+  const [period, setPeriod] = useState("");
+  const [closePending, setClosePending] = useState(false);
+  const [reconPending, setReconPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [closeResult, setCloseResult] = useState<Awaited<
+    ReturnType<typeof closeBillingPeriod>
+  > | null>(null);
+  const [reconResult, setReconResult] = useState<Awaited<
+    ReturnType<typeof runBillingReconcile>
+  > | null>(null);
+
+  const pending = closePending || reconPending;
+  const ready = tenantId !== "" && PERIOD_PATTERN.test(period);
+
+  const close = async () => {
+    setClosePending(true);
+    setError(null);
+    try {
+      const res = await closeBillingPeriod(tenantId, period);
+      setCloseResult(res);
+      onClosed();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setClosePending(false);
+    }
+  };
+
+  const reconcile = async () => {
+    setReconPending(true);
+    setError(null);
+    try {
+      const res = await runBillingReconcile(tenantId, period);
+      setReconResult(res);
+      onReconciled();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setReconPending(false);
+    }
+  };
+
+  // Defense in depth: the card is already gated on the session role, but a
+  // 403 on the tenant list (tenant principal) hides it silently too.
+  if (tenants.errorStatus === 403) return null;
+
+  return (
+    <section className="section">
+      <h2 className="section-title">{t("billing.ops.title")}</h2>
+      <div className="card">
+        <div className="grid">
+          {tenants.error && <ErrorBanner message={tenants.error} />}
+          {error && <ErrorBanner message={error} />}
+          <div className="row">
+            <label className="field" htmlFor="ops-tenant">
+              <span className="field-label">{t("billing.tbl.tenant")}</span>
+              <select
+                id="ops-tenant"
+                className="select mono"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+              >
+                <option value="">{t("billing.ops.tenant.ph")}</option>
+                {(tenants.data?.items ?? []).map((tn) => (
+                  <option key={tn.tenant_id} value={tn.tenant_id}>
+                    {tn.tenant_id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field" htmlFor="ops-period">
+              <span className="field-label">{t("billing.tbl.period")}</span>
+              <input
+                id="ops-period"
+                className="input mono"
+                type="month"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+              />
+            </label>
+          </div>
+          <span className="muted small">{t("billing.ops.hint")}</span>
+          <div className="row">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={pending || !ready}
+              onClick={() => void close()}
+            >
+              {closePending ? t("billing.ops.close.pending") : t("billing.ops.close")}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={pending || !ready}
+              onClick={() => void reconcile()}
+            >
+              {reconPending ? t("billing.ops.recon.pending") : t("billing.ops.recon")}
+            </button>
+          </div>
+          {closeResult && (
+            <div className="result-line" role="status">
+              <span>{t("billing.ops.close.done")}</span>
+              <span className="mono">{closeResult.invoice.period}</span>
+              <span className="muted small">
+                {t("billing.tbl.total")}: <span className="mono">{closeResult.invoice.total_usd}</span>
+              </span>
+              <span className="muted small">
+                {t("billing.tbl.lines")}: <span className="mono">{closeResult.invoice.line_count}</span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost dismiss"
+                aria-label={t("billing.ops.dismiss")}
+                onClick={() => setCloseResult(null)}
+              >
+                &times;
+              </button>
+            </div>
+          )}
+          {reconResult && (
+            <div className="result-line" role="status">
+              <span>{t("billing.ops.recon.done")}</span>
+              <span className={`badge ${statusTone(reconResult.run.status)}`}>
+                {reconResult.run.status}
+              </span>
+              <span className="muted small">
+                {t("billing.tbl.counts")}:{" "}
+                <span className="mono">
+                  {reconResult.run.matched_count} / {reconResult.run.discrepancy_count}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost dismiss"
+                aria-label={t("billing.ops.dismiss")}
+                onClick={() => setReconResult(null)}
+              >
+                &times;
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
 // ---- invoices ---------------------------------------------------------------
 
-function InvoicesSection() {
+function InvoicesSection({ refreshKey }: { refreshKey: number }) {
   const { t } = useI18n();
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 
-  const load = useCallback(() => fetchInvoices(page, 20), [page]);
+  // refreshKey is an extra dep on purpose: bumping it refetches after a close.
+  const load = useCallback(() => fetchInvoices(page, 20), [page, refreshKey]);
   const { data, error, errorStatus } = usePoll(load);
   const denied = errorStatus === 403;
 
@@ -261,12 +466,13 @@ function InvoiceDetail({ invoiceId }: { invoiceId: string }) {
 
 // ---- reconciliations --------------------------------------------------------
 
-function ReconsSection() {
+function ReconsSection({ refreshKey }: { refreshKey: number }) {
   const { t } = useI18n();
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 
-  const load = useCallback(() => fetchReconciliations(page, 20), [page]);
+  // refreshKey is an extra dep on purpose: bumping it refetches after a run.
+  const load = useCallback(() => fetchReconciliations(page, 20), [page, refreshKey]);
   const { data, error, errorStatus } = usePoll(load);
   const denied = errorStatus === 403;
 

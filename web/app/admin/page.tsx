@@ -2,9 +2,9 @@
 
 // Admin console (platform_admin only): tenant directory with inline create,
 // API token management (mint/revoke), the read-only user directory, plus
-// platform ops — tenant/platform kill switches and backup & restore. A
-// non-admin session 403s on the data fetches — the ApiError message renders
-// in the error banner instead of the tables.
+// platform ops — tenant/platform kill switches, backup & restore, and OMS
+// reconciliation. A non-admin session 403s on the data fetches — the
+// ApiError message renders in the error banner instead of the tables.
 
 import { Fragment, useCallback, useState } from "react";
 
@@ -14,6 +14,7 @@ import {
   clearTenantKill,
   createTenant,
   fetchBackups,
+  fetchOmsReconStatus,
   fetchRestoreStatus,
   fetchTenants,
   fetchTokens,
@@ -23,12 +24,14 @@ import {
   mintToken,
   revokeToken,
   runBackup,
+  runOmsRecon,
 } from "../../src/lib/api/client";
-import type {
-  MintTokenRequest,
-  MintedToken,
-  Tenant,
-  TenantsResponse,
+import {
+  TENANT_ID_PATTERN,
+  type MintTokenRequest,
+  type MintedToken,
+  type Tenant,
+  type TenantsResponse,
 } from "../../src/lib/api/schema";
 import { usePoll, type PollState } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
@@ -75,6 +78,7 @@ export default function AdminPage() {
         <UsersCard />
         <SafetyCard />
         <OpsCard />
+        <OmsReconCard />
       </div>
     </>
   );
@@ -82,9 +86,14 @@ export default function AdminPage() {
 
 function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
   const { t } = useI18n();
+  const [tenantId, setTenantId] = useState("");
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Owner token plaintext from the create response — shown exactly once
+  // (same one-shot rule as minted tokens), dismissed from state only.
+  const [ownerToken, setOwnerToken] = useState<{ tenantId: string; token: string } | null>(null);
+  const [copied, setCopied] = useState(false);
   // Per-row kill (arm/confirm + flatten) and clear (reason + observed epoch).
   const [killArmed, setKillArmed] = useState<string | null>(null);
   const [killFlatten, setKillFlatten] = useState(false);
@@ -95,17 +104,35 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
   const [killDone, setKillDone] = useState<{ id: string; epoch: number } | null>(null);
   const [clearDone, setClearDone] = useState<{ id: string; epoch: number } | null>(null);
 
+  // The regex itself matches "default" — the server reserves it separately,
+  // so it is rejected explicitly alongside the pattern.
+  const idTrim = tenantId.trim();
+  const idValid = TENANT_ID_PATTERN.test(idTrim) && idTrim !== "default";
+
   const create = async () => {
     setPending(true);
     setError(null);
     try {
-      await createTenant(name.trim());
+      const res = await createTenant(idTrim, name.trim());
+      setTenantId("");
       setName("");
+      setOwnerToken({ tenantId: res.tenant_id, token: res.owner_token.token });
+      setCopied(false);
       tenants.refresh();
     } catch (err) {
       setError(errText(err));
     } finally {
       setPending(false);
+    }
+  };
+
+  const copyToken = async () => {
+    if (!ownerToken) return;
+    try {
+      await navigator.clipboard.writeText(ownerToken.token);
+      setCopied(true);
+    } catch {
+      setCopied(false);
     }
   };
 
@@ -195,6 +222,16 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
           )}
           <div className="row">
             <input
+              className="input mono"
+              style={{ minWidth: "12rem" }}
+              placeholder={t("admin.tenantid.placeholder")}
+              aria-label={t("admin.tenantid.placeholder")}
+              autoComplete="off"
+              spellCheck={false}
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+            />
+            <input
               className="input"
               style={{ minWidth: "16rem" }}
               placeholder={t("admin.tenantname.placeholder")}
@@ -205,12 +242,45 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={pending || name.trim() === ""}
+              disabled={pending || !idValid || name.trim() === ""}
               onClick={() => void create()}
             >
               {t("admin.create")}
             </button>
           </div>
+          <p className="faint small" style={{ margin: "6px 0 0" }}>
+            {t("admin.tenantid.hint")}
+          </p>
+          {ownerToken && (
+            <div style={{ marginTop: 10 }}>
+              <div className="banner banner-warn" role="alert">
+                <span aria-hidden>&#9888;</span>
+                <span>{t("admin.tenants.ownertoken.once", { id: ownerToken.tenantId })}</span>
+              </div>
+              <pre className="codeblock" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                {ownerToken.token}
+              </pre>
+              <div className="row">
+                <button type="button" className="btn" onClick={() => void copyToken()}>
+                  {t("admin.tokens.copy")}
+                </button>
+                <span role="status" className="faint small">
+                  {copied ? t("admin.tokens.copied") : ""}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost dismiss"
+                  aria-label={t("admin.kill.dismiss")}
+                  onClick={() => {
+                    setOwnerToken(null);
+                    setCopied(false);
+                  }}
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+          )}
           {tenants.data.items.length === 0 ? (
             <div className="empty" role="status">
               {t("admin.notenants")}
@@ -1084,6 +1154,174 @@ function OpsCard() {
                     ))}
                   </tbody>
                 </table>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Badge color for the last reconcile run: completed=green, failed=red,
+// running/incomplete=yellow.
+function reconRunBadge(status: string): string {
+  if (status === "completed") return "badge-green";
+  if (status === "failed") return "badge-red";
+  return "badge-yellow";
+}
+
+// OMS reconciliation (live-OMS deployments only): status poll plus a manual
+// R1-R7 run behind an arm/confirm. In paper mode the route is unregistered —
+// the GET 404s and renders as a neutral hint, not an error.
+function OmsReconCard() {
+  const { t } = useI18n();
+  const status = usePoll(fetchOmsReconStatus);
+  const [armed, setArmed] = useState(false);
+  const [acceptReset, setAcceptReset] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showCounters, setShowCounters] = useState(false);
+
+  const run = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      await runOmsRecon(acceptReset);
+      status.refresh();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setPending(false);
+      setArmed(false);
+      setAcceptReset(false);
+    }
+  };
+
+  const notWired = status.errorStatus === 404;
+
+  return (
+    <div className="card">
+      <h3 className="card-title">{t("admin.recon.title")}</h3>
+      {notWired ? (
+        <p className="faint small">{t("admin.recon.notwired")}</p>
+      ) : (
+        <>
+          {status.error && <ErrorBanner message={status.error} />}
+          {error && <ErrorBanner message={error} />}
+          {!status.data && !status.error && (
+            <div className="skeleton" style={{ height: 80 }} role="status" aria-busy="true" />
+          )}
+          {status.data && (
+            <>
+              <div className="row">
+                <span className="mono">{status.data.mode}</span>
+                <span className="mono">{status.data.venue_env}</span>
+                {status.data.reconciled ? (
+                  <span className="badge badge-green">{t("admin.recon.reconciled")}</span>
+                ) : (
+                  <span className="badge badge-yellow">{t("admin.recon.notreconciled")}</span>
+                )}
+              </div>
+              <p className="small" style={{ margin: "8px 0 0" }}>
+                {t("admin.recon.pending", { count: status.data.pending_intents })}
+              </p>
+              {status.data.venue_epoch !== undefined && (
+                <p className="small" style={{ margin: "4px 0 0" }}>
+                  {t("admin.recon.venueepoch", { epoch: status.data.venue_epoch })}
+                </p>
+              )}
+              <p className="field-label" style={{ margin: "10px 0 6px" }}>
+                {t("admin.recon.lastrun")}
+              </p>
+              {status.data.last_run ? (
+                <>
+                  <div className="row">
+                    <span className={`badge ${reconRunBadge(status.data.last_run.status)}`}>
+                      {status.data.last_run.status}
+                    </span>
+                    {status.data.last_run.completed_at && (
+                      <span className="mono small">
+                        {fmtTime(status.data.last_run.completed_at)}
+                      </span>
+                    )}
+                  </div>
+                  {status.data.last_run.counters && (
+                    <>
+                      <div className="row" style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          aria-expanded={showCounters}
+                          onClick={() => setShowCounters((s) => !s)}
+                        >
+                          {t("admin.recon.counters")}
+                        </button>
+                      </div>
+                      {showCounters && (
+                        <pre className="codeblock">
+                          {JSON.stringify(status.data.last_run.counters, null, 2)}
+                        </pre>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <p className="faint small">{t("admin.recon.norun")}</p>
+              )}
+              {status.data.watermarks && status.data.watermarks.length > 0 && (
+                <table className="tbl" style={{ marginTop: 10 }}>
+                  <thead>
+                    <tr>
+                      <th scope="col">{t("admin.recon.tbl.symbol")}</th>
+                      <th scope="col">{t("admin.recon.tbl.venueepoch")}</th>
+                      <th scope="col">{t("admin.recon.tbl.tradeid")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {status.data.watermarks.map((w) => (
+                      <tr key={w.symbol}>
+                        <td className="mono-cell">{w.symbol}</td>
+                        <td className="mono-cell">{w.venue_epoch}</td>
+                        <td className="mono-cell">{w.exchange_trade_id}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <div className="row" style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className={`btn${armed ? " btn-danger" : ""}`}
+                  disabled={pending}
+                  aria-expanded={armed}
+                  onClick={() => (armed ? void run() : setArmed(true))}
+                >
+                  {armed ? t("admin.recon.run.confirm") : t("admin.recon.run")}
+                </button>
+                {armed && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={pending}
+                    onClick={() => {
+                      setArmed(false);
+                      setAcceptReset(false);
+                    }}
+                  >
+                    {t("admin.kill.cancel")}
+                  </button>
+                )}
+              </div>
+              {armed && (
+                <label className="checkbox-row" style={{ marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={acceptReset}
+                    onChange={(e) => setAcceptReset(e.target.checked)}
+                  />
+                  {t("admin.recon.acceptreset")}
+                </label>
               )}
             </>
           )}

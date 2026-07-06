@@ -38,6 +38,16 @@ export const messagesOps = {
   "strat.run.completed": { en: "completed {ts}", vi: "hoàn tất {ts}" },
   "strat.run.inprogress": { en: "in progress", vi: "đang chạy" },
 
+  // ---- create-strategy disclosure (strategies/page.tsx) ----
+  "strat.create.btn": { en: "Create strategy", vi: "Tạo chiến lược" },
+  "strat.create.cancel": { en: "Cancel", vi: "Hủy" },
+  "strat.create.name.ph": { en: "strategy name", vi: "tên chiến lược" },
+  "strat.create.state": { en: "Initial state", vi: "Trạng thái ban đầu" },
+  "strat.create.tenant.ph": { en: "tenant id", vi: "id tenant" },
+  "strat.create.submit": { en: "Create", vi: "Tạo" },
+  "strat.create.done": { en: "Strategy created —", vi: "Đã tạo chiến lược —" },
+  "strat.create.dismiss": { en: "dismiss", vi: "đóng" },
+
   // ---- ops panel (strategies/[id]/ops.tsx) ----
   "strat.ops.title": { en: "Operations", vi: "Vận hành" },
   "strat.ops.safety": { en: "Safety", vi: "An toàn" },
@@ -346,4 +356,38 @@ export const messagesOps = {
   "admin.ops.tbl.modified": { en: "Modified", vi: "Sửa đổi" },
   "admin.ops.verified": { en: "verified", vi: "đã kiểm chứng" },
   "admin.ops.unverified": { en: "not verified", vi: "chưa kiểm chứng" },
+
+  // ---- tenant create (admin/page.tsx TenantsCard) ----
+  "admin.tenantid.placeholder": { en: "tenant id", vi: "id tenant" },
+  "admin.tenantid.hint": {
+    en: 'Lowercase letters, digits, "-" and "_" only, starting with a letter or digit, max 32 chars — "default" is reserved.',
+    vi: 'Chỉ gồm chữ thường, chữ số, "-" và "_", bắt đầu bằng chữ hoặc số, tối đa 32 ký tự — "default" được dành riêng.',
+  },
+  "admin.tenants.ownertoken.once": {
+    en: "Owner token for tenant {id} — copy it now; it is shown this one time only and can never be retrieved again.",
+    vi: "Token chủ sở hữu của tenant {id} — hãy sao chép ngay; token chỉ hiển thị một lần duy nhất và không bao giờ lấy lại được.",
+  },
+
+  // ---- OMS reconciliation (admin/page.tsx OmsReconCard) ----
+  "admin.recon.title": { en: "OMS reconciliation", vi: "Đối soát OMS" },
+  "admin.recon.notwired": {
+    en: "OMS reconciliation is not wired on this deployment (paper mode).",
+    vi: "Đối soát OMS chưa được kết nối trên bản triển khai này (chế độ paper).",
+  },
+  "admin.recon.reconciled": { en: "reconciled", vi: "đã đối soát" },
+  "admin.recon.notreconciled": { en: "not reconciled", vi: "chưa đối soát" },
+  "admin.recon.pending": { en: "Pending intents: {count}", vi: "Intent đang chờ: {count}" },
+  "admin.recon.venueepoch": { en: "Venue epoch: {epoch}", vi: "Venue epoch: {epoch}" },
+  "admin.recon.lastrun": { en: "Last run", vi: "Lần chạy gần nhất" },
+  "admin.recon.norun": { en: "No reconcile run yet.", vi: "Chưa có lần đối soát nào." },
+  "admin.recon.counters": { en: "details", vi: "chi tiết" },
+  "admin.recon.tbl.symbol": { en: "Symbol", vi: "Symbol" },
+  "admin.recon.tbl.venueepoch": { en: "Venue epoch", vi: "Venue epoch" },
+  "admin.recon.tbl.tradeid": { en: "Exchange trade ID", vi: "ID giao dịch trên sàn" },
+  "admin.recon.run": { en: "Run reconcile", vi: "Chạy đối soát" },
+  "admin.recon.run.confirm": { en: "confirm run", vi: "xác nhận chạy" },
+  "admin.recon.acceptreset": {
+    en: "accept venue reset (bumps the venue epoch)",
+    vi: "chấp nhận venue reset (tăng venue epoch)",
+  },
 } as const satisfies Record<string, Msg>;

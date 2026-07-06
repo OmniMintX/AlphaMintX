@@ -50,6 +50,16 @@ export function paginated<T extends z.ZodType>(item: T) {
 
 export const strategiesPageSchema = paginated(strategySchema);
 
+// Body of POST /strategies (strategy-provisioning.md SP-2): initial state
+// is draft (the default when omitted) or paper ONLY — live tiers require
+// the lifecycle endpoint and its paper gate. Undefined keys are dropped by
+// JSON.stringify — never sent as null.
+export interface CreateStrategyRequest {
+  tenant_id: string;
+  name: string;
+  lifecycle_state?: "draft" | "paper";
+}
+
 // ---- Runs -------------------------------------------------------------------
 
 export const runSummarySchema = z.strictObject({
@@ -494,6 +504,12 @@ export const marketAnalysisResponseSchema = z.strictObject({
 
 // ---- Tenants / users (Admin) ------------------------------------------------------
 
+// The normative tenant_id shape (multi-tenant-rbac.md §Tenancy rules) for
+// UI-side validation. NOTE: the regex itself MATCHES "default" — the server
+// reserves it separately (400 INVALID_TENANT_ID), so callers must reject
+// "default" explicitly alongside this pattern.
+export const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
 // Tenant snapshot as served by GET/POST /tenants (and echoed inside signup).
 export const tenantSchema = z.strictObject({
   tenant_id: z.string().min(1),
@@ -549,6 +565,14 @@ export const tokensPageSchema = paginated(apiTokenSchema);
 // returned exactly once — every later read is metadata only.
 export const mintedTokenSchema = apiTokenSchema.extend({
   token: z.string().min(1),
+});
+
+// POST /tenants 200 envelope (env-admin ONLY): the created tenant PLUS its
+// FIRST owner token — the documented mint-ceiling exception, plaintext
+// returned exactly once (multi-tenant-rbac.md §Tenancy rules). Rotating
+// that token SHOULD be the tenant's first act.
+export const createTenantResponseSchema = tenantSchema.extend({
+  owner_token: mintedTokenSchema,
 });
 
 // Body of POST /tokens: tenant_id is only meaningful for env-admin /
@@ -716,6 +740,53 @@ export const restoreAckResponseSchema = z.strictObject({
   cleared: z.boolean(),
 });
 
+// ---- OMS reconciliation (live-oms-and-reconciler.md §API surface) -----------------
+// Live-OMS deployments only: the routes are unregistered in paper mode, so
+// a GET there is a plain 404 (no error envelope).
+
+export const omsReconRunStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "incomplete",
+]);
+
+// The latest reconcile run, derived from the persisted run brackets. Go
+// omitempty drops absent fields, so everything but status is optional —
+// tenant principals see only {status, completed_at}. counters is the
+// internal RunCounters struct rendered as JSON by the UI, so it stays a
+// permissive record, never a mirrored shape.
+export const omsReconRunSchema = z.strictObject({
+  run_id: z.string().min(1).optional(),
+  started_at: utcTimestamp.optional(),
+  completed_at: utcTimestamp.optional(),
+  status: omsReconRunStatusSchema,
+  counters: z.record(z.string(), z.unknown()).optional(),
+});
+
+// One (symbol, venue_epoch, exchange_trade_id) R5 fill watermark.
+export const omsReconWatermarkSchema = z.strictObject({
+  symbol,
+  venue_epoch: z.number().int().min(0),
+  exchange_trade_id: z.number().int().min(0),
+});
+
+// GET /oms/recon/status: env classes receive the full account-level payload
+// (watermarks, venue_epoch); tenant principals the restricted subset plus
+// their own strategies' counts (orphans) — the env-only fields stay omitted
+// (omitempty), hence optional here. last_run is a Go pointer: null before
+// the first run.
+export const omsReconStatusSchema = z.strictObject({
+  mode: z.string().min(1),
+  venue_env: z.string().min(1),
+  reconciled: z.boolean(),
+  last_run: omsReconRunSchema.nullable(),
+  pending_intents: z.number().int().min(0),
+  orphans: z.number().int().min(0).optional(),
+  watermarks: z.array(omsReconWatermarkSchema).optional(),
+  venue_epoch: z.number().int().min(0).optional(),
+});
+
 // ---- Errors --------------------------------------------------------------------
 
 // Error codes named by the spec; servers may add more, so the schema accepts
@@ -783,6 +854,7 @@ export type AnalysisInterval = z.infer<typeof analysisIntervalSchema>;
 export type AnalysisLocale = z.infer<typeof analysisLocaleSchema>;
 export type MarketAnalysisResponse = z.infer<typeof marketAnalysisResponseSchema>;
 export type Tenant = z.infer<typeof tenantSchema>;
+export type CreateTenantResponse = z.infer<typeof createTenantResponseSchema>;
 export type TenantsResponse = z.infer<typeof tenantsResponseSchema>;
 export type AdminUser = z.infer<typeof adminUserSchema>;
 export type UsersResponse = z.infer<typeof usersResponseSchema>;
@@ -809,3 +881,7 @@ export type BackupItem = z.infer<typeof backupItemSchema>;
 export type BackupsResponse = z.infer<typeof backupsResponseSchema>;
 export type RestoreStatus = z.infer<typeof restoreStatusSchema>;
 export type RestoreAckResponse = z.infer<typeof restoreAckResponseSchema>;
+export type OmsReconRunStatus = z.infer<typeof omsReconRunStatusSchema>;
+export type OmsReconRun = z.infer<typeof omsReconRunSchema>;
+export type OmsReconWatermark = z.infer<typeof omsReconWatermarkSchema>;
+export type OmsReconStatus = z.infer<typeof omsReconStatusSchema>;

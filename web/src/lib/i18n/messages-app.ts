@@ -198,4 +198,20 @@ export const messagesApp = {
     en: "Unattributed client cost",
     vi: "Chi phí client chưa quy nguồn",
   },
+  "billing.ops.title": { en: "Billing operations", vi: "Vận hành thanh toán" },
+  "billing.ops.tenant.ph": { en: "Select tenant…", vi: "Chọn tenant…" },
+  "billing.ops.hint": {
+    en: "Only fully elapsed UTC months can be closed — the current running month is rejected.",
+    vi: "Chỉ có thể chốt các tháng UTC đã kết thúc — tháng đang chạy sẽ bị từ chối.",
+  },
+  "billing.ops.close": { en: "Close period", vi: "Chốt kỳ" },
+  "billing.ops.close.pending": { en: "Closing…", vi: "Đang chốt…" },
+  "billing.ops.close.done": { en: "Period closed", vi: "Đã chốt kỳ" },
+  "billing.ops.recon": { en: "Run reconcile", vi: "Chạy đối soát" },
+  "billing.ops.recon.pending": { en: "Reconciling…", vi: "Đang đối soát…" },
+  "billing.ops.recon.done": {
+    en: "Reconciliation complete",
+    vi: "Đối soát hoàn tất",
+  },
+  "billing.ops.dismiss": { en: "Dismiss", vi: "Đóng" },
 } as const satisfies Record<string, Msg>;

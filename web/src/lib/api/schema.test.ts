@@ -17,6 +17,7 @@ import {
   backupRunResultSchema,
   backupsResponseSchema,
   buildLimitChanges,
+  createTenantResponseSchema,
   discrepancySchema,
   invoiceDetailSchema,
   invoiceLineSchema,
@@ -26,6 +27,8 @@ import {
   limitChangeResponseSchema,
   limitsStatusSchema,
   mintedTokenSchema,
+  omsReconRunSchema,
+  omsReconStatusSchema,
   paperGateReportSchema,
   platformKillEventSchema,
   platformSecretSchema,
@@ -40,6 +43,7 @@ import {
   safetyStatusSchema,
   secretWriteResponseSchema,
   strategiesPageSchema,
+  TENANT_ID_PATTERN,
   tenantKillEventSchema,
   tenantSchema,
   tenantsResponseSchema,
@@ -782,6 +786,70 @@ describe("tenant / user directory schemas", () => {
   });
 });
 
+// ---- Tenant creation (multi-tenant-rbac.md §Tenancy rules) --------------------------
+
+describe("TENANT_ID_PATTERN", () => {
+  it("accepts the normative shape", () => {
+    expect(TENANT_ID_PATTERN.test("acme-1")).toBe(true);
+    expect(TENANT_ID_PATTERN.test("t_1")).toBe(true);
+    expect(TENANT_ID_PATTERN.test("a".repeat(32))).toBe(true);
+  });
+
+  it("rejects uppercase, a leading dash, and a 33-char id", () => {
+    expect(TENANT_ID_PATTERN.test("Default")).toBe(false);
+    expect(TENANT_ID_PATTERN.test("-x")).toBe(false);
+    expect(TENANT_ID_PATTERN.test("a".repeat(33))).toBe(false);
+  });
+
+  it("matches the reserved 'default' — callers must reject it separately", () => {
+    // The server 400s INVALID_TENANT_ID on "default" even though the regex
+    // matches; UI validation pairs the pattern with an explicit check.
+    expect(TENANT_ID_PATTERN.test("default")).toBe(true);
+  });
+});
+
+describe("createTenantResponseSchema", () => {
+  const ownerToken = {
+    token_id: "tok-owner-1",
+    tenant_id: "acme-1",
+    principal: "user",
+    role: "owner",
+    strategy_id: null,
+    label: "initial-owner",
+    created_by: "env-admin",
+    created_at: "2026-07-01T00:00:00Z",
+    revoked_at: null,
+    token: "amx_plain_owner",
+  };
+
+  const created = {
+    tenant_id: "acme-1",
+    name: "Acme Trading",
+    created_at: "2026-07-01T00:00:00Z",
+    owner_token: ownerToken,
+  };
+
+  it("parses the tenant plus its plaintext-once owner_token", () => {
+    const parsed = createTenantResponseSchema.parse(created);
+    expect(parsed.tenant_id).toBe("acme-1");
+    expect(parsed.owner_token.role).toBe("owner");
+    expect(parsed.owner_token.token).toBe("amx_plain_owner");
+  });
+
+  it("rejects a missing owner_token or one without the plaintext", () => {
+    const { owner_token: _ownerToken, ...bare } = created;
+    expect(createTenantResponseSchema.safeParse(bare).success).toBe(false);
+    const { token: _token, ...metadataOnly } = ownerToken;
+    expect(
+      createTenantResponseSchema.safeParse({ ...created, owner_token: metadataOnly }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(createTenantResponseSchema.safeParse({ ...created, extra: 1 }).success).toBe(false);
+  });
+});
+
 // ---- Billing: invoices & reconciliation (billing-and-metering.md) -------------------
 
 const INVOICE_ID = "e7f8a9b0-c1d2-4e3f-8a4b-6c7d8e9f0a1b";
@@ -1019,5 +1087,74 @@ describe("backup and restore-gate schemas", () => {
   it("rejects unknown keys (strictObject pinned)", () => {
     expect(backupRunResultSchema.safeParse({ ...backupRun, path: "/leak" }).success).toBe(false);
     expect(restoreStatusSchema.safeParse({ engaged: true, extra: 1 }).success).toBe(false);
+  });
+});
+
+// ---- OMS reconciliation (live-oms-and-reconciler.md §API surface) -------------------
+
+const fullReconRun = {
+  run_id: "run-20260706T020000Z",
+  started_at: "2026-07-06T02:00:00Z",
+  completed_at: "2026-07-06T02:00:04Z",
+  status: "completed",
+  counters: { orders_fetched: 12, intents_resolved: 3, orphans_adopted: 1 },
+};
+
+const fullReconStatus = {
+  mode: "live",
+  venue_env: "testnet",
+  reconciled: true,
+  last_run: fullReconRun,
+  pending_intents: 0,
+  orphans: 1,
+  watermarks: [{ symbol: "BTC/USDT", venue_epoch: 2, exchange_trade_id: 987654 }],
+  venue_epoch: 2,
+};
+
+describe("oms recon schemas", () => {
+  it("parses the env-admin full payload incl. watermarks and counters", () => {
+    const status = omsReconStatusSchema.parse(fullReconStatus);
+    expect(status.reconciled).toBe(true);
+    expect(status.last_run?.status).toBe("completed");
+    expect(status.last_run?.counters?.orphans_adopted).toBe(1);
+    expect(status.watermarks?.[0]?.symbol).toBe("BTC/USDT");
+    expect(status.venue_epoch).toBe(2);
+  });
+
+  it("parses the restricted tenant payload — omitempty drops the env-only fields", () => {
+    const status = omsReconStatusSchema.parse({
+      mode: "live",
+      venue_env: "testnet",
+      reconciled: false,
+      last_run: { status: "completed", completed_at: "2026-07-06T02:00:04Z" },
+      pending_intents: 2,
+    });
+    expect(status.orphans).toBeUndefined();
+    expect(status.watermarks).toBeUndefined();
+    expect(status.venue_epoch).toBeUndefined();
+    expect(status.last_run?.run_id).toBeUndefined();
+  });
+
+  it("parses a null last_run (Go pointer before the first run)", () => {
+    const status = omsReconStatusSchema.parse({
+      mode: "live",
+      venue_env: "prod",
+      reconciled: false,
+      last_run: null,
+      pending_intents: 0,
+    });
+    expect(status.last_run).toBeNull();
+  });
+
+  it("accepts every run status and rejects an unknown one", () => {
+    for (const s of ["running", "completed", "failed", "incomplete"]) {
+      expect(omsReconRunSchema.safeParse({ status: s }).success).toBe(true);
+    }
+    expect(omsReconRunSchema.safeParse({ status: "aborted" }).success).toBe(false);
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(omsReconStatusSchema.safeParse({ ...fullReconStatus, extra: 1 }).success).toBe(false);
+    expect(omsReconRunSchema.safeParse({ ...fullReconRun, extra: 1 }).success).toBe(false);
   });
 });

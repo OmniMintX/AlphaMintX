@@ -22,6 +22,8 @@ import {
   clearPlatformKill,
   clearStrategyKill,
   clearTenantKill,
+  closeBillingPeriod,
+  createStrategy,
   createTenant,
   fetchAlerts,
   fetchBackups,
@@ -30,6 +32,7 @@ import {
   fetchInvoices,
   fetchLimits,
   fetchMe,
+  fetchOmsReconStatus,
   fetchPaperGate,
   fetchPlatformSecrets,
   fetchReconciliationDetail,
@@ -50,6 +53,8 @@ import {
   postLimits,
   revokeToken,
   runBackup,
+  runBillingReconcile,
+  runOmsRecon,
   setBinanceSecret,
   setLlmSecret,
   signup,
@@ -502,14 +507,81 @@ describe("platform settings and admin helpers", () => {
     expect(users.items[0]?.disabled).toBe(false);
   });
 
-  it("createTenant POSTs {name} and parses the created tenant directly (no envelope)", async () => {
-    const mock = stubFetch(jsonResponse(200, tenant));
+  it("createTenant POSTs {tenant_id, name} and parses the tenant plus owner_token", async () => {
+    const ownerToken = {
+      token_id: "tok-owner-1",
+      tenant_id: "t-1",
+      principal: "user",
+      role: "owner",
+      strategy_id: null,
+      label: "initial-owner",
+      created_by: "env-admin",
+      created_at: "2026-07-01T00:00:00Z",
+      revoked_at: null,
+      token: "amx_plain_owner",
+    };
+    const mock = stubFetch(jsonResponse(200, { ...tenant, owner_token: ownerToken }));
 
-    const res = await createTenant("Acme Trading");
+    const res = await createTenant("t-1", "Acme Trading");
 
     expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tenants");
-    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"name":"Acme Trading"}');
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"tenant_id":"t-1","name":"Acme Trading"}');
     expect(res.tenant_id).toBe("t-1");
+    // The plaintext owner token rides along exactly once.
+    expect(res.owner_token.token).toBe("amx_plain_owner");
+  });
+
+  it("createTenant surfaces INVALID_TENANT_ID and TENANT_EXISTS verbatim as ApiError", async () => {
+    stubFetch(
+      jsonResponse(400, { code: "INVALID_TENANT_ID", message: '"default" is reserved' }),
+      jsonResponse(409, { code: "TENANT_EXISTS", message: "tenant_id already taken" }),
+    );
+
+    const invalid = await createTenant("default", "Nope").catch((e: unknown) => e);
+    expect(invalid).toBeInstanceOf(ApiError);
+    expect((invalid as ApiError).status).toBe(400);
+    expect((invalid as ApiError).body?.code).toBe("INVALID_TENANT_ID");
+
+    const taken = await createTenant("t-1", "Again").catch((e: unknown) => e);
+    expect(taken).toBeInstanceOf(ApiError);
+    expect((taken as ApiError).status).toBe(409);
+    expect((taken as ApiError).body?.code).toBe("TENANT_EXISTS");
+  });
+
+  it("createStrategy POSTs the exact body and parses the Strategy row directly", async () => {
+    const strategyRow = {
+      strategy_id: STRATEGY_ID,
+      tenant_id: "t-1",
+      name: "mean-revert-1",
+      lifecycle_state: "paper",
+      created_at: "2026-07-06T10:00:00Z",
+      updated_at: "2026-07-06T10:00:00Z",
+    };
+    const mock = stubFetch(jsonResponse(200, strategyRow), jsonResponse(200, strategyRow));
+
+    const res = await createStrategy({
+      tenant_id: "t-1",
+      name: "mean-revert-1",
+      lifecycle_state: "paper",
+    });
+    // Undefined lifecycle_state is dropped by JSON.stringify — never sent as null.
+    await createStrategy({ tenant_id: "t-1", name: "mean-revert-1" });
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/strategies");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"tenant_id":"t-1","name":"mean-revert-1","lifecycle_state":"paper"}',
+    );
+    expect(mock.mock.calls[1]?.[1]?.body).toBe('{"tenant_id":"t-1","name":"mean-revert-1"}');
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.lifecycle_state).toBe("paper");
+  });
+
+  it("createStrategy surfaces 409 STRATEGY_NAME_TAKEN verbatim as ApiError", async () => {
+    stubFetch(jsonResponse(409, { code: "STRATEGY_NAME_TAKEN", message: "name in use" }));
+    const err = await createStrategy({ tenant_id: "t-1", name: "dup" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as ApiError).body?.code).toBe("STRATEGY_NAME_TAKEN");
   });
 
   it("surfaces 403 and 503 VAULT_UNAVAILABLE verbatim as ApiError", async () => {
@@ -846,6 +918,139 @@ describe("billing fetchers", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(404);
     expect((err as ApiError).body?.code).toBe("UNKNOWN_INVOICE");
+  });
+
+  it("closeBillingPeriod POSTs {tenant_id, period} and parses the invoice with lines", async () => {
+    const mock = stubFetch(jsonResponse(200, { invoice: invoiceBody, lines: [invoiceLineBody] }));
+
+    const res = await closeBillingPeriod("t-1", "2026-06");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/billing/periods/close");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"tenant_id":"t-1","period":"2026-06"}');
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.invoice.total_usd).toBe("12.345678");
+    expect(res.lines[0]?.entry_type).toBe("usage");
+  });
+
+  it("closeBillingPeriod surfaces INVALID_PERIOD / PERIOD_CLOSED verbatim as ApiError", async () => {
+    stubFetch(
+      jsonResponse(400, { code: "INVALID_PERIOD", message: "period is still running" }),
+      jsonResponse(409, { code: "PERIOD_CLOSED", message: "period already closed" }),
+    );
+
+    const running = await closeBillingPeriod("t-1", "2026-07").catch((e: unknown) => e);
+    expect(running).toBeInstanceOf(ApiError);
+    expect((running as ApiError).status).toBe(400);
+    expect((running as ApiError).body?.code).toBe("INVALID_PERIOD");
+
+    const closed = await closeBillingPeriod("t-1", "2026-06").catch((e: unknown) => e);
+    expect(closed).toBeInstanceOf(ApiError);
+    expect((closed as ApiError).status).toBe(409);
+    expect((closed as ApiError).body?.code).toBe("PERIOD_CLOSED");
+  });
+
+  it("runBillingReconcile POSTs the same body and parses the run with discrepancies", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { run: reconRunBody, discrepancies: [discrepancyBody] }),
+    );
+
+    const res = await runBillingReconcile("t-1", "2026-06");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/billing/reconcile");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"tenant_id":"t-1","period":"2026-06"}');
+    expect(res.run.status).toBe("pass");
+    expect(res.discrepancies[0]?.class).toBe("unattributed");
+  });
+
+  it("runBillingReconcile surfaces 404 UNKNOWN_TENANT verbatim as ApiError", async () => {
+    stubFetch(jsonResponse(404, { code: "UNKNOWN_TENANT", message: "no such tenant" }));
+    const err = await runBillingReconcile("ghost", "2026-06").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).body?.code).toBe("UNKNOWN_TENANT");
+  });
+});
+
+// ---- OMS reconciliation (live-oms-and-reconciler.md §API surface) -------------------
+
+describe("oms recon helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const reconRunFull = {
+    run_id: "run-20260706T020000Z",
+    started_at: "2026-07-06T02:00:00Z",
+    completed_at: "2026-07-06T02:00:04Z",
+    status: "completed",
+    counters: { orders_fetched: 12 },
+  };
+
+  it("fetchOmsReconStatus GETs same-origin and parses the env-admin full payload", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, {
+        mode: "live",
+        venue_env: "testnet",
+        reconciled: true,
+        last_run: reconRunFull,
+        pending_intents: 0,
+        orphans: 1,
+        watermarks: [{ symbol: "BTC/USDT", venue_epoch: 2, exchange_trade_id: 987654 }],
+        venue_epoch: 2,
+      }),
+    );
+
+    const status = await fetchOmsReconStatus();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/oms/recon/status");
+    expect(mock.mock.calls[0]?.[1]).toEqual({ cache: "no-store" });
+    expect(status.reconciled).toBe(true);
+    expect(status.watermarks?.[0]?.venue_epoch).toBe(2);
+  });
+
+  it("fetchOmsReconStatus parses the restricted tenant payload (omitempty absences)", async () => {
+    stubFetch(
+      jsonResponse(200, {
+        mode: "live",
+        venue_env: "testnet",
+        reconciled: false,
+        last_run: null,
+        pending_intents: 3,
+      }),
+    );
+
+    const status = await fetchOmsReconStatus();
+
+    expect(status.last_run).toBeNull();
+    expect(status.orphans).toBeUndefined();
+    expect(status.watermarks).toBeUndefined();
+  });
+
+  it("runOmsRecon POSTs {accept_venue_reset} and parses the completed run", async () => {
+    const mock = stubFetch(jsonResponse(200, reconRunFull));
+
+    const run = await runOmsRecon(true);
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/oms/recon/run");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"accept_venue_reset":true}');
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(run.status).toBe("completed");
+  });
+
+  it("runOmsRecon surfaces 409 RECON_RUNNING verbatim as ApiError", async () => {
+    stubFetch(jsonResponse(409, { code: "RECON_RUNNING", message: "a reconcile run is in progress" }));
+    const err = await runOmsRecon(false).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as ApiError).body?.code).toBe("RECON_RUNNING");
+  });
+
+  it("a paper deployment answers a plain 404 with a null body", async () => {
+    stubFetch(new Response("not found", { status: 404 }));
+    const err = await fetchOmsReconStatus().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).body).toBeNull();
   });
 });
 

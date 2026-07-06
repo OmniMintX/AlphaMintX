@@ -15,6 +15,7 @@ import {
   backupRunResultSchema,
   backupsResponseSchema,
   bootstrapResponseSchema,
+  createTenantResponseSchema,
   invoiceDetailSchema,
   invoicesPageSchema,
   killClearResponseSchema,
@@ -26,6 +27,8 @@ import {
   logoutResponseSchema,
   marketAnalysisResponseSchema,
   mintedTokenSchema,
+  omsReconRunSchema,
+  omsReconStatusSchema,
   paperGateReportSchema,
   platformKillEventSchema,
   platformSecretsResponseSchema,
@@ -42,7 +45,6 @@ import {
   strategiesPageSchema,
   strategySchema,
   tenantKillEventSchema,
-  tenantSchema,
   tenantsResponseSchema,
   tokensPageSchema,
   usersResponseSchema,
@@ -58,6 +60,8 @@ import {
   type BackupsResponse,
   type BinanceEnv,
   type BootstrapResponse,
+  type CreateStrategyRequest,
+  type CreateTenantResponse,
   type InvoiceDetail,
   type InvoicesPage,
   type KillClearRequest,
@@ -75,6 +79,8 @@ import {
   type MarketAnalysisResponse,
   type MintedToken,
   type MintTokenRequest,
+  type OmsReconRun,
+  type OmsReconStatus,
   type PaperGateReport,
   type PlatformKillEvent,
   type PlatformSecretsResponse,
@@ -90,7 +96,6 @@ import {
   type SignupResponse,
   type StrategiesPage,
   type Strategy,
-  type Tenant,
   type TenantKillEvent,
   type TenantsResponse,
   type TokensPage,
@@ -231,6 +236,15 @@ async function proxyPost<T>(path: string, payload: unknown, schema: z.ZodType<T>
   return parseResponse(res, schema);
 }
 
+// Creates a strategy (strategy-provisioning.md SP-2): tenant owner/admin
+// in their own tenant, env-admin in any existing tenant. lifecycle_state
+// is draft (default) or paper ONLY — the paper gate cannot be bypassed at
+// birth; a 400 SCHEMA_INVALID or 409 STRATEGY_NAME_TAKEN surfaces verbatim
+// as ApiError. The response is the created Strategy row directly.
+export function createStrategy(req: CreateStrategyRequest): Promise<Strategy> {
+  return proxyPost("/api/cp/strategies", req, strategySchema);
+}
+
 // Records the L1 decision through the same-origin server proxy. A repeat
 // decision (double-click, human-vs-timeout race) surfaces as ApiError status
 // 409 with the recorded outcome in error.body.recorded; approved-but-blocked
@@ -363,9 +377,12 @@ export function fetchTenants(): Promise<TenantsResponse> {
   return apiGet("/tenants", tenantsResponseSchema);
 }
 
-// POST /tenants answers the created tenant snapshot directly (no envelope).
-export function createTenant(name: string): Promise<Tenant> {
-  return proxyPost("/api/cp/tenants", { name }, tenantSchema);
+// Creates a tenant (env-admin ONLY): {tenant_id, name}, tenant_id matching
+// TENANT_ID_PATTERN and never "default" (400 INVALID_TENANT_ID; a taken id
+// is 409 TENANT_EXISTS). The response carries the tenant PLUS its first
+// owner token — plaintext exactly once, never retrievable again.
+export function createTenant(tenantId: string, name: string): Promise<CreateTenantResponse> {
+  return proxyPost("/api/cp/tenants", { tenant_id: tenantId, name }, createTenantResponseSchema);
 }
 
 export function fetchUsers(): Promise<UsersResponse> {
@@ -433,6 +450,32 @@ export function fetchReconciliationDetail(reconId: string): Promise<Reconciliati
   return apiGet(`/billing/reconciliations/${reconId}`, reconciliationDetailSchema);
 }
 
+// Closes a (tenant, period) UTC month and generates its invoice (env-admin
+// only — a deployer act): a running month or malformed period is 400
+// INVALID_PERIOD, an unknown tenant 404, a second close 409 PERIOD_CLOSED —
+// all verbatim as ApiError. The response is the invoice with its lines.
+export function closeBillingPeriod(tenantId: string, period: string): Promise<InvoiceDetail> {
+  return proxyPost(
+    "/api/cp/billing/periods/close",
+    { tenant_id: tenantId, period },
+    invoiceDetailSchema,
+  );
+}
+
+// Runs one reconciliation for a CLOSED period (env-admin only, same body as
+// the close): 400 INVALID_PERIOD / 404 UNKNOWN_TENANT surface verbatim. The
+// response is the appended run with its discrepancies.
+export function runBillingReconcile(
+  tenantId: string,
+  period: string,
+): Promise<ReconciliationDetail> {
+  return proxyPost(
+    "/api/cp/billing/reconcile",
+    { tenant_id: tenantId, period },
+    reconciliationDetailSchema,
+  );
+}
+
 // ---- Tenant / platform kill & clear (safety-wiring.md §Kill endpoints) --------------
 
 // Tenant-tier kill; the response acknowledges persistence only, never
@@ -498,6 +541,27 @@ export function fetchRestoreStatus(): Promise<RestoreStatus> {
 // RESTORE_GATE_NOT_ENGAGED and surfaces verbatim as ApiError.
 export function ackRestore(): Promise<RestoreAckResponse> {
   return proxyPost("/api/cp/ops/restore/ack", {}, restoreAckResponseSchema);
+}
+
+// ---- OMS reconciliation (live-oms-and-reconciler.md §API surface) -------------------
+// Live-OMS deployments only: the routes are unregistered in paper mode, so
+// both helpers surface a plain 404 there (ApiError with a null body).
+
+// Reconciliation status, tenant-filtered server-side: env classes see the
+// full account-level payload, tenant sessions the restricted subset.
+export function fetchOmsReconStatus(): Promise<OmsReconStatus> {
+  return apiGet("/oms/recon/status", omsReconStatusSchema);
+}
+
+// Runs R1-R7 synchronously (env-admin only): accept_venue_reset
+// acknowledges a detected venue reset and bumps the venue epoch. A run in
+// progress is 409 RECON_RUNNING and surfaces verbatim as ApiError.
+export function runOmsRecon(acceptVenueReset: boolean): Promise<OmsReconRun> {
+  return proxyPost(
+    "/api/cp/oms/recon/run",
+    { accept_venue_reset: acceptVenueReset },
+    omsReconRunSchema,
+  );
 }
 
 // ---- Auth (session shell) --------------------------------------------------------
