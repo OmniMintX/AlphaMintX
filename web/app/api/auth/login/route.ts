@@ -5,6 +5,7 @@
 
 import { crossSiteHeadersFrom, crossSiteRejection } from "../../../../src/lib/api/csrf";
 import {
+  NO_STORE,
   cpBaseUrl,
   isSecureRequest,
   jsonError,
@@ -30,7 +31,10 @@ export async function POST(request: Request): Promise<Response> {
   if (!upstream.ok) {
     return new Response(text, {
       status: upstream.status,
-      headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+      headers: {
+        "content-type": upstream.headers.get("content-type") ?? "application/json",
+        "cache-control": NO_STORE,
+      },
     });
   }
 
@@ -51,6 +55,7 @@ export async function POST(request: Request): Promise<Response> {
     status: 200,
     headers: {
       "content-type": "application/json",
+      "cache-control": NO_STORE,
       "set-cookie": sessionCookie(token, isSecureRequest(request)),
     },
   });

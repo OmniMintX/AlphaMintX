@@ -66,6 +66,13 @@ import {
   killRequestSchema,
   lifecycleRequestSchema,
 } from "./schema";
+import {
+  NO_STORE,
+  forwardAuthPost,
+  forwardWithSession,
+  jsonError,
+  unconfigured,
+} from "./session";
 import { resumeTarget } from "../view/ops";
 
 const VERDICT_ID = "b8c9d0e1-f2a3-4b4c-8d5e-7f8a9b0c1d2e";
@@ -1200,5 +1207,73 @@ describe("backup and restore-gate helpers", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(409);
     expect((err as ApiError).body?.code).toBe("RESTORE_GATE_NOT_ENGAGED");
+  });
+});
+
+// ---- Session-proxy response headers -------------------------------------------------
+// Every server-side session-proxy response must carry Cache-Control: no-store —
+// Next.js adds no Cache-Control to route-handler responses, so a shared cache
+// could otherwise store authenticated bodies (RFC 9111 §3.5 heuristic caching).
+
+describe("session-proxy responses are never cacheable", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const cookieRequest = (url: string, init: RequestInit = {}) =>
+    new Request(url, { ...init, headers: { cookie: "amx_session=tok-1", ...init.headers } });
+
+  it("jsonError and unconfigured stamp no-store", () => {
+    expect(jsonError(401, "UNAUTHENTICATED", "no session").headers.get("cache-control")).toBe(
+      NO_STORE,
+    );
+    expect(unconfigured().headers.get("cache-control")).toBe(NO_STORE);
+  });
+
+  it("forwardWithSession stamps no-store on upstream passthrough, success and error", async () => {
+    vi.stubEnv("CONTROLPLANE_API_BASE_URL", "http://cp.local");
+    stubFetch(
+      jsonResponse(200, { items: [] }),
+      jsonResponse(401, { code: "UNAUTHENTICATED", message: "session revoked" }),
+    );
+
+    const ok = await forwardWithSession(
+      cookieRequest("http://web.local/api/cp/strategies"),
+      "/strategies",
+      "GET",
+    );
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("cache-control")).toBe(NO_STORE);
+
+    const denied = await forwardWithSession(
+      cookieRequest("http://web.local/api/cp/strategies"),
+      "/strategies",
+      "GET",
+    );
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get("cache-control")).toBe(NO_STORE);
+  });
+
+  it("forwardWithSession 401s with no-store when there is no session cookie", async () => {
+    const res = await forwardWithSession(
+      new Request("http://web.local/api/cp/strategies"),
+      "/strategies",
+      "GET",
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe(NO_STORE);
+  });
+
+  it("forwardAuthPost stamps no-store on the anonymous auth passthrough", async () => {
+    vi.stubEnv("CONTROLPLANE_API_BASE_URL", "http://cp.local");
+    stubFetch(jsonResponse(200, { user: SESSION_USER }));
+
+    const res = await forwardAuthPost(
+      new Request("http://web.local/api/auth/signup", { method: "POST", body: "{}" }),
+      "/auth/signup",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(NO_STORE);
   });
 });

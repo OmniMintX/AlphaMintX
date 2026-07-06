@@ -54,10 +54,15 @@ export function clearedSessionCookie(secure: boolean): string {
   return parts.join("; ");
 }
 
+// Every session-proxy response carries authenticated (or auth-adjacent) data;
+// nothing here is safe for a shared cache (RFC 9111 §3.5). Next.js does NOT
+// add Cache-Control to route-handler responses — it must be explicit.
+export const NO_STORE = "no-store" as const;
+
 export function jsonError(status: number, code: string, message: string): Response {
   return new Response(JSON.stringify({ code, message }), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "cache-control": NO_STORE },
   });
 }
 
@@ -72,7 +77,10 @@ export function unconfigured(): Response {
 function passthrough(upstream: Response, text: string): Response {
   return new Response(text, {
     status: upstream.status,
-    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    headers: {
+      "content-type": upstream.headers.get("content-type") ?? "application/json",
+      "cache-control": NO_STORE,
+    },
   });
 }
 

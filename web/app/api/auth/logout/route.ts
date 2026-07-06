@@ -4,6 +4,7 @@
 
 import { crossSiteHeadersFrom, crossSiteRejection } from "../../../../src/lib/api/csrf";
 import {
+  NO_STORE,
   clearedSessionCookie,
   cpBaseUrl,
   isSecureRequest,
@@ -32,6 +33,7 @@ export async function POST(request: Request): Promise<Response> {
     status: 200,
     headers: {
       "content-type": "application/json",
+      "cache-control": NO_STORE,
       "set-cookie": clearedSessionCookie(isSecureRequest(request)),
     },
   });
