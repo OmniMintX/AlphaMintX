@@ -18,6 +18,12 @@ import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner } from "../strategies/ui";
 
+// Models the agent-plane can price (llm/prices.json) — an unpriced model
+// would fail its startup validation, so the form only offers these.
+const LLM_MODELS = ["gpt-4o", "gpt-4o-mini"] as const;
+const DEFAULT_TRADER_MODEL = "gpt-4o";
+const DEFAULT_ANALYST_MODEL = "gpt-4o-mini";
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -175,6 +181,8 @@ function LlmCard({
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [timeoutSecs, setTimeoutSecs] = useState("30");
+  const [traderModel, setTraderModel] = useState(DEFAULT_TRADER_MODEL);
+  const [defaultModel, setDefaultModel] = useState(DEFAULT_ANALYST_MODEL);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -187,7 +195,7 @@ function LlmCard({
     setError(null);
     setSaved(false);
     try {
-      await setLlmSecret(baseUrl.trim(), apiKey, timeoutNum);
+      await setLlmSecret(baseUrl.trim(), apiKey, timeoutNum, traderModel, defaultModel);
       setApiKey("");
       setSaved(true);
       onSaved();
@@ -209,6 +217,8 @@ function LlmCard({
               base_url: current.meta.base_url,
               last4: current.meta.api_key_last4,
               timeout: current.meta.timeout_seconds,
+              trader_model: current.meta.trader_model ?? DEFAULT_TRADER_MODEL,
+              default_model: current.meta.default_model ?? DEFAULT_ANALYST_MODEL,
               time: fmtTime(current.updated_at),
               by: current.updated_by,
             })
@@ -245,6 +255,36 @@ function LlmCard({
             value={timeoutSecs}
             onChange={(e) => setTimeoutSecs(e.target.value)}
           />
+        </label>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <label className="field">
+          <span className="field-label">{t("settings.llm.trader_model")}</span>
+          <select
+            className="input"
+            value={traderModel}
+            onChange={(e) => setTraderModel(e.target.value)}
+          >
+            {LLM_MODELS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">{t("settings.llm.default_model")}</span>
+          <select
+            className="input"
+            value={defaultModel}
+            onChange={(e) => setDefaultModel(e.target.value)}
+          >
+            {LLM_MODELS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
       <div className="row" style={{ marginTop: 10 }}>

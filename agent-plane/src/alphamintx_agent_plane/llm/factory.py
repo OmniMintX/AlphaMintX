@@ -27,9 +27,18 @@ from alphamintx_agent_plane.client.controlplane import TOKEN_ENV_VAR
 from alphamintx_agent_plane.client.http import ENV_BASE_URL as ENV_CONTROLPLANE_BASE_URL
 from alphamintx_agent_plane.llm.budget import DailyTokenBudget
 from alphamintx_agent_plane.llm.errors import LLMConfigError
-from alphamintx_agent_plane.llm.mintrouter import DEFAULT_TIMEOUT_SECONDS, MintRouterLLM
+from alphamintx_agent_plane.llm.mintrouter import (
+    DEFAULT_ROLE_MODELS,
+    DEFAULT_TIMEOUT_SECONDS,
+    MintRouterLLM,
+)
 from alphamintx_agent_plane.llm.pricing import PriceTable
-from alphamintx_agent_plane.llm.stub import LLMClient, bullish_scenario
+from alphamintx_agent_plane.llm.stub import (
+    PIPELINE_ROLES,
+    ROLE_TRADER,
+    LLMClient,
+    bullish_scenario,
+)
 
 ENV_LLM_MODE = "ALPHAMINTX_LLM_MODE"
 ENV_BASE_URL = "MINTROUTER_BASE_URL"
@@ -48,9 +57,11 @@ def _fetch_llm_config(
     controlplane_base_url: str,
     token: str,
     transport: httpx.BaseTransport | None,
-) -> tuple[str, str, float]:
-    """Fetch (base_url, api_key, timeout_seconds) from the control-plane vault.
+) -> tuple[str, str, float, dict[str, str] | None]:
+    """Fetch (base_url, api_key, timeout_seconds, role_models) from the vault.
 
+    ``role_models`` is None when the config carries no model fields (payloads
+    sealed before they existed) — the caller falls back to DEFAULT_ROLE_MODELS.
     Failure messages never contain the bearer token or any response body — a
     body could hold the API key.
     """
@@ -113,7 +124,26 @@ def _fetch_llm_config(
             "live mode: control-plane LLM config has a non-positive or non-numeric "
             "timeout_seconds"
         )
-    return base_url, api_key, float(timeout_seconds)
+    role_models = _role_models_from_config(data)
+    return base_url, api_key, float(timeout_seconds), role_models
+
+
+def _role_models_from_config(data: dict[str, Any]) -> dict[str, str] | None:
+    """Build the role→model map from optional trader_model/default_model fields."""
+    trader_model = data.get("trader_model")
+    default_model = data.get("default_model")
+    for name, value in (("trader_model", trader_model), ("default_model", default_model)):
+        if value is not None and (not isinstance(value, str) or not value):
+            raise LLMConfigError(
+                f"live mode: control-plane LLM config has a non-string or empty {name}"
+            )
+    if trader_model is None and default_model is None:
+        return None
+    trader = trader_model or DEFAULT_ROLE_MODELS[ROLE_TRADER]
+    default = default_model or next(
+        model for role, model in DEFAULT_ROLE_MODELS.items() if role != ROLE_TRADER
+    )
+    return {role: (trader if role == ROLE_TRADER else default) for role in PIPELINE_ROLES}
 
 
 def _error_code(response: httpx.Response) -> str:
@@ -152,11 +182,12 @@ def create_llm_client(
     base_url = env.get(ENV_BASE_URL, "")
     api_key = env.get(ENV_API_KEY, "")
     fetched_timeout: float | None = None
+    fetched_models: dict[str, str] | None = None
     if not (base_url and api_key):
         controlplane_url = env.get(ENV_CONTROLPLANE_BASE_URL, "")
         strategy_token = env.get(TOKEN_ENV_VAR, "")
         if controlplane_url and strategy_token:
-            base_url, api_key, fetched_timeout = _fetch_llm_config(
+            base_url, api_key, fetched_timeout, fetched_models = _fetch_llm_config(
                 controlplane_url, strategy_token, config_transport
             )
         elif base_url or api_key:
@@ -192,7 +223,7 @@ def create_llm_client(
         base_url=base_url,
         api_key=api_key,
         price_table=price_table,
-        role_models=role_models,
+        role_models=role_models if role_models is not None else fetched_models,
         timeout_seconds=timeout_seconds,
         budget=budget,
         transport=transport,

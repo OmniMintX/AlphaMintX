@@ -33,11 +33,19 @@ export const messagesApp = {
   },
   "settings.llm.title": { en: "LLM provider", vi: "Nhà cung cấp LLM" },
   "settings.llm.configured": {
-    en: "Configured — {base_url}, key ••••{last4}, timeout {timeout} s, updated {time} by {by}",
-    vi: "Đã cấu hình — {base_url}, key ••••{last4}, timeout {timeout} s, cập nhật {time} bởi {by}",
+    en: "Configured — {base_url}, key ••••{last4}, timeout {timeout} s, models {trader_model} / {default_model}, updated {time} by {by}",
+    vi: "Đã cấu hình — {base_url}, key ••••{last4}, timeout {timeout} s, model {trader_model} / {default_model}, cập nhật {time} bởi {by}",
   },
   "settings.baseurl": { en: "Base URL", vi: "Base URL" },
   "settings.timeout": { en: "Timeout (seconds)", vi: "Timeout (giây)" },
+  "settings.llm.trader_model": {
+    en: "Model — trader role",
+    vi: "Model — vai trader",
+  },
+  "settings.llm.default_model": {
+    en: "Model — analyst roles",
+    vi: "Model — các vai phân tích",
+  },
 
   // ---- admin ----
   "admin.sub": {

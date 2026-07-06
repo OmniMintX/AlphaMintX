@@ -79,8 +79,9 @@ func TestPlatformSecretsSetAndList(t *testing.T) {
 		t.Fatalf("decode llm meta: %v", err)
 	}
 	if lMeta.BaseURL != "https://llm.example/v1" || lMeta.APIKeyLast4 != "9876" ||
-		lMeta.TimeoutSeconds != 30 {
-		t.Fatalf("llm meta = %+v, want default timeout 30 and last4 9876", lMeta)
+		lMeta.TimeoutSeconds != 30 ||
+		lMeta.TraderModel != "gpt-4o" || lMeta.DefaultModel != "gpt-4o-mini" {
+		t.Fatalf("llm meta = %+v, want default timeout 30, last4 9876, default models", lMeta)
 	}
 
 	items := secretItems(t, e.do(t, "GET", "/api/v1/platform/secrets", adminTok, nil))
@@ -148,6 +149,7 @@ func TestAgentLLMConfig(t *testing.T) {
 
 	rec := e.do(t, "POST", "/api/v1/platform/secrets/llm", adminTok, map[string]any{
 		"base_url": "https://llm.example/v1", "api_key": testLLMKey, "timeout_seconds": 120,
+		"trader_model": "gpt-4o", "default_model": "gpt-4o-mini",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set llm = %d (body %q)", rec.Code, rec.Body.String())
@@ -163,7 +165,8 @@ func TestAgentLLMConfig(t *testing.T) {
 		}
 		var got llmPayload
 		decodeJSON(t, rec, &got)
-		if got.BaseURL != "https://llm.example/v1" || got.APIKey != testLLMKey || got.TimeoutSeconds != 120 {
+		if got.BaseURL != "https://llm.example/v1" || got.APIKey != testLLMKey || got.TimeoutSeconds != 120 ||
+			got.TraderModel != "gpt-4o" || got.DefaultModel != "gpt-4o-mini" {
 			t.Fatalf("llm-config payload = %+v, want the sealed payload verbatim", got)
 		}
 	}
@@ -220,6 +223,10 @@ func TestSecretsValidation(t *testing.T) {
 			map[string]any{"base_url": "https://llm.example", "api_key": "k", "timeout_seconds": 0}},
 		{"llm timeout high", "/api/v1/platform/secrets/llm",
 			map[string]any{"base_url": "https://llm.example", "api_key": "k", "timeout_seconds": 601}},
+		{"llm long trader_model", "/api/v1/platform/secrets/llm",
+			map[string]any{"base_url": "https://llm.example", "api_key": "k", "trader_model": long}},
+		{"llm long default_model", "/api/v1/platform/secrets/llm",
+			map[string]any{"base_url": "https://llm.example", "api_key": "k", "default_model": long}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

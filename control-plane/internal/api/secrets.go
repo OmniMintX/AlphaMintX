@@ -34,6 +34,11 @@ const (
 	llmTimeoutDefault = 30
 	llmTimeoutMin     = 1
 	llmTimeoutMax     = 600
+	llmModelMaxChars  = 128
+	// Model defaults mirror agent-plane DEFAULT_ROLE_MODELS (llm/mintrouter.py):
+	// the expensive model for the trader role, the cheap one for analyst roles.
+	llmTraderModelDefault  = "gpt-4o"
+	llmDefaultModelDefault = "gpt-4o-mini"
 )
 
 // secretMetaView is the API view of one stored secret: kind, the decoded
@@ -169,11 +174,14 @@ func (s *Server) handleSetBinanceSecret(w http.ResponseWriter, r *http.Request) 
 }
 
 // llmSecretRequest is the POST /api/v1/platform/secrets/llm body:
-// timeout_seconds is optional (default 30, bounds 1..600).
+// timeout_seconds is optional (default 30, bounds 1..600); trader_model and
+// default_model are optional (defaults gpt-4o / gpt-4o-mini, 1..128 chars).
 type llmSecretRequest struct {
 	BaseURL        string `json:"base_url"`
 	APIKey         string `json:"api_key"`
 	TimeoutSeconds *int   `json:"timeout_seconds"`
+	TraderModel    string `json:"trader_model"`
+	DefaultModel   string `json:"default_model"`
 }
 
 // llmPayload is BOTH the sealed plaintext and the GET
@@ -183,6 +191,8 @@ type llmPayload struct {
 	BaseURL        string `json:"base_url"`
 	APIKey         string `json:"api_key"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+	TraderModel    string `json:"trader_model"`
+	DefaultModel   string `json:"default_model"`
 }
 
 // llmMeta is the non-secret display metadata for kind llm.
@@ -190,6 +200,8 @@ type llmMeta struct {
 	BaseURL        string `json:"base_url"`
 	APIKeyLast4    string `json:"api_key_last4"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+	TraderModel    string `json:"trader_model"`
+	DefaultModel   string `json:"default_model"`
 }
 
 // handleSetLLMSecret is POST /api/v1/platform/secrets/llm (env-admin
@@ -220,9 +232,23 @@ func (s *Server) handleSetLLMSecret(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	traderModel := req.TraderModel
+	if traderModel == "" {
+		traderModel = llmTraderModelDefault
+	}
+	defaultModel := req.DefaultModel
+	if defaultModel == "" {
+		defaultModel = llmDefaultModelDefault
+	}
+	if len(traderModel) > llmModelMaxChars || len(defaultModel) > llmModelMaxChars {
+		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "trader_model and default_model must be 1..128 characters")
+		return
+	}
 	s.storeSealedSecret(w, r, secretKindLLM,
-		llmPayload{BaseURL: req.BaseURL, APIKey: req.APIKey, TimeoutSeconds: timeout},
-		llmMeta{BaseURL: req.BaseURL, APIKeyLast4: last4(req.APIKey), TimeoutSeconds: timeout})
+		llmPayload{BaseURL: req.BaseURL, APIKey: req.APIKey, TimeoutSeconds: timeout,
+			TraderModel: traderModel, DefaultModel: defaultModel},
+		llmMeta{BaseURL: req.BaseURL, APIKeyLast4: last4(req.APIKey), TimeoutSeconds: timeout,
+			TraderModel: traderModel, DefaultModel: defaultModel})
 }
 
 // handleAgentLLMConfig is GET /api/v1/agent/llm-config (agent tokens ONLY,
@@ -250,6 +276,14 @@ func (s *Server) handleAgentLLMConfig(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(plaintext, &payload); err != nil {
 		s.writeInternal(w, r, err)
 		return
+	}
+	// Payloads sealed before the model fields existed lack them: agents
+	// always see concrete models.
+	if payload.TraderModel == "" {
+		payload.TraderModel = llmTraderModelDefault
+	}
+	if payload.DefaultModel == "" {
+		payload.DefaultModel = llmDefaultModelDefault
 	}
 	writeJSON(w, http.StatusOK, payload)
 }

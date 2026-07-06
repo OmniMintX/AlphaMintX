@@ -79,6 +79,80 @@ def test_fetch_builds_mintrouter_with_fetched_values() -> None:
     assert client._timeout_seconds == 42.0
 
 
+def test_fetched_models_apply_to_role_map() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "base_url": FETCHED_BASE_URL,
+                "api_key": FETCHED_API_KEY,
+                "timeout_seconds": 42,
+                "trader_model": "gpt-4o",
+                "default_model": "gpt-4o-mini",
+            },
+        )
+
+    client = create_llm_client(
+        environ=dict(LIVE_ENV),
+        transport=_MINTROUTER_TRANSPORT,
+        config_transport=httpx.MockTransport(handler),
+    )
+    assert isinstance(client, MintRouterLLM)
+    assert client._role_models["trader"] == "gpt-4o"
+    assert client._role_models["market_analyst"] == "gpt-4o-mini"
+
+
+def test_config_without_models_falls_back_to_defaults() -> None:
+    client = create_llm_client(
+        environ=dict(LIVE_ENV),
+        transport=_MINTROUTER_TRANSPORT,
+        config_transport=httpx.MockTransport(_config_ok),
+    )
+    assert isinstance(client, MintRouterLLM)
+    assert client._role_models["trader"] == "gpt-4o"
+    assert client._role_models["market_analyst"] == "gpt-4o-mini"
+
+
+def test_fetched_unpriced_model_fails_fast() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "base_url": FETCHED_BASE_URL,
+                "api_key": FETCHED_API_KEY,
+                "timeout_seconds": 42,
+                "trader_model": "not-in-price-table",
+            },
+        )
+
+    with pytest.raises(LLMConfigError, match="price table"):
+        create_llm_client(
+            environ=dict(LIVE_ENV),
+            transport=_MINTROUTER_TRANSPORT,
+            config_transport=httpx.MockTransport(handler),
+        )
+
+
+def test_fetched_empty_model_raises_config_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "base_url": FETCHED_BASE_URL,
+                "api_key": FETCHED_API_KEY,
+                "timeout_seconds": 42,
+                "default_model": "",
+            },
+        )
+
+    with pytest.raises(LLMConfigError, match="default_model"):
+        create_llm_client(
+            environ=dict(LIVE_ENV),
+            transport=_MINTROUTER_TRANSPORT,
+            config_transport=httpx.MockTransport(handler),
+        )
+
+
 def test_env_timeout_beats_fetched_timeout() -> None:
     client = create_llm_client(
         environ={**LIVE_ENV, "MINTROUTER_TIMEOUT_SECONDS": "5"},

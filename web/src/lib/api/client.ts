@@ -293,10 +293,18 @@ export function setLlmSecret(
   baseUrl: string,
   apiKey: string,
   timeoutSeconds: number,
+  traderModel: string,
+  defaultModel: string,
 ): Promise<SecretWriteResponse> {
   return proxyPost(
     "/api/cp/platform/secrets/llm",
-    { base_url: baseUrl, api_key: apiKey, timeout_seconds: timeoutSeconds },
+    {
+      base_url: baseUrl,
+      api_key: apiKey,
+      timeout_seconds: timeoutSeconds,
+      trader_model: traderModel,
+      default_model: defaultModel,
+    },
     secretWriteResponseSchema,
   );
 }

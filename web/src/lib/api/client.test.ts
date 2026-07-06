@@ -435,16 +435,37 @@ describe("platform settings and admin helpers", () => {
     expect(res.secret.kind).toBe("binance");
   });
 
-  it("setLlmSecret POSTs {base_url, api_key, timeout_seconds} exactly", async () => {
+  it("setLlmSecret POSTs {base_url, api_key, timeout_seconds, models} exactly", async () => {
     const mock = stubFetch(jsonResponse(200, { secret: llmSecret }));
 
-    const res = await setLlmSecret("https://api.openai.com/v1", "sk-x", 30);
+    const res = await setLlmSecret(
+      "https://api.openai.com/v1",
+      "sk-x",
+      30,
+      "gpt-4o",
+      "gpt-4o-mini",
+    );
 
     expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/platform/secrets/llm");
     expect(mock.mock.calls[0]?.[1]?.body).toBe(
-      '{"base_url":"https://api.openai.com/v1","api_key":"sk-x","timeout_seconds":30}',
+      '{"base_url":"https://api.openai.com/v1","api_key":"sk-x","timeout_seconds":30,' +
+        '"trader_model":"gpt-4o","default_model":"gpt-4o-mini"}',
     );
     expect(res.secret.kind).toBe("llm");
+  });
+
+  it("parses llm meta that includes the model fields", async () => {
+    const withModels = {
+      ...llmSecret,
+      meta: { ...llmSecret.meta, trader_model: "gpt-4o", default_model: "gpt-4o-mini" },
+    };
+    stubFetch(jsonResponse(200, { items: [withModels] }));
+
+    const res = await fetchPlatformSecrets();
+
+    const [llm] = res.items;
+    expect(llm?.kind).toBe("llm");
+    if (llm?.kind === "llm") expect(llm.meta.trader_model).toBe("gpt-4o");
   });
 
   it("GETs /tenants and /users same-origin with no auth header", async () => {

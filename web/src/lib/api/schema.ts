@@ -435,6 +435,9 @@ export const llmSecretItemSchema = z.strictObject({
     base_url: z.string().min(1),
     api_key_last4: z.string().min(1),
     timeout_seconds: z.number().int().min(1),
+    // Absent on secrets saved before the model fields existed.
+    trader_model: z.string().min(1).optional(),
+    default_model: z.string().min(1).optional(),
   }),
   updated_at: utcTimestamp,
   updated_by: z.string().min(1),
