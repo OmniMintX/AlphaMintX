@@ -290,3 +290,12 @@ Exit criteria:
       `recorded_at`, metrics M1–M8, invariant audits V1–V9, hash-chained
       beta log, and a total PASS/INCONCLUSIVE/FAIL outcome mapping. This
       checkbox is ticked only by the exit review defined there.)
+      (2026-07-06: ops tooling landed per `docs/specs/beta-ops-tooling.md`
+      — `cmd/betalog` (hash-chained beta log, BL-6 `-prefix-of` custody
+      verify), `cmd/betaaudit` (artifact-first V1–V9 audit queries,
+      MANUAL items discharged via `audit_manual` beta-log entries),
+      `cmd/deadman` (watcher-host receiver + dead-man alarm, mandatory
+      bearer). Deploy: `install.sh` ships betalog/betaaudit on the beta
+      VM; `alphamintx-deadman.service` + `install-deadman.sh` for the
+      watcher host (refuses co-location with the control-plane);
+      operator procedures in RUNBOOK §11.)

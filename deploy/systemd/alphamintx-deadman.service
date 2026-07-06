@@ -1,0 +1,41 @@
+# AlphaMintX dead-man receiver (beta-ops-tooling.md DM-1..DM-5; BETA-PROTOCOL
+# BP-2 item 4). Runs on the WATCHER HOST, never on the beta VM: a dead-man
+# detector on the host it watches dies with it and proves nothing. deadman is
+# a separate trust domain — it holds NO control-plane tokens, no venue keys.
+#
+# Env file: /etc/alphamintx/deadman.env, 0600 root:root — DEADMAN_BEARER
+# (mandatory, DM-1: the unit fails fast without it) and optionally
+# DEADMAN_ALARM_URL (DM-3). No TLS here (DM-5): front the listen address
+# with the site reverse proxy for anything non-loopback.
+#
+# -heartbeat-hours MUST equal the notifier's heartbeat_hours (RUNBOOK §9.1,
+# CONTROLPLANE_ALERT_WEBHOOK): larger blinds the alarm, smaller manufactures
+# false alarms. Edit BOTH together or neither.
+
+[Unit]
+Description=AlphaMintX dead-man receiver (watcher host)
+Wants=network-online.target
+After=network-online.target
+# Missing/empty DEADMAN_BEARER exits 2 forever: land in `failed`, visible in
+# `systemctl --failed`, instead of an infinite silent crash loop.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+User=alphamintx-deadman
+EnvironmentFile=/etc/alphamintx/deadman.env
+ExecStart=/opt/alphamintx-deadman/bin/deadman -listen 127.0.0.1:9190 -raw-log /var/lib/alphamintx-deadman/raw.jsonl -heartbeat-hours 24
+WorkingDirectory=/var/lib/alphamintx-deadman
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (same posture as DS-11a; the raw log dir is the only writable path)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/alphamintx-deadman
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

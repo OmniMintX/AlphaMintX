@@ -708,3 +708,113 @@ the control-plane origin = export the new values, re-run the web build +
 copy (`deploy/install.sh` does both), then
 `systemctl restart alphamintx-web`. Editing `web.env` does NOT rotate
 them.
+
+## 11. Beta ops tooling (beta-ops-tooling.md; BETA-PROTOCOL BP-8/BP-9)
+
+Three operator binaries make the 30-day beta protocol executable:
+`betalog` (hash-chained beta log, BP-9), `betaaudit` (weekly BP-8
+audit queries), `deadman` (BP-2 item 4 heartbeat watcher).
+`deploy/install.sh` installs the first two on the beta VM;
+`deadman` is installed ONLY by `deploy/install-deadman.sh` on the
+watcher host (§11.3) — a dead-man on the host it watches dies with
+it and proves nothing.
+
+### 11.1 Beta log (betalog)
+
+One append-only JSONL file for the whole beta; every entry carries
+the SHA-256 of the previous line (BL-1). Pick the path on Day 0 and
+never move it — `$BETA_LOG` below. There is no delete/rewrite/compact
+command and no legal in-place edit (BL-5).
+
+- Append a note:
+  `/opt/alphamintx/bin/betalog append -log $BETA_LOG -type note -text "..."`
+  The tool prints the new entry's SHA-256; `at` is tool-generated,
+  never operator-supplied.
+- Incident acknowledge / resolve (BP-1 — refs REQUIRED, exit 2
+  without them): `-type incident_ack -ref source=<source> -ref id=<id>`
+  and later `-type incident_resolve` with the same refs. The
+  `(source, id)` pair is the envelope dedupe pair from §9.2. M7 uses
+  the FIRST ack for a pair; a duplicate ack is refused.
+- Limit change (joins the V9 audit to the log):
+  `-type limit_change -ref change_id=<change_id> -text "<why>"` where
+  `change_id` comes from the `risk_limit_changes` row (§8 flow).
+- Correction (BL-4a — wrong entries are never rewritten):
+  `-type correction -ref supersedes=<n> -text "<what was wrong>"`.
+- Verify the whole chain: `betalog verify -log $BETA_LOG` — exit 0
+  clean; first break reported with its line number. Run it after
+  every append session and before every custody copy (§11.2).
+
+### 11.2 Daily off-host custody (BL-6 — applies to the deadman raw log verbatim)
+
+The chain has no secret input: an operator who controls the host can
+regenerate the whole file. Custody, not cryptography, defeats that:
+
+1. Daily, copy BOTH `$BETA_LOG` and the watcher's raw log to storage
+   the operator CANNOT rewrite (versioned object store with retention
+   lock, or a copy held by the design partner / reviewer). The custody
+   arrangement itself is Day-0 evidence (BP-2).
+2. Append-only means every daily copy is a byte-prefix of every later
+   copy and of the final log. The reviewer's check:
+   `betalog verify -log <daily-copy> -prefix-of <later-copy-or-final>`
+   A prefix failure against ANY pre-existing copy = regeneration
+   finding at exit review.
+3. Honest limit: daily copies bound `at` to ±24 h and no finer; M7
+   verdicts inside that tolerance rest on the receiver raw log and
+   journal cross-checks, not on `at` alone.
+
+### 11.3 Dead-man receiver (deadman — WATCHER HOST only)
+
+1. On a host that is NOT the beta VM, from a repo checkout:
+   `sudo sh deploy/install-deadman.sh` (it refuses to run on a host
+   with the control-plane unit installed — that is a guard, not a
+   suggestion).
+2. Create `/etc/alphamintx/deadman.env` (0600 root:root):
+   `DEADMAN_BEARER=<generated secret>` (mandatory — the unit fails
+   fast without it, DM-1) and optionally `DEADMAN_ALARM_URL=<url>`
+   (DM-3 alarm POST target).
+3. The unit's `-heartbeat-hours` MUST equal the notifier's
+   `heartbeat_hours` (§9.1 `CONTROLPLANE_ALERT_WEBHOOK`): larger
+   blinds the alarm, smaller manufactures false alarms. Edit both
+   together or neither.
+4. Point the notifier webhook at the receiver THROUGH the site
+   reverse proxy (TLS terminates there — DM-5; the unit listens on
+   loopback), with `authorization_bearer` set to the same secret.
+5. `systemctl enable --now alphamintx-deadman`, then confirm a
+   `receiver_start` mark in the raw log and the §9.2 on-start
+   heartbeat arriving from the control-plane.
+6. Day-0 drill (DM-4): with `DEADMAN_BEARER` exported from the env
+   file, `/opt/alphamintx-deadman/bin/deadman -selftest
+   -target http://127.0.0.1:9190`, then confirm a
+   `"source":"selftest"` line in the raw log. Selftest can never
+   feed the alarm tracker or mask a real gap.
+7. Alarm response: a `{"alarm":"heartbeat_silence"}` line (and POST
+   to `DEADMAN_ALARM_URL` if set) means no notifier heartbeat for
+   H+1 hours — check the control-plane host per §9.4/§10.4. Its
+   `fired_at` starts the BP-2 item 4 SLA clock. Receiver downtime
+   does NOT stop that clock: a gap in `receiver_alive` marks counts
+   against availability from the last successful heartbeat.
+
+### 11.4 Weekly audit (betaaudit)
+
+1. Input is the newest VERIFIED backup artifact (§2), never the live
+   DB for the weekly run:
+   `/opt/alphamintx/bin/betaaudit -artifact <newest-artifact>
+   -ref-artifact <previous-week-artifact> -strategy <certified-id>
+   -log $BETA_LOG -json > audit-<date>.json`
+   `-ref-artifact` enables V7b append-only growth; both sides must be
+   artifacts.
+2. `-db <live>` exists for spot checks only and prints a warning: a
+   long read on the live WAL blocks the backup's
+   `wal_checkpoint(TRUNCATE)` and would MANUFACTURE `backup_failed`
+   incidents against the OB-10 loop.
+3. Exit 0 = no FAIL. Any FAIL is an incident: ack it in the beta log
+   (§11.1) and handle per the alert class (§5, §9.4).
+4. MANUAL checks (V2 residency, V3, V5 timing, V6, V8, M6a) print
+   their human procedure. Perform it, then discharge EACH with:
+   `betalog append -log $BETA_LOG -type audit_manual
+   -ref check=<id> -ref result=pass|fail -text "<what was checked>"`
+   A weekly report whose MANUAL items lack matching beta-log entries
+   is an INCOMPLETE audit at exit review (BA-2).
+5. File `audit-<date>.json` with the daily custody copies (§11.2);
+   the report header binds it to its inputs (artifact SHA-256,
+   `user_version`, per-table max rowid).

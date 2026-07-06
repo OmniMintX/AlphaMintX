@@ -60,7 +60,12 @@ echo "building control-plane binaries..."
     cd control-plane
     go build -o /opt/alphamintx/bin/controlplane ./cmd/controlplane
     go build -o /opt/alphamintx/bin/backupverify ./cmd/backupverify
+    go build -o /opt/alphamintx/bin/betalog ./cmd/betalog
+    go build -o /opt/alphamintx/bin/betaaudit ./cmd/betaaudit
 )
+# deadman is deliberately NOT installed here: it is a separate trust domain
+# that must run on the watcher host (beta-ops-tooling.md DM-1; BP-2 item 4).
+# Use deploy/install-deadman.sh on that host — see docs/RUNBOOK.md §11.3.
 
 # --- agent-plane venv ------------------------------------------------------
 echo "installing agent-plane venv..."
