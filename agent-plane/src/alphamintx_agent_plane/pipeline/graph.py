@@ -202,17 +202,37 @@ def _parse_or_reprompt[T](
             ) from second_error
 
 
+def _require_utf8_max_bytes(field: str, value: str, limit: int) -> str:
+    """The control-plane gate measures every max-length with Go ``len()`` —
+    UTF-8 *bytes*, not code points — and an over-limit debate field rejects the
+    whole trace at ingestion (append-only + UNIQUE run_id: the trace would be
+    lost for good). Enforce byte semantics at the parse site so the single
+    reprompt is the recovery."""
+    if len(value.encode("utf-8")) > limit:
+        raise ValueError(f"{field} exceeds {limit} UTF-8 bytes")
+    return value
+
+
 def _parse_summary(text: str) -> AnalystSummary:
-    return AnalystSummary.model_validate(json.loads(text))
+    summary = AnalystSummary.model_validate(json.loads(text))
+    # Pydantic max_length counts characters; re-check as bytes (gate semantics).
+    _require_utf8_max_bytes("summary", summary.summary, 2000)
+    return summary
 
 
 def _parse_argument(text: str) -> tuple[str, float]:
     payload = json.loads(text)
-    return str(payload["argument"]), float(payload["score"])
+    argument = _require_utf8_max_bytes("argument", str(payload["argument"]), 4000)
+    score = float(payload["score"])
+    # json.loads accepts NaN/Infinity; the trace schema pins scores to [0, 1],
+    # so reject here and let the reprompt (never a silent clamp) recover.
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError(f"score must be a finite number in [0, 1], got {score}")
+    return argument, score
 
 
 def _parse_judge_summary(text: str) -> str:
-    return str(json.loads(text)["summary"])
+    return _require_utf8_max_bytes("summary", str(json.loads(text)["summary"]), 4000)
 
 
 def _debate_context(state: PipelineState) -> str:

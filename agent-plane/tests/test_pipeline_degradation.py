@@ -280,6 +280,89 @@ def test_confidence_exactly_at_threshold_keeps_trader_action() -> None:
     assert llm.calls[ROLE_TRADER] == 1
 
 
+def _bull_output(score: float, argument: str = "Momentum breakout long.") -> str:
+    return json.dumps({"argument": argument, "score": score})
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"), -0.5, 1.5])
+def test_out_of_bounds_debate_score_reprompts_then_forces_hold(
+    score: float, proposal_schema: dict[str, Any]
+) -> None:
+    """The trace schema pins debate scores to [0, 1]; an unvalidated score
+    would make the whole trace unstorable at the control-plane (400 at
+    ingestion, trace lost — append-only + UNIQUE run_id). The parse site must
+    reject it so the single reprompt is the recovery, resolving to a forced
+    hold when it repeats."""
+    bad = _bull_output(score)
+    llm = ScriptedLLM({ROLE_BULL_RESEARCHER: [bad, bad]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.HOLD
+    assert "MALFORMED_LLM_OUTPUT" in proposal.reasoning
+    assert llm.calls[ROLE_BULL_RESEARCHER] == 2
+    Draft202012Validator(proposal_schema).validate(proposal.to_json_dict())
+
+
+def test_out_of_bounds_debate_score_recovers_after_single_reprompt() -> None:
+    llm = ScriptedLLM({ROLE_BULL_RESEARCHER: [_bull_output(1.5)]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.OPEN_LONG
+    # Round 1 = bad attempt + successful reprompt, round 2 = one clean call.
+    assert llm.calls[ROLE_BULL_RESEARCHER] == 3
+
+
+def test_debate_argument_over_byte_cap_reprompts_then_forces_hold(
+    proposal_schema: dict[str, Any],
+) -> None:
+    """Gate max-lengths are UTF-8 *bytes* (Go ``len()``), not characters:
+    2000 three-byte chars pass a character check but blow the 4000-byte cap
+    and would reject the trace at ingestion. Byte semantics must be enforced
+    at the parse site."""
+    bad = _bull_output(0.7, argument="\u1ec7" * 2000)  # 2000 chars, 6000 bytes
+    llm = ScriptedLLM({ROLE_BULL_RESEARCHER: [bad, bad]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.HOLD
+    assert "MALFORMED_LLM_OUTPUT" in proposal.reasoning
+    assert llm.calls[ROLE_BULL_RESEARCHER] == 2
+    Draft202012Validator(proposal_schema).validate(proposal.to_json_dict())
+
+
+def test_judge_summary_over_byte_cap_reprompts_then_recovers() -> None:
+    llm = ScriptedLLM({
+        ROLE_DEBATE_JUDGE: [json.dumps({"summary": "\u1ec7" * 2000})]
+    })
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.OPEN_LONG
+    assert llm.calls[ROLE_DEBATE_JUDGE] == 2
+
+
+def test_analyst_summary_over_byte_cap_forces_hold_after_reprompt() -> None:
+    """1500 chars pass pydantic's character-based max_length=2000 but weigh
+    4500 UTF-8 bytes > the gate's 2000-byte cap; the parse site re-checks in
+    bytes, so twice-oversized output resolves to the malformed forced hold
+    with the explicit degradation marker per spec §5."""
+    bad = json.dumps({
+        "signal": "bullish",
+        "confidence": 0.7,
+        "summary": "\u1ec7" * 1500,
+    })
+    llm = ScriptedLLM({ROLE_MARKET_ANALYST: [bad, bad]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.HOLD
+    assert "MALFORMED_LLM_OUTPUT" in proposal.reasoning
+    assert llm.calls[ROLE_MARKET_ANALYST] == 2
+    assert proposal.analyst_summaries.market.summary.startswith("unavailable:")
+
+
 def test_unavailable_bull_researcher_cuts_debate_short_but_still_trades(
     proposal_schema: dict[str, Any],
 ) -> None:
