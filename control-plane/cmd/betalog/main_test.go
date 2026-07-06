@@ -218,8 +218,27 @@ func TestDuplicateIncidentAckDetected(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "beta.log")
 	mustAppend(t, log, "incident_ack", "first ack", "source=pagerduty", "id=42")
 	mustAppend(t, log, "note", "between")
-	mustAppend(t, log, "incident_ack", "dup ack", "source=pagerduty", "id=42")
 
+	// BL-2 exception: the tool itself refuses the duplicate (exit 1,
+	// nothing appended) — appending it would brick every later verify.
+	var out, errOut bytes.Buffer
+	if code := run(appendArgs(log, "incident_ack", "dup ack", "source=pagerduty", "id=42"), &out, &errOut); code != 1 {
+		t.Fatalf("duplicate append exit = %d (stderr %q), want 1", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "duplicate incident_ack") {
+		t.Errorf("append stderr %q missing duplicate refusal", errOut.String())
+	}
+	if got := len(readLines(t, log)); got != 2 {
+		t.Fatalf("log has %d lines after refused append, want 2", got)
+	}
+
+	// Defense-in-depth: a duplicate planted by a foreign writer (valid
+	// chain bytes, bypassing the tool) is still caught by verify with
+	// its line number (BL-4).
+	lines := readLines(t, log)
+	planted := craftLine(t, lines[len(lines)-1], 3, "incident_ack",
+		map[string]string{"source": "pagerduty", "id": "42"}, "2026-07-06T00:00:00Z")
+	writeLines(t, log, append(lines, planted))
 	code, stderr := runVerifyArgs(t, "-log", log)
 	if code != 1 {
 		t.Fatalf("verify exit = %d (stderr %q), want 1", code, stderr)
@@ -227,6 +246,45 @@ func TestDuplicateIncidentAckDetected(t *testing.T) {
 	if !strings.Contains(stderr, "duplicate incident_ack") || !strings.Contains(stderr, "line 3") {
 		t.Errorf("stderr %q missing duplicate report with line number", stderr)
 	}
+}
+
+// craftLine hand-builds a chain-valid line (foreign-writer simulation):
+// prev is the SHA-256 of prevLine's bytes.
+func craftLine(t *testing.T, prevLine string, n int, typ string, refs map[string]string, at string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(prevLine))
+	b, err := json.Marshal(entry{N: n, Prev: hex.EncodeToString(sum[:]), At: at, Type: typ, Text: "planted", Refs: refs})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(b)
+}
+
+// TestForeignLineShapeDetected: verify enforces the BL-1 shape on
+// foreign bytes too — a chain-valid line missing a declared field, or
+// carrying a non-Z timestamp, fails verify.
+func TestForeignLineShapeDetected(t *testing.T) {
+	t.Run("missing field", func(t *testing.T) {
+		log := buildChain(t, 1)
+		lines := readLines(t, log)
+		sum := sha256.Sum256([]byte(lines[0]))
+		planted := fmt.Sprintf(`{"n":2,"prev":%q,"at":"2026-07-06T00:00:00Z","type":"note","refs":{}}`, hex.EncodeToString(sum[:]))
+		writeLines(t, log, append(lines, planted))
+		code, stderr := runVerifyArgs(t, "-log", log)
+		if code != 1 || !strings.Contains(stderr, "missing field") {
+			t.Fatalf("exit = %d, stderr %q; want 1 with missing-field report", code, stderr)
+		}
+	})
+	t.Run("non-Z timestamp", func(t *testing.T) {
+		log := buildChain(t, 1)
+		lines := readLines(t, log)
+		planted := craftLine(t, lines[0], 2, "note", map[string]string{}, "2026-07-06T02:00:00+02:00")
+		writeLines(t, log, append(lines, planted))
+		code, stderr := runVerifyArgs(t, "-log", log)
+		if code != 1 || !strings.Contains(stderr, "not UTC Z") {
+			t.Fatalf("exit = %d, stderr %q; want 1 with not-UTC-Z report", code, stderr)
+		}
+	})
 }
 
 // TestPrefixOf: a daily copy is a byte-prefix of the later final log

@@ -145,6 +145,24 @@ func appendEntry(path, typ, text string, refs map[string]string) (string, error)
 		sum := sha256.Sum256(last)
 		prev = hex.EncodeToString(sum[:])
 	}
+	// BL-4a: a duplicate ack is never appended — it would brick every
+	// subsequent verify with no legal remediation (BL-5). The whole file
+	// is already in memory under the flock; corrupt mid-file lines are
+	// skipped here (tail-only append rule) and left for verify.
+	if typ == "incident_ack" {
+		for _, line := range bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n")) {
+			if len(line) == 0 {
+				continue
+			}
+			e, err := parseEntry(line)
+			if err != nil {
+				continue
+			}
+			if e.Type == "incident_ack" && e.Refs["source"] == refs["source"] && e.Refs["id"] == refs["id"] {
+				return "", fmt.Errorf("duplicate incident_ack for (source=%s, id=%s): first ack is entry %d; append a correction instead (BL-4a)", refs["source"], refs["id"], e.N)
+			}
+		}
+	}
 	// at is tool-generated, never operator-supplied (BL-2).
 	e := entry{N: n, Prev: prev, At: time.Now().UTC().Format(time.RFC3339Nano), Type: typ, Text: text, Refs: refs}
 	line, err := json.Marshal(e)
@@ -244,11 +262,24 @@ func verifyChain(data []byte, warn io.Writer) (int, error) {
 	return len(lines), nil
 }
 
-// parseEntry decodes one line strictly and checks the BL-1 shape.
+// parseEntry decodes one line strictly and checks the BL-1 shape:
+// exactly the six declared fields, no more, no fewer.
 func parseEntry(line []byte) (entry, error) {
+	var e entry
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return e, err
+	}
+	for _, k := range []string{"n", "prev", "at", "type", "text", "refs"} {
+		if _, ok := raw[k]; !ok {
+			return e, fmt.Errorf("missing field %q (BL-1)", k)
+		}
+	}
+	if len(raw) != 6 {
+		return e, fmt.Errorf("%d fields, want exactly 6 (BL-1)", len(raw))
+	}
 	dec := json.NewDecoder(bytes.NewReader(line))
 	dec.DisallowUnknownFields()
-	var e entry
 	if err := dec.Decode(&e); err != nil {
 		return e, err
 	}
@@ -269,6 +300,9 @@ func parseEntry(line []byte) (entry, error) {
 	}
 	if _, err := time.Parse(time.RFC3339, e.At); err != nil {
 		return e, fmt.Errorf("at: %v", err)
+	}
+	if !strings.HasSuffix(e.At, "Z") {
+		return e, fmt.Errorf("at %q: not UTC Z (BT-1)", e.At)
 	}
 	return e, nil
 }

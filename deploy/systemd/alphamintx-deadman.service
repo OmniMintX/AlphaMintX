@@ -16,6 +16,11 @@
 Description=AlphaMintX dead-man receiver (watcher host)
 Wants=network-online.target
 After=network-online.target
+# Refuse to start beside the control-plane (same failure domain = no
+# dead-man). install-deadman.sh guards install time; this guards start
+# time. Both are advisory against a root operator — the evidentiary
+# backstop is DM-4's cross-checks, not this line.
+ConditionPathExists=!/etc/systemd/system/alphamintx-controlplane.service
 # Missing/empty DEADMAN_BEARER exits 2 forever: land in `failed`, visible in
 # `systemctl --failed`, instead of an infinite silent crash loop.
 StartLimitIntervalSec=300
@@ -36,6 +41,8 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/alphamintx-deadman
 PrivateTmp=yes
+ProtectProc=invisible
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

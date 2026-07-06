@@ -89,6 +89,7 @@ func TestUsageErrors(t *testing.T) {
 
 func TestCleanFixturePasses(t *testing.T) {
 	path := newFixture(t)
+	seed(t, path, "PRAGMA user_version = 7")
 	code, rep := auditJSON(t, "-artifact", path)
 	if code != 0 {
 		t.Fatalf("clean fixture: code = %d, want 0", code)
@@ -103,6 +104,9 @@ func TestCleanFixturePasses(t *testing.T) {
 	}
 	if rep.Header.StartedAt == "" {
 		t.Error("header missing started_at")
+	}
+	if rep.Header.UserVersion != 7 {
+		t.Errorf("header user_version = %d, want 7 (must reflect the input's PRAGMA)", rep.Header.UserVersion)
 	}
 	if _, ok := rep.Header.MaxRowids["fills"]; !ok {
 		t.Error("header missing max_rowids for fills")
@@ -142,6 +146,47 @@ func TestV1bOrderAgainstRejectAndUnapprovedEscalate(t *testing.T) {
 	}
 	if c := verdictOf(t, rep, "V1b"); c.Verdict != "FAIL" || len(c.Findings) != 1 {
 		t.Fatalf("V1b = %+v, want FAIL [o1]", c)
+	}
+}
+
+// TestV1bEscalateBranch: an escalate-verdict order FAILs without an
+// approvals row whose outcome is exactly 'approved'; a row with any
+// other outcome does not heal it, and 'approved' does. Guards the
+// one-character regression traps ('approve', 'escalated').
+func TestV1bEscalateBranch(t *testing.T) {
+	path := newFixture(t)
+	seed(t, path,
+		`INSERT INTO proposals (proposal_id, strategy_id, symbol, action, created_at, payload_json, payload_sha256)
+		 VALUES ('p2', 's1', 'BTCUSDT', 'open_long', '2026-07-01T00:00:00Z', '{}', 'x')`,
+		`INSERT INTO verdicts (verdict_id, proposal_id, decision, evaluated_at, payload_json)
+		 VALUES ('v2', 'p2', 'escalate', '2026-07-01T00:00:01Z', '{}')`,
+		`INSERT INTO orders (order_id, proposal_id, origin, strategy_id, symbol, class, side, type,
+		 reduce_only, qty_base, kill_epoch, status, submitted_at)
+		 VALUES ('o2', 'p2', 'proposal', 's1', 'BTCUSDT', 'ENTRY', 'BUY', 'LIMIT', 0, '0.1', 0,
+		 'submitted', '2026-07-01T00:00:02Z')`,
+		// Control pair: escalate WITH outcome='approved' must not appear.
+		`INSERT INTO proposals (proposal_id, strategy_id, symbol, action, created_at, payload_json, payload_sha256)
+		 VALUES ('p3', 's1', 'ETHUSDT', 'open_long', '2026-07-01T00:00:00Z', '{}', 'x')`,
+		`INSERT INTO verdicts (verdict_id, proposal_id, decision, evaluated_at, payload_json)
+		 VALUES ('v3', 'p3', 'escalate', '2026-07-01T00:00:01Z', '{}')`,
+		`INSERT INTO approvals (approval_id, verdict_id, proposal_id, outcome, decided_by, decided_at, timeout_seconds)
+		 VALUES ('ap3', 'v3', 'p3', 'approved', 'op', '2026-07-01T00:00:03Z', 300)`,
+		`INSERT INTO orders (order_id, proposal_id, origin, strategy_id, symbol, class, side, type,
+		 reduce_only, qty_base, kill_epoch, status, submitted_at)
+		 VALUES ('o3', 'p3', 'proposal', 's1', 'ETHUSDT', 'ENTRY', 'BUY', 'LIMIT', 0, '0.1', 0,
+		 'submitted', '2026-07-01T00:00:04Z')`)
+	code, rep := auditJSON(t, "-artifact", path)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1", code)
+	}
+	if c := verdictOf(t, rep, "V1b"); c.Verdict != "FAIL" || len(c.Findings) != 1 || c.Findings[0] != "o2" {
+		t.Fatalf("V1b = %+v, want FAIL exactly [o2]", c)
+	}
+	// A non-'approved' outcome (timeout) does not heal.
+	seed(t, path, `INSERT INTO approvals (approval_id, verdict_id, proposal_id, outcome, decided_by, decided_at, timeout_seconds)
+		 VALUES ('ap2', 'v2', 'p2', 'timeout', 'op', '2026-07-01T00:00:05Z', 300)`)
+	if _, rep := auditJSON(t, "-artifact", path); verdictOf(t, rep, "V1b").Verdict != "FAIL" {
+		t.Fatal("V1b must still FAIL with a non-approved approvals outcome")
 	}
 }
 

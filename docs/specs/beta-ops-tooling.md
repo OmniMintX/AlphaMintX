@@ -57,7 +57,12 @@ already demands, in the shape it demands.
   tool-generated `time.Now().UTC()` — never operator-supplied. If
   the last line is corrupt append REFUSES (exit 1). Append verifies
   the tail only, NOT the whole file: a mid-file tamper is caught by
-  the next `verify`, not at append time. Appending to an absent
+  the next `verify`, not at append time. ONE exception: for
+  `incident_ack` the file (already in memory under the flock) is
+  scanned and a duplicate `(source, id)` ack is REFUSED (exit 1) —
+  appending it would brick every later verify (BL-4) with no legal
+  remediation (BL-5); the operator's correction path is BL-4a.
+  Appending to an absent
   file starts a fresh chain (entry 1); a fresh chain appearing
   mid-beta is itself an exit-review finding (the daily off-host
   copies make it visible — BL-6).
@@ -237,7 +242,11 @@ already demands, in the shape it demands.
   exactly `Authorization: Bearer <value>` (constant-time compare)
   or get `401` with no body detail; each rejected attempt appends
   an `{"auth_reject": ...}` line (remote addr, time, NO header
-  echo) so brute-force attempts are themselves evidence. Server
+  echo) so brute-force attempts are themselves evidence — capped at
+  10 verbatim lines per minute, with the overflow folded into one
+  `{"auth_reject_suppressed": ...}` count line when the window
+  rolls (rejects are UNAUTHENTICATED appends; without the cap an
+  anonymous client grows the evidence file without bound). Server
   hardening: `http.MaxBytesReader` at 1 MiB per body (an unbounded
   body is a disk-exhaustion attack ON the evidence file),
   `ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout` set, and all
@@ -279,7 +288,9 @@ already demands, in the shape it demands.
   notifier arrival, NOT from process start: a receiver restarted
   after long silence must alarm immediately, not grant a fresh
   `H+1` grace window. If the log has no notifier arrival, seed =
-  receiver start (first boot only).
+  the OLDEST lifecycle mark on record (a crash-looping receiver
+  must not re-grant itself a fresh window each restart); an empty
+  log seeds from receiver start (true first boot only).
 - **DM-4.** Drill hook (Day-0 evidence): `deadman -selftest
   -target <url>` sends one synthetic envelope to a running
   instance and exits (`-target` without `-selftest` = exit 2). The
@@ -307,6 +318,7 @@ already demands, in the shape it demands.
 - betalog: append/verify round-trip; tamper (byte edit, line
   delete, line reorder, truncation) each detected with line number;
   broken-tail append refusal; required-refs enforcement;
+  duplicate `incident_ack` REFUSED at append (BL-2 exception);
   `-prefix-of` accepts a true prefix and rejects a regenerated
   chain; concurrent appends (two goroutines × N) never produce a
   duplicate `n` (flock); correction entry appends with
@@ -318,9 +330,11 @@ already demands, in the shape it demands.
   (db file bytes identical before/after run); `-db` prints the
   live-WAL warning.
 - deadman: refuses to start without `DEADMAN_BEARER`; bearer
-  accept/reject with auth_reject line; oversized body rejected;
+  accept/reject with auth_reject line; auth_reject cap folds
+  overflow into a suppressed-count line; oversized body rejected;
   raw-log append order vs 200; invalid-JSON logging; concurrent
   POSTs produce valid JSONL (no interleaving); alarm fires after
   simulated silence, appends once per episode, re-arms; tracker
   seeds from existing raw log on restart (immediate alarm after
-  long-silence restart); selftest cannot reset the tracker.
+  long-silence restart, including from lifecycle marks alone);
+  selftest cannot reset the tracker.

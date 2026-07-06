@@ -809,7 +809,8 @@ regenerate the whole file. Custody, not cryptography, defeats that:
    incidents against the OB-10 loop.
 3. Exit 0 = no FAIL. Any FAIL is an incident: ack it in the beta log
    (§11.1) and handle per the alert class (§5, §9.4).
-4. MANUAL checks (V2 residency, V3, V5 timing, V6, V8, M6a) print
+4. MANUAL checks (V2 residency, V3, V5 timing, V6, V8, M6a — plus
+   V7b whenever the run used `-db` instead of two artifacts) print
    their human procedure. Perform it, then discharge EACH with:
    `betalog append -log $BETA_LOG -type audit_manual
    -ref check=<id> -ref result=pass|fail -text "<what was checked>"`

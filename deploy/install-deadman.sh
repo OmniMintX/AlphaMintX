@@ -6,6 +6,9 @@
 #   sudo sh deploy/install-deadman.sh
 #
 # Idempotent. The env file is NOT created here — see docs/RUNBOOK.md §11.3.
+#
+# Re-running over a RUNNING unit fails with ETXTBSY on the Go binary:
+# `systemctl stop alphamintx-deadman` first.
 # Deliberately NOT part of deploy/install.sh: deadman is a separate trust
 # domain (DM-1) and co-locating it with the control-plane voids BP-2 item 4.
 set -eu

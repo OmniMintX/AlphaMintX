@@ -30,6 +30,16 @@ import (
 // a disk-exhaustion attack on the evidence file.
 const maxBody = 1 << 20
 
+// Auth-reject lines are themselves unauthenticated appends, so they are
+// capped: at most maxRejectLines per rejectWindow are written verbatim;
+// the overflow is folded into one auth_reject_suppressed summary line
+// when the window rolls. Brute force stays visible (DM-1) without
+// letting an anonymous client grow the evidence file without bound.
+const (
+	maxRejectLines = 10
+	rejectWindow   = time.Minute
+)
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -74,6 +84,7 @@ func run(args []string, out, errOut io.Writer) int {
 		now:            time.Now,
 		aliveEvery:     10 * time.Minute,
 		alarmEvery:     30 * time.Second,
+		errOut:         errOut,
 	})
 	if err != nil {
 		fmt.Fprintf(errOut, "deadman: %v\n", err)
@@ -89,6 +100,7 @@ func run(args []string, out, errOut io.Writer) int {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(errOut, "deadman: %v\n", err)
@@ -137,6 +149,19 @@ type authRejectBody struct {
 	At         string `json:"at"`
 }
 
+// authRejectSuppressedLine folds rejects beyond maxRejectLines per
+// rejectWindow into one summary line: the count stays evidence, the
+// growth stays bounded.
+type authRejectSuppressedLine struct {
+	AuthRejectSuppressed authRejectSuppressedBody `json:"auth_reject_suppressed"`
+}
+
+type authRejectSuppressedBody struct {
+	Count       int    `json:"count"`
+	WindowStart string `json:"window_start"`
+	At          string `json:"at"`
+}
+
 // serverConfig wires a server; tests inject a fake clock and short loop
 // intervals. heartbeatHours is H — the DM-3 alarm threshold is H+1
 // hours. alarmURL is the optional DM-3 alarm POST target. aliveEvery is
@@ -149,6 +174,7 @@ type serverConfig struct {
 	now            func() time.Time
 	aliveEvery     time.Duration
 	alarmEvery     time.Duration
+	errOut         io.Writer // journal surface for append-failure notices; nil = discard
 }
 
 // server is the webhook receiver. ALL raw-log appends are serialized
@@ -163,11 +189,17 @@ type server struct {
 	alarmEvery   time.Duration
 	alarmClient  *http.Client
 
+	errOut io.Writer
+
 	mu           sync.Mutex
 	log          *os.File
 	lastNotifier time.Time // newest source=="notifier" arrival (DM-3)
 	alarmed      bool      // alarm line appended for the current episode
 	alarmPayload []byte    // the episode's alarm JSON, re-POSTed each tick
+
+	rejectWinStart   time.Time // current auth-reject window
+	rejectLines      int       // verbatim auth_reject lines this window
+	rejectSuppressed int       // rejects folded into the next summary
 }
 
 // newServer seeds the DM-3 tracker from the existing raw log, opens the
@@ -181,14 +213,23 @@ func newServer(cfg serverConfig) (*server, error) {
 		aliveEvery:   cfg.aliveEvery,
 		alarmEvery:   cfg.alarmEvery,
 		alarmClient:  &http.Client{Timeout: 5 * time.Second},
+		errOut:       cfg.errOut,
 	}
-	seed, err := newestNotifierArrival(cfg.logPath)
+	if s.errOut == nil {
+		s.errOut = io.Discard
+	}
+	seed, oldestMark, err := scanRawLog(cfg.logPath)
 	if err != nil {
 		return nil, err
 	}
 	if seed.IsZero() {
-		// No notifier arrival on record: seed = receiver start (first
-		// boot only — DM-3).
+		// No notifier arrival on record: seed from the OLDEST lifecycle
+		// mark so a crash-looping receiver cannot re-grant itself a
+		// fresh H+1 grace window on every restart (DM-3 "first boot
+		// only"). A truly first boot (empty log) seeds from now.
+		seed = oldestMark
+	}
+	if seed.IsZero() {
 		seed = s.now()
 	}
 	s.lastNotifier = seed
@@ -204,28 +245,42 @@ func newServer(cfg serverConfig) (*server, error) {
 	return s, nil
 }
 
-// newestNotifierArrival scans an existing raw log for the newest entry
-// whose envelope has source=="notifier" (DM-3 seeding): a receiver
-// restarted after long silence must alarm immediately, not get a fresh
-// H+1 grace window. The zero time means no notifier arrival on record.
-func newestNotifierArrival(path string) (time.Time, error) {
+// scanRawLog scans an existing raw log for (a) the newest entry whose
+// envelope has source=="notifier" (DM-3 seeding: a receiver restarted
+// after long silence must alarm immediately, not get a fresh H+1 grace
+// window) and (b) the oldest lifecycle mark (fallback seed so a
+// crash-looping receiver cannot defer the alarm forever). Zero times
+// mean nothing on record.
+func scanRawLog(path string) (newestNotifier, oldestMark time.Time, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return time.Time{}, nil
+			return time.Time{}, time.Time{}, nil
 		}
-		return time.Time{}, err
+		return time.Time{}, time.Time{}, err
 	}
 	defer f.Close()
-	var newest time.Time
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 4*maxBody)
 	for sc.Scan() {
 		var line struct {
 			ReceivedAt string          `json:"received_at"`
 			Envelope   json.RawMessage `json:"envelope"`
+			Mark       string          `json:"mark"`
+			At         string          `json:"at"`
 		}
-		if json.Unmarshal(sc.Bytes(), &line) != nil || len(line.Envelope) == 0 {
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			continue
+		}
+		if line.Mark != "" {
+			if at, err := time.Parse(time.RFC3339, line.At); err == nil {
+				if oldestMark.IsZero() || at.Before(oldestMark) {
+					oldestMark = at
+				}
+			}
+			continue
+		}
+		if len(line.Envelope) == 0 {
 			continue
 		}
 		var env struct {
@@ -238,14 +293,14 @@ func newestNotifierArrival(path string) (time.Time, error) {
 		if err != nil {
 			continue
 		}
-		if at.After(newest) {
-			newest = at
+		if at.After(newestNotifier) {
+			newestNotifier = at
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return time.Time{}, fmt.Errorf("scan %s: %w", path, err)
+		return time.Time{}, time.Time{}, fmt.Errorf("scan %s: %w", path, err)
 	}
-	return newest, nil
+	return newestNotifier, oldestMark, nil
 }
 
 // appendJSON marshals v and appends it as one JSONL line; every raw-log
@@ -265,6 +320,46 @@ func (s *server) appendLocked(line []byte) error {
 	return err
 }
 
+// recordAuthReject appends an auth_reject evidence line, capped per
+// rejectWindow (unauthenticated requests must not grow the evidence
+// file without bound); a failed append is surfaced on stderr — never
+// the presented header — so brute-force evidence cannot vanish
+// silently on a full disk.
+func (s *server) recordAuthReject(remoteAddr string) {
+	now := s.now()
+	s.mu.Lock()
+	if s.rejectWinStart.IsZero() || now.Sub(s.rejectWinStart) >= rejectWindow {
+		if s.rejectSuppressed > 0 {
+			b, err := json.Marshal(authRejectSuppressedLine{authRejectSuppressedBody{
+				Count:       s.rejectSuppressed,
+				WindowStart: rfc3339(s.rejectWinStart),
+				At:          rfc3339(now),
+			}})
+			if err == nil {
+				err = s.appendLocked(b)
+			}
+			if err != nil {
+				fmt.Fprintf(s.errOut, "deadman: auth_reject_suppressed append failed: %v\n", err)
+			}
+		}
+		s.rejectWinStart, s.rejectLines, s.rejectSuppressed = now, 0, 0
+	}
+	if s.rejectLines >= maxRejectLines {
+		s.rejectSuppressed++
+		s.mu.Unlock()
+		return
+	}
+	s.rejectLines++
+	b, err := json.Marshal(authRejectLine{authRejectBody{RemoteAddr: remoteAddr, At: rfc3339(now)}})
+	if err == nil {
+		err = s.appendLocked(b)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		fmt.Fprintf(s.errOut, "deadman: auth_reject append failed: %v\n", err)
+	}
+}
+
 // ServeHTTP is the DM-1/DM-2 receive path: constant-time bearer check
 // (401 + auth_reject line on mismatch), 1 MiB body cap, and the
 // append-BEFORE-200 evidence ordering. Failure to append = 500
@@ -273,7 +368,7 @@ func (s *server) appendLocked(line []byte) error {
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	got := r.Header.Get("Authorization")
 	if subtle.ConstantTimeCompare([]byte(got), s.expect) != 1 {
-		_ = s.appendJSON(authRejectLine{authRejectBody{RemoteAddr: r.RemoteAddr, At: rfc3339(s.now())}})
+		s.recordAuthReject(r.RemoteAddr)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}

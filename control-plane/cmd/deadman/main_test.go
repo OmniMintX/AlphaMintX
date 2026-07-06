@@ -506,3 +506,81 @@ func TestLifecycleMarks(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// TestAuthRejectSuppression: rejects beyond maxRejectLines within one
+// rejectWindow stop producing verbatim lines; when the window rolls,
+// the overflow is folded into one auth_reject_suppressed count line
+// (DM-1: unauthenticated appends must stay bounded, without losing the
+// brute-force evidence).
+func TestAuthRejectSuppression(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "raw.jsonl")
+	clk := newFakeClock(time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC))
+	_, ts := newDeadman(t, clk.Now, logPath)
+
+	for i := 0; i < maxRejectLines+7; i++ {
+		if code := post(t, ts.URL, "Bearer wrong", []byte(`{}`)); code != http.StatusUnauthorized {
+			t.Fatalf("reject %d: status = %d, want 401", i, code)
+		}
+	}
+	lines := logLines(t, logPath)
+	if got := countKey(lines, "auth_reject"); got != maxRejectLines {
+		t.Fatalf("auth_reject lines = %d, want cap %d", got, maxRejectLines)
+	}
+	if got := countKey(lines, "auth_reject_suppressed"); got != 0 {
+		t.Fatalf("suppressed lines before window roll = %d, want 0", got)
+	}
+
+	clk.Advance(rejectWindow + time.Second)
+	if code := post(t, ts.URL, "Bearer wrong", []byte(`{}`)); code != http.StatusUnauthorized {
+		t.Fatal("post after window roll should still be 401")
+	}
+	lines = logLines(t, logPath)
+	if got := countKey(lines, "auth_reject_suppressed"); got != 1 {
+		t.Fatalf("suppressed summary lines = %d, want 1", got)
+	}
+	for _, m := range lines {
+		raw, ok := m["auth_reject_suppressed"]
+		if !ok {
+			continue
+		}
+		var body struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil || body.Count != 7 {
+			t.Errorf("suppressed count = %d (err %v), want 7", body.Count, err)
+		}
+	}
+	if got := countKey(lines, "auth_reject"); got != maxRejectLines+1 {
+		t.Fatalf("auth_reject lines after roll = %d, want %d (new window)", got, maxRejectLines+1)
+	}
+}
+
+// TestSeedFallsBackToOldestMark: with no notifier arrival on record,
+// restart seeds from the OLDEST lifecycle mark — a crash-looping
+// receiver cannot re-grant itself a fresh H+1 window every restart
+// (DM-3); the alarm fires on the first tick.
+func TestSeedFallsBackToOldestMark(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "raw.jsonl")
+	seed := `{"mark":"receiver_start","at":"2026-01-01T00:00:00Z"}
+{"mark":"receiver_alive","at":"2026-01-01T00:10:00Z"}
+`
+	if err := os.WriteFile(logPath, []byte(seed), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	clk := newFakeClock(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	s, _ := newDeadman(t, clk.Now, logPath)
+	s.checkAlarm()
+	lines := logLines(t, logPath)
+	if got := countKey(lines, "alarm"); got != 1 {
+		t.Fatalf("alarm lines on first tick = %d, want 1", got)
+	}
+	for _, m := range lines {
+		if _, ok := m["alarm"]; !ok {
+			continue
+		}
+		var since string
+		if err := json.Unmarshal(m["silent_since"], &since); err != nil || since != "2026-01-01T00:00:00Z" {
+			t.Errorf("silent_since = %q (err %v), want the OLDEST mark", since, err)
+		}
+	}
+}
