@@ -12,6 +12,7 @@ import { fetchStrategies } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner, Pager, StateBadge } from "../strategies/ui";
+import { MarketGrid, TickerTape } from "./market";
 
 const INVARIANT_KEYS = ["inv.1", "inv.2", "inv.3", "inv.4", "inv.5", "inv.6", "inv.7"] as const;
 
@@ -43,12 +44,18 @@ export default function DashboardPage() {
 
   return (
     <>
+      <TickerTape />
       <div className="page-head">
         <h1 className="page-title">{t("dash.title")}</h1>
         <p className="page-sub">{t("dash.sub")}</p>
       </div>
 
-      <div className="grid grid-4">
+      <section className="section section-first">
+        <h2 className="section-title">{t("market.title")}</h2>
+        <MarketGrid />
+      </section>
+
+      <div className="grid grid-4" style={{ marginTop: 16 }}>
         <div className="stat">
           <div className="stat-label">{t("dash.stat.total")}</div>
           <div className="stat-value">{data ? data.total : "\u2014"}</div>
