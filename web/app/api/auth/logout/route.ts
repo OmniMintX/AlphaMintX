@@ -2,14 +2,19 @@
 // then the cookie is cleared unconditionally — a dead control-plane must
 // never trap a browser in a session it cannot end.
 
+import { crossSiteHeadersFrom, crossSiteRejection } from "../../../../src/lib/api/csrf";
 import {
   clearedSessionCookie,
   cpBaseUrl,
   isSecureRequest,
+  jsonError,
   sessionTokenFrom,
 } from "../../../../src/lib/api/session";
 
 export async function POST(request: Request): Promise<Response> {
+  if (crossSiteRejection("POST", crossSiteHeadersFrom(request.headers))) {
+    return jsonError(403, "CSRF_REJECTED", "cross-site request rejected");
+  }
   const token = sessionTokenFrom(request);
   const base = cpBaseUrl();
   if (token && base) {

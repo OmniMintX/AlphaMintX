@@ -2,7 +2,9 @@
 
 Retry policy mirrors llm-routing-and-budget.md §1: at most 2 retries, ONLY on
 429/5xx/timeouts/transport errors, exponential backoff with jitter, honoring a
-``Retry-After`` header when present. 401/403 and 409 conflicts are non-retryable
+``Retry-After`` header when present. A 200 whose body is not valid JSON is a
+transport-class failure and retried the same way (the body is never echoed in
+errors). 401/403 and 409 conflicts are non-retryable
 defects (typed errors); any other 4xx is never retried. The per-strategy bearer
 token arrives in the request headers and is never logged or echoed in errors.
 """
@@ -122,7 +124,15 @@ class HttpTransport:
                 continue
             status = response.status_code
             if status == 200:
-                data: Any = response.json()
+                try:
+                    data: Any = response.json()
+                except ValueError:
+                    # A malformed/truncated 200 body is a transport-class
+                    # failure; the body (like the token) is never echoed.
+                    last_failure = f"attempt {attempt + 1} received invalid JSON in 200 response"
+                    if attempt < MAX_ATTEMPTS - 1:
+                        self._backoff(attempt, None)
+                    continue
                 if not isinstance(data, dict):
                     raise ControlPlaneRequestError(
                         status, f"control-plane returned a non-object body for {path}"

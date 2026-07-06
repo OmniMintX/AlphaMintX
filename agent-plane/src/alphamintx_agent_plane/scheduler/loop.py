@@ -347,7 +347,15 @@ class Scheduler:
         model_costs on ingest (llm-routing §4).
         """
         utc_date = started_at.astimezone(UTC).date().isoformat()
-        usage = self._day_usage.setdefault((strategy.strategy_id, utc_date), _DayUsage())
+        key = (strategy.strategy_id, utc_date)
+        usage = self._day_usage.get(key)
+        if usage is None:
+            # First tick of a new (strategy, UTC day): drop past-day entries so
+            # the map stays bounded. Nothing ever reads a past day back (the
+            # authoritative ledger is control-plane), and pruning only on key
+            # creation keeps the steady-state tick path a plain dict lookup.
+            self._prune_day_usage(utc_date)
+            usage = self._day_usage[key] = _DayUsage()
         usage.tokens += sum(
             cost.input_tokens + cost.output_tokens for cost in state["model_costs"]
         )
@@ -362,3 +370,8 @@ class Scheduler:
             tokens_used=tokens_used,
             cost_usd_used=decimal_to_str(usage.cost_usd),
         )
+
+    def _prune_day_usage(self, utc_date: str) -> None:
+        """Drop day-usage entries older than ``utc_date`` (ISO dates sort chronologically)."""
+        for key in [key for key in self._day_usage if key[1] < utc_date]:
+            del self._day_usage[key]

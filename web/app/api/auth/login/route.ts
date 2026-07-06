@@ -3,6 +3,7 @@
 // body carries {"user": ...} only, never the token. Upstream errors (401
 // INVALID_CREDENTIALS included) pass through verbatim.
 
+import { crossSiteHeadersFrom, crossSiteRejection } from "../../../../src/lib/api/csrf";
 import {
   cpBaseUrl,
   isSecureRequest,
@@ -12,6 +13,9 @@ import {
 } from "../../../../src/lib/api/session";
 
 export async function POST(request: Request): Promise<Response> {
+  if (crossSiteRejection("POST", crossSiteHeadersFrom(request.headers))) {
+    return jsonError(403, "CSRF_REJECTED", "cross-site request rejected");
+  }
   const base = cpBaseUrl();
   if (!base) return unconfigured();
 

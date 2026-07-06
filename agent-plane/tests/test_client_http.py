@@ -162,6 +162,48 @@ def test_non_numeric_retry_after_falls_back_to_exponential_backoff() -> None:
     assert recorder.sleeps == [1.5]  # base * 2**0 + rng()
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_non_finite_retry_after_falls_back_to_exponential_backoff(value: str) -> None:
+    # Regression pin: float("nan")/float("inf") PARSE without ValueError, so
+    # only the math.isfinite guard keeps them off the sleep path.
+    recorder = _Recorder([httpx.Response(429, headers={"Retry-After": value}), _ok()])
+    assert recorder.transport().post(PATH, HEADERS, BODY) == {"status": "ok"}
+    assert recorder.sleeps == [1.5]  # base * 2**0 + rng()
+
+
+def _malformed_200(content: bytes = b"") -> httpx.Response:
+    return httpx.Response(200, content=content, headers={"Content-Type": "application/json"})
+
+
+def test_200_with_invalid_json_is_retried_then_recovers() -> None:
+    recorder = _Recorder([_malformed_200(), _ok()])
+    assert recorder.transport().post(PATH, HEADERS, BODY) == {"status": "ok"}
+    assert len(recorder.requests) == 2
+    assert recorder.sleeps == [1.5]  # exponential backoff; no Retry-After here
+
+
+def test_200_with_invalid_json_every_attempt_is_unavailable_after_max_attempts() -> None:
+    recorder = _Recorder([_malformed_200(b'{"truncated": "leak-me')] * MAX_ATTEMPTS)
+    with pytest.raises(ControlPlaneUnavailableError) as excinfo:
+        recorder.transport().post(PATH, HEADERS, BODY)
+    assert len(recorder.requests) == MAX_ATTEMPTS
+    assert len(recorder.sleeps) == MAX_ATTEMPTS - 1
+    message = str(excinfo.value)
+    assert "invalid JSON" in message
+    assert "leak-me" not in message  # the body is NEVER echoed in errors
+    assert "secret-token" not in message  # neither is the bearer token
+
+
+def test_200_json_null_body_is_a_request_error_and_not_retried() -> None:
+    # Pins the isinstance guard: JSON null parses fine but is not an object.
+    recorder = _Recorder([_malformed_200(b"null")])
+    with pytest.raises(ControlPlaneRequestError) as excinfo:
+        recorder.transport().post(PATH, HEADERS, BODY)
+    assert excinfo.value.status_code == 200
+    assert len(recorder.requests) == 1
+    assert recorder.sleeps == []
+
+
 # --- Cross-plane response contract (Go handler envelope) regression tests ----
 
 SID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
@@ -246,6 +288,18 @@ def test_go_envelope_duplicate_replay_with_submit_error_code_parses() -> None:
     submission = _client(recorder).submit_proposal(_proposal(), tick_number=0)
     assert submission.submitted is False
     assert submission.submit_error_code == "EXCHANGE_REJECTED"
+
+
+def test_go_envelope_verbatim_duplicate_carries_the_verdict_alone() -> None:
+    # persistence-and-api.md §HTTP API: a duplicate same-hash same-tick
+    # submission returns the stored verdict verbatim WITHOUT the optional
+    # flags — all three must parse as None, never as a contract error.
+    recorder = _Recorder([_json_response('{"verdict":' + _GO_VERDICT_JSON + "}")])
+    submission = _client(recorder).submit_proposal(_proposal(), tick_number=0)
+    assert submission.verdict.proposal_id == PROPOSAL_ID
+    assert submission.submitted is None
+    assert submission.submit_error_code is None
+    assert submission.pending_approval is None
 
 
 def test_bare_verdict_body_without_envelope_fails_loudly() -> None:

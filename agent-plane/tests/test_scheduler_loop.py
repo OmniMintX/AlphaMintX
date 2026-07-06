@@ -4,7 +4,7 @@ isolation, proposal/trace POST ordering, and idempotent crash-resume re-POSTs.""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -60,6 +60,16 @@ class FailingProposalTransport(RecordingTransport):
         if path.endswith("/proposals"):
             raise ControlPlaneUnavailableError("control-plane unavailable after retries")
         return super().post(path, headers, body)
+
+
+class UnavailableTransport(RecordingTransport):
+    """Records like RecordingTransport but EVERY POST is unavailable."""
+
+    def post(
+        self, path: str, headers: Mapping[str, str], body: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        self.records.append((path, dict(body)))
+        raise ControlPlaneUnavailableError("control-plane unavailable after retries")
 
 
 class ConflictingTraceTransport(RecordingTransport):
@@ -118,6 +128,16 @@ class FakeMonotonic:
         return self._last
 
 
+class MutableClock:
+    """A settable wall clock so tests can cross a UTC-midnight boundary."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
 def _runtime(transport: RecordingTransport) -> StrategyRuntime:
     return StrategyRuntime(
         strategy_id=SID,
@@ -136,6 +156,7 @@ def _scheduler(
     snapshots: MarketSnapshotProvider | None = None,
     monotonic: FakeMonotonic | None = None,
     sleeps: list[float] | None = None,
+    wall_clock: Callable[[], datetime] | None = None,
 ) -> tuple[Scheduler, TickState]:
     async def _sleep(delay: float) -> None:
         if sleeps is not None:
@@ -149,7 +170,11 @@ def _scheduler(
         tick_state=tick_state,
         tick_interval_seconds=60.0,
         monotonic=monotonic if monotonic is not None else FakeMonotonic([0.0]),
-        wall_clock=lambda: datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
+        wall_clock=(
+            wall_clock
+            if wall_clock is not None
+            else lambda: datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
+        ),
         sleep=_sleep,
     )
     return scheduler, tick_state
@@ -291,3 +316,45 @@ def test_crash_resume_posts_checkpointed_proposal_even_if_snapshot_fails(
     assert traces[0]["proposal_id"] == checkpointed.proposal_id
     assert traces[0]["run_id"] == checkpointed.agent_trace_id
     assert tick_state.next_tick_number(SID) == 1
+
+
+def test_scheduler_survives_consecutive_unavailable_ticks(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Control-plane fully down: the proposal AND trace POSTs fail after retries
+    # on EVERY tick — each failure is a logged defect, never a crash, and the
+    # loop keeps advancing with no gap in tick numbers.
+    transport = UnavailableTransport()
+    scheduler, tick_state = _scheduler(tmp_path, transport)
+    with caplog.at_level("ERROR", logger="alphamintx_agent_plane.scheduler.loop"):
+        asyncio.run(scheduler.run(max_ticks=3))
+    assert tick_state.next_tick_number(SID) == 3
+    defects = [
+        r.message
+        for r in caplog.records
+        if r.name == "alphamintx_agent_plane.scheduler.loop" and r.levelname == "ERROR"
+    ]
+    assert len(defects) == 6  # one proposal defect + one trace defect per tick
+    assert all(m.startswith("defect:") for m in defects)
+
+
+def test_day_usage_prunes_past_days_on_utc_rollover(tmp_path: Path) -> None:
+    # A tick on day one seeds the (strategy, day-one) usage entry, exactly as a
+    # long-running process would leave it behind at UTC midnight.
+    transport = RecordingTransport()
+    clock = MutableClock(datetime(2026, 7, 3, 12, 0, tzinfo=UTC))
+    scheduler, _ = _scheduler(tmp_path, transport, wall_clock=clock)
+    asyncio.run(scheduler.run(max_ticks=1))
+    assert set(scheduler._day_usage) == {(SID, "2026-07-03")}
+    day_one_tokens = scheduler._day_usage[(SID, "2026-07-03")].tokens
+    assert day_one_tokens > 0
+
+    # Cross UTC midnight: the next tick creates the new day's key, prunes the
+    # day-one entry, and the new day's accounting starts fresh (one tick's
+    # worth — the deterministic stub pipeline spends identical tokens per tick).
+    clock.now = datetime(2026, 7, 4, 0, 0, 5, tzinfo=UTC)
+    asyncio.run(scheduler.run(max_ticks=1))
+    assert set(scheduler._day_usage) == {(SID, "2026-07-04")}
+    assert scheduler._day_usage[(SID, "2026-07-04")].tokens == day_one_tokens
+    traces = transport.bodies("/traces")
+    assert [t["budget_state"]["utc_date"] for t in traces] == ["2026-07-03", "2026-07-04"]
