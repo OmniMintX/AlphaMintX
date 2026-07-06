@@ -63,15 +63,20 @@ answer `503 VAULT_UNAVAILABLE` when no vault is wired.
    "updated_by"}`; for `binance` meta = `{"env","api_key_last4"}`, for
    `llm` meta = `{"base_url","api_key_last4","timeout_seconds"}`.
 2. `POST /api/v1/platform/secrets/binance` — body
-   `{"env":"testnet"|"prod","api_key","api_secret"}` (all required, strict
-   decode; env pinned; key/secret non-empty, ≤ 256 chars). Seals payload
-   `{"api_key","api_secret"}`; meta `{"env","api_key_last4"}`. 200
-   `{"secret":secretMetaView}` — the plaintext is NEVER echoed.
+   `{"env":"testnet"|"prod","api_key","api_secret"}` (strict decode; env
+   pinned; key/secret ≤ 256 chars). Leaving BOTH `api_key` and
+   `api_secret` empty keeps the stored pair (edit env without re-entering
+   credentials; 400 when nothing is stored, or when exactly one of the
+   two is empty). Seals payload `{"api_key","api_secret"}`; meta
+   `{"env","api_key_last4"}`. 200 `{"secret":secretMetaView}` — the
+   plaintext is NEVER echoed.
 3. `POST /api/v1/platform/secrets/llm` — body
    `{"base_url","api_key","timeout_seconds"?}` (`base_url` http(s) URL;
-   `api_key` non-empty ≤ 256; `timeout_seconds` optional integer 1..600,
-   default 30). Seals payload `{"base_url","api_key","timeout_seconds"}`;
-   meta `{"base_url","api_key_last4","timeout_seconds"}`. 200
+   `api_key` ≤ 256; `timeout_seconds` optional integer 1..600, default
+   30). An empty `api_key` keeps the stored key (edit base_url / timeout
+   / models without re-entering it; 400 when nothing is stored). Seals
+   payload `{"base_url","api_key","timeout_seconds"}`; meta
+   `{"base_url","api_key_last4","timeout_seconds"}`. 200
    `{"secret":secretMetaView}`.
 4. `GET /api/v1/agent/llm-config` — **agent tokens ONLY** (any agent: the
    route has no `{id}` segment, so the strategy-scope guard does not

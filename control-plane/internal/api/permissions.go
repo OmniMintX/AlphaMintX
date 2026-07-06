@@ -62,10 +62,14 @@ func Permissions() []RoutePermission {
 	admins := []string{RoleAdmin, RoleOwner}
 	return []RoutePermission{
 		{Method: "GET", Path: "/health", Public: true},
-		{Method: "GET", Path: "/api/v1/strategies", Roles: readers, Classes: []string{classRead}},
-		{Method: "GET", Path: "/api/v1/strategies/{id}", Roles: readers, Classes: []string{classRead}},
-		{Method: "GET", Path: "/api/v1/strategies/{id}/runs", Roles: readers, Classes: []string{classRead}},
-		{Method: "GET", Path: "/api/v1/strategies/{id}/runs/{run_id}", Roles: readers, Classes: []string{classRead}},
+		// Strategy-data reads: reader roles, the env read class, AND
+		// env-admin — platform_admin web sessions classify as classEnvAdmin
+		// (multi-tenant-rbac.md §Principal mapping) and carry no second
+		// credential, so the dashboard must render on this class.
+		{Method: "GET", Path: "/api/v1/strategies", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/runs", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/runs/{run_id}", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/approvals", Roles: approvers, Classes: []string{classOperator}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/traces", Classes: []string{classAgent}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/proposals", Classes: []string{classAgent}, Requires: requiresIngestion},
@@ -77,7 +81,7 @@ func Permissions() []RoutePermission {
 		// Effective-limits read (multi-tenant-rbac.md §Runtime limit
 		// changes): the standard reader tier (the GET .../safety row);
 		// registered only with a limits provider, like the POST.
-		{Method: "GET", Path: "/api/v1/strategies/{id}/limits", Roles: readers, Classes: []string{classRead}, Requires: requiresLimits},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/limits", Roles: readers, Classes: []string{classRead, classEnvAdmin}, Requires: requiresLimits},
 		{Method: "POST", Path: "/api/v1/tenants", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tenants/{tenant_id}/kill", Roles: admins, Classes: []string{classEnvAdmin}},
 		// Kill tiers (safety-wiring.md §Kill endpoints): the strategy tier
@@ -92,15 +96,15 @@ func Permissions() []RoutePermission {
 		// transition. The paper-gate read is promotion visibility for
 		// every reader (LC-24). Always registered, both modes (LC-1).
 		{Method: "POST", Path: "/api/v1/strategies/{id}/lifecycle", Roles: approvers, Classes: []string{classEnvAdmin}},
-		{Method: "GET", Path: "/api/v1/strategies/{id}/paper-gate", Roles: readers, Classes: []string{classRead}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/paper-gate", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
 		// Operator surface (operator-surface.md OS-5/OS-15/OS-19): the
 		// two strategy-scoped safety reads are standard reader rows; the
 		// global alert feed is env-class only — no DB role, so every
 		// tenant principal is 403 (OS-20: safety_alerts has no tenant
 		// column and NULL-strategy rows are platform operational data).
 		// Always registered, both modes.
-		{Method: "GET", Path: "/api/v1/strategies/{id}/safety", Roles: readers, Classes: []string{classRead}},
-		{Method: "GET", Path: "/api/v1/strategies/{id}/alerts", Roles: readers, Classes: []string{classRead}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/safety", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/strategies/{id}/alerts", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/alerts", Classes: []string{classRead, classEnvAdmin}},
 		// Kill-clear tiers (lifecycle-api.md LC-29): one level stricter
 		// than kill on the strategy tier (unlock is Admin+); the platform

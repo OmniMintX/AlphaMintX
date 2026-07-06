@@ -105,6 +105,84 @@ func TestPlatformSecretsSetAndList(t *testing.T) {
 	}
 }
 
+// TestPlatformSecretsKeepStoredKey: empty credentials on a set POST keep
+// the stored plaintext, so settings (env, base_url, timeout, models) are
+// editable without re-entering keys; with nothing stored the same bodies
+// are 400 (nothing to keep), and a half-empty binance pair is 400.
+func TestPlatformSecretsKeepStoredKey(t *testing.T) {
+	e, v := vaultEnv(t)
+
+	wantError(t, e.do(t, "POST", "/api/v1/platform/secrets/llm", adminTok, map[string]any{
+		"base_url": "https://llm.example/v1", "api_key": "",
+	}), 400, codeSchemaInvalid)
+	wantError(t, e.do(t, "POST", "/api/v1/platform/secrets/binance", adminTok, map[string]any{
+		"env": "testnet", "api_key": "", "api_secret": "",
+	}), 400, codeSchemaInvalid)
+
+	for _, seed := range []struct {
+		path string
+		body map[string]any
+	}{
+		{"/api/v1/platform/secrets/llm", map[string]any{
+			"base_url": "https://llm.example/v1", "api_key": testLLMKey}},
+		{"/api/v1/platform/secrets/binance", map[string]any{
+			"env": "testnet", "api_key": testBinanceKey, "api_secret": testBinanceSecret}},
+	} {
+		if rec := e.do(t, "POST", seed.path, adminTok, seed.body); rec.Code != http.StatusOK {
+			t.Fatalf("seed %s = %d (body %q)", seed.path, rec.Code, rec.Body.String())
+		}
+	}
+
+	// LLM: empty api_key edits base_url/timeout/models around the kept key.
+	rec := e.do(t, "POST", "/api/v1/platform/secrets/llm", adminTok, map[string]any{
+		"base_url": "https://llm.example/v2", "api_key": "", "timeout_seconds": 90,
+		"trader_model": "gpt-4o-mini", "default_model": "gpt-4o-mini",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("keep-key llm = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var set setSecretResponse
+	decodeJSON(t, rec, &set)
+	var lMeta llmMeta
+	if err := json.Unmarshal(set.Secret.Meta, &lMeta); err != nil {
+		t.Fatalf("decode llm meta: %v", err)
+	}
+	if lMeta.APIKeyLast4 != "9876" || lMeta.BaseURL != "https://llm.example/v2" ||
+		lMeta.TimeoutSeconds != 90 || lMeta.TraderModel != "gpt-4o-mini" {
+		t.Fatalf("keep-key llm meta = %+v, want kept last4 9876 with new settings", lMeta)
+	}
+	var got llmPayload
+	decodeJSON(t, e.do(t, "GET", "/api/v1/agent/llm-config", agent1Tok, nil), &got)
+	if got.APIKey != testLLMKey || got.BaseURL != "https://llm.example/v2" ||
+		got.TimeoutSeconds != 90 || got.TraderModel != "gpt-4o-mini" {
+		t.Fatalf("agent payload = %+v, want the kept key with the new settings", got)
+	}
+
+	// Binance: both credentials empty edits env around the kept pair; a
+	// half-empty pair is 400.
+	wantError(t, e.do(t, "POST", "/api/v1/platform/secrets/binance", adminTok, map[string]any{
+		"env": "prod", "api_key": "", "api_secret": "still-here",
+	}), 400, codeSchemaInvalid)
+	rec = e.do(t, "POST", "/api/v1/platform/secrets/binance", adminTok, map[string]any{
+		"env": "prod", "api_key": "", "api_secret": "",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("keep-key binance = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	decodeJSON(t, rec, &set)
+	var bMeta binanceMeta
+	if err := json.Unmarshal(set.Secret.Meta, &bMeta); err != nil {
+		t.Fatalf("decode binance meta: %v", err)
+	}
+	if bMeta.Env != "prod" || bMeta.APIKeyLast4 != "0001" {
+		t.Fatalf("keep-key binance meta = %+v, want prod with kept last4 0001", bMeta)
+	}
+	env, key, secret, ok, err := LoadBinanceSecret(e.store, v)
+	if err != nil || !ok || env != "prod" || key != testBinanceKey || secret != testBinanceSecret {
+		t.Fatalf("LoadBinanceSecret = %q ok=%v err=%v, want the kept pair under prod", env, ok, err)
+	}
+}
+
 // TestPlatformSecretsNeverEchoPayload pins the plane boundary: NO response
 // from the binance POST, the secrets list, or the agent llm-config route
 // carries the binance api_secret or full api_key — the binance payload

@@ -225,8 +225,10 @@ no strategy path segment, so any agent token passes); env-admin ⇒
 `POST .../lifecycle`, all three `.../kill/clear` routes (the platform
 clear is env-admin ONLY), all `/api/v1/tokens` routes,
 `POST /api/v1/strategies` (any existing tenant named in the body), and
-`POST /api/v1/tenants` — any tenant, and NO strategy-data reads (the read
-class already exists); its platform reads are the billing feeds, the
+`POST /api/v1/tenants` — any tenant — PLUS every strategy-data read the
+read class has, any tenant (platform_admin web sessions classify as this
+class and carry no second credential, so the dashboard must render on
+it); its other platform reads are the billing feeds, the
 global alert feed `GET /api/v1/alerts` (operator-surface.md OS-19), the
 platform-secrets metadata list, and the admin-console listings
 `GET /api/v1/tenants` / `GET /api/v1/users` (platform-secrets.md).
@@ -478,8 +480,9 @@ surfaces above; nothing about env or DB tokens changes.
   - The three public POSTs keep the 1 MiB body cap; no bearer exists yet,
     so the per-token rate limit does not apply to them in v1.
 - **Principal mapping.** A resolved session yields: `platform_admin` ⇒
-  the env-admin CLASS (the full env-admin surface, and like the env
-  admin, no strategy-data reads); any other role ⇒ the user class with
+  the env-admin CLASS (the full env-admin surface, strategy-data reads
+  included — the session is the platform operator's ONLY credential, so
+  the dashboard renders on it); any other role ⇒ the user class with
   that role and tenant — every RBAC and tenancy rule above binds sessions
   exactly as it binds DB tokens. Audit actor columns record the
   `user_id` (stable and non-secret, the `token_id` precedent).

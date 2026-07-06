@@ -40,8 +40,10 @@ func login(t *testing.T, e *testEnv, email, password string) (token, expiresAt s
 // TestAuthBootstrapLoginFlow: bootstrap creates the FIRST platform_admin
 // exactly once (409 BOOTSTRAP_COMPLETE thereafter); its session bearer is
 // amxs_-prefixed, resolves on /me, and carries the env-admin surface
-// (POST /api/v1/tenants) but never the strategy-data reads. No response
-// ever contains password or hash material.
+// (POST /api/v1/tenants) including the strategy-data reads
+// (multi-tenant-rbac.md §Principal mapping: the session is the platform
+// operator's only credential). No response ever contains password or
+// hash material.
 func TestAuthBootstrapLoginFlow(t *testing.T) {
 	e := newEnv(t, nil)
 	rec := e.do(t, "POST", "/api/v1/auth/bootstrap", "", authBody(" Root@Example.com ", "super-secret"))
@@ -85,7 +87,10 @@ func TestAuthBootstrapLoginFlow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("platform_admin session POST /api/v1/tenants = %d (body %q)", rec.Code, rec.Body.String())
 	}
-	wantError(t, e.do(t, "GET", "/api/v1/strategies", tok, nil), 403, codeForbidden)
+	rec = e.do(t, "GET", "/api/v1/strategies", tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("platform_admin session GET /api/v1/strategies = %d (body %q)", rec.Code, rec.Body.String())
+	}
 }
 
 // TestAuthSignupLoginFlow: signup atomically creates tenant + owner user;

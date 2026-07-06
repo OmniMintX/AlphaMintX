@@ -6,7 +6,7 @@
 // non-admin session 403s (and an unprovisioned vault 503s VAULT_UNAVAILABLE);
 // both render as the error banner instead of the cards.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   fetchPlatformSecrets,
@@ -84,6 +84,19 @@ function BinanceCard({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // Seed the form from the stored metadata once (poll refreshes must not
+  // clobber in-progress edits).
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (!current || seeded.current) return;
+    seeded.current = true;
+    setEnv(current.meta.env);
+  }, [current]);
+
+  // Keys are write-only: with a stored secret, leaving BOTH blank keeps it.
+  const bothKeys = apiKey.trim() !== "" && apiSecret.trim() !== "";
+  const keepKeys = current !== undefined && apiKey.trim() === "" && apiSecret.trim() === "";
+
   const submit = async () => {
     setPending(true);
     setError(null);
@@ -134,6 +147,7 @@ function BinanceCard({
             className="input"
             type="password"
             autoComplete="off"
+            placeholder={current ? t("settings.keepkey") : undefined}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
@@ -144,6 +158,7 @@ function BinanceCard({
             className="input"
             type="password"
             autoComplete="off"
+            placeholder={current ? t("settings.keepkey") : undefined}
             value={apiSecret}
             onChange={(e) => setApiSecret(e.target.value)}
           />
@@ -159,7 +174,7 @@ function BinanceCard({
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pending || apiKey.trim() === "" || apiSecret.trim() === ""}
+          disabled={pending || !(bothKeys || keepKeys)}
           onClick={() => void submit()}
         >
           {t("settings.save")}
@@ -187,8 +202,21 @@ function LlmCard({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // Seed the form from the stored metadata once (poll refreshes must not
+  // clobber in-progress edits). The key stays blank: blank keeps it.
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (!current || seeded.current) return;
+    seeded.current = true;
+    setBaseUrl(current.meta.base_url);
+    setTimeoutSecs(String(current.meta.timeout_seconds));
+    setTraderModel(current.meta.trader_model ?? DEFAULT_TRADER_MODEL);
+    setDefaultModel(current.meta.default_model ?? DEFAULT_ANALYST_MODEL);
+  }, [current]);
+
   const timeoutNum = Number(timeoutSecs.trim());
   const timeoutValid = Number.isInteger(timeoutNum) && timeoutNum >= 1;
+  const keyOk = apiKey.trim() !== "" || current !== undefined;
 
   const submit = async () => {
     setPending(true);
@@ -241,6 +269,7 @@ function LlmCard({
             className="input"
             type="password"
             autoComplete="off"
+            placeholder={current ? t("settings.keepkey") : undefined}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
@@ -291,7 +320,7 @@ function LlmCard({
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pending || baseUrl.trim() === "" || apiKey.trim() === "" || !timeoutValid}
+          disabled={pending || baseUrl.trim() === "" || !keyOk || !timeoutValid}
           onClick={() => void submit()}
         >
           {t("settings.save")}

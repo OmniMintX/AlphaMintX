@@ -145,9 +145,31 @@ type binanceMeta struct {
 	APIKeyLast4 string `json:"api_key_last4"`
 }
 
+// openSecretPayload unseals the stored payload of one kind into dst;
+// found=false when no secret of that kind is stored. Callers only reuse
+// fields in-process — the plaintext never reaches a response.
+func (s *Server) openSecretPayload(kind string, dst any) (bool, error) {
+	ciphertext, _, _, _, err := s.cfg.Store.GetPlatformSecret(kind)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	plaintext, err := s.cfg.Vault.Open(ciphertext)
+	if err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(plaintext, dst); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // handleSetBinanceSecret is POST /api/v1/platform/secrets/binance
 // (env-admin ONLY): seals {"api_key","api_secret"} and answers the
-// metadata view — the plaintext is NEVER echoed.
+// metadata view — the plaintext is NEVER echoed. Leaving BOTH credentials
+// empty keeps the stored pair (edit env without re-entering them).
 func (s *Server) handleSetBinanceSecret(w http.ResponseWriter, r *http.Request) {
 	if !s.vaultReady(w) {
 		return
@@ -160,11 +182,30 @@ func (s *Server) handleSetBinanceSecret(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "env must be 'testnet' or 'prod'")
 		return
 	}
-	if req.APIKey == "" || len(req.APIKey) > maxSecretChars {
+	if (req.APIKey == "") != (req.APISecret == "") {
+		writeError(w, http.StatusBadRequest, codeSchemaInvalid,
+			"provide both api_key and api_secret, or leave both empty to keep the stored pair")
+		return
+	}
+	if req.APIKey == "" {
+		var prev binancePayload
+		found, err := s.openSecretPayload(secretKindBinance, &prev)
+		if err != nil {
+			s.writeInternal(w, r, err)
+			return
+		}
+		if !found {
+			writeError(w, http.StatusBadRequest, codeSchemaInvalid,
+				"api_key and api_secret are required (no stored binance secret to keep)")
+			return
+		}
+		req.APIKey, req.APISecret = prev.APIKey, prev.APISecret
+	}
+	if len(req.APIKey) > maxSecretChars {
 		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "api_key must be 1..256 characters")
 		return
 	}
-	if req.APISecret == "" || len(req.APISecret) > maxSecretChars {
+	if len(req.APISecret) > maxSecretChars {
 		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "api_secret must be 1..256 characters")
 		return
 	}
@@ -206,7 +247,8 @@ type llmMeta struct {
 
 // handleSetLLMSecret is POST /api/v1/platform/secrets/llm (env-admin
 // ONLY): seals {"base_url","api_key","timeout_seconds"} and answers the
-// metadata view — the api_key is NEVER echoed.
+// metadata view — the api_key is NEVER echoed. An empty api_key keeps
+// the stored key (edit base_url/timeout/models without re-entering it).
 func (s *Server) handleSetLLMSecret(w http.ResponseWriter, r *http.Request) {
 	if !s.vaultReady(w) {
 		return
@@ -220,7 +262,21 @@ func (s *Server) handleSetLLMSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "base_url must be an http(s) URL")
 		return
 	}
-	if req.APIKey == "" || len(req.APIKey) > maxSecretChars {
+	if req.APIKey == "" {
+		var prev llmPayload
+		found, err := s.openSecretPayload(secretKindLLM, &prev)
+		if err != nil {
+			s.writeInternal(w, r, err)
+			return
+		}
+		if !found {
+			writeError(w, http.StatusBadRequest, codeSchemaInvalid,
+				"api_key is required (no stored llm secret to keep)")
+			return
+		}
+		req.APIKey = prev.APIKey
+	}
+	if len(req.APIKey) > maxSecretChars {
 		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "api_key must be 1..256 characters")
 		return
 	}

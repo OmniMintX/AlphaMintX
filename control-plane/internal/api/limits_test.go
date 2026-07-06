@@ -277,15 +277,19 @@ func TestGetLimitsEffectiveAndAuditHistory(t *testing.T) {
 	}
 }
 
-// TestGetLimitsRBACAndUnknownStrategy: agent/operator/env-admin classes are
-// outside the reader row (403 FORBIDDEN); an unknown strategy is 404.
+// TestGetLimitsRBACAndUnknownStrategy: agent/operator classes are outside
+// the reader row (403 FORBIDDEN); env-admin reads it (multi-tenant-rbac.md
+// §Principal mapping); an unknown strategy is 404.
 func TestGetLimitsRBACAndUnknownStrategy(t *testing.T) {
 	e := gatedEnv(t)
 	createTenant(t, e.store, "tenant-1")
 	createStrategy(t, e.store, strat1, "paper")
 
-	for _, tok := range []string{agent1Tok, opTok, adminTok} {
+	for _, tok := range []string{agent1Tok, opTok} {
 		wantError(t, getLimits(t, e, tok, strat1), 403, codeForbidden)
+	}
+	if rec := getLimits(t, e, adminTok, strat1); rec.Code != http.StatusOK {
+		t.Errorf("env-admin GET limits = %d (body %q), want 200", rec.Code, rec.Body.String())
 	}
 	wantError(t, getLimits(t, e, readTok, uid(9)), 404, codeUnknownStrategy)
 }

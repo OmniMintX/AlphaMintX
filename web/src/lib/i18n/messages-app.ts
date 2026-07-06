@@ -31,6 +31,10 @@ export const messagesApp = {
     en: "Write-only: values are never displayed again.",
     vi: "Chỉ-ghi: các giá trị không bao giờ được hiển thị lại.",
   },
+  "settings.keepkey": {
+    en: "Leave blank to keep the current key",
+    vi: "Để trống để giữ key hiện tại",
+  },
   "settings.llm.title": { en: "LLM provider", vi: "Nhà cung cấp LLM" },
   "settings.llm.configured": {
     en: "Configured — {base_url}, key ••••{last4}, timeout {timeout} s, models {trader_model} / {default_model}, updated {time} by {by}",

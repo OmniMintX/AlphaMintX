@@ -145,10 +145,13 @@ func TestRBACMatrix(t *testing.T) {
 // TestRBACMatrixPins spot-checks the PLAN.md exit-criterion rows so a table
 // edit cannot silently weaken them: Trader cannot change limits; agent
 // tokens are rejected by every endpoint outside their two ingestion routes;
-// env-admin's read surface is exactly the platform feeds (billing reads,
-// GET /api/v1/alerts per operator-surface.md OS-19, GET
-// /api/v1/ops/backups per ops-backup.md OB-7, and GET /api/v1/ops/restore
-// per deploy-and-survive.md DS-6) — never the tenant strategy reads.
+// env-admin reads span the platform feeds (billing reads, GET
+// /api/v1/alerts per operator-surface.md OS-19, GET /api/v1/ops/backups
+// per ops-backup.md OB-7, GET /api/v1/ops/restore per
+// deploy-and-survive.md DS-6) AND the strategy-data reads
+// (multi-tenant-rbac.md §Principal mapping: platform_admin sessions
+// classify as env-admin and the dashboard must render for them) — but
+// approvals stay operator/trader-tier.
 func TestRBACMatrixPins(t *testing.T) {
 	e, dbToks := rbacEnv(t)
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/limits", dbToks.trader,
@@ -156,7 +159,9 @@ func TestRBACMatrixPins(t *testing.T) {
 	wantError(t, e.do(t, "POST", "/api/v1/tokens", dbToks.agent, nil), 403, codeForbidden)
 	wantError(t, e.do(t, "GET", "/api/v1/strategies", dbToks.agent, nil), 403, codeForbidden)
 	wantError(t, e.do(t, "POST", "/api/v1/tenants/tenant-1/kill", dbToks.agent, nil), 403, codeForbidden)
-	wantError(t, e.do(t, "GET", "/api/v1/strategies", adminTok, nil), 403, codeForbidden)
+	if rec := e.do(t, "GET", "/api/v1/strategies", adminTok, nil); rec.Code != http.StatusOK {
+		t.Errorf("env-admin GET /api/v1/strategies = %d (body %q), want 200", rec.Code, rec.Body.String())
+	}
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/approvals", adminTok, nil), 403, codeForbidden)
 	// Positive half of the env-admin read-surface claim: the platform
 	// backup list (ops-backup.md OB-7) IS reachable for the env-admin.
