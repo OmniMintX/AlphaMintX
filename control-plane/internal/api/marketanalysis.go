@@ -64,20 +64,30 @@ type chatCompletionResponse struct {
 }
 
 // analysisPrompt embeds the system-style instruction in the single user
-// message: analyst persona, locale, required structure, the not-financial-
-// advice caveat, and the no-invented-levels rule.
+// message: analyst persona, locale, required structure, an explicit
+// BUY/SELL/WAIT call with levels derived only from the snapshot, the
+// not-financial-advice caveat, and the no-invented-levels rule.
 func analysisPrompt(req marketAnalysisRequest) string {
 	language := "English"
+	action := "Recommendation: BUY, SELL, or WAIT"
 	if req.Locale == "vi" {
 		language = "Vietnamese"
+		action = "Khuyến nghị: MUA, BÁN, or ĐỨNG NGOÀI"
 	}
 	return fmt.Sprintf("You are a crypto technical analyst. Analyze the indicator snapshot "+
 		"below for %s (%s, %s timeframe). Respond in %s. Structure the analysis as: trend, "+
 		"momentum, volatility, support/resistance hints from the data given, and a clear bias "+
-		"conclusion (bullish/bearish/neutral). Include the caveat that this is not financial "+
-		"advice and the deterministic risk gate governs all real orders. Do NOT invent price "+
-		"levels that are not derivable from the snapshot.\n\nIndicator snapshot:\n%s",
-		req.Symbol, req.Market, req.Interval, language, req.Summary)
+		"conclusion (bullish/bearish/neutral). Then finish with a decisive final block:\n"+
+		"1. %q — pick exactly one, in bold, with a confidence level (low/medium/high)\n"+
+		"2. If BUY or SELL: an entry zone, a stop-loss, and a take-profit level, each derived "+
+		"ONLY from levels present in the snapshot (last close, SMA/EMA values, Bollinger bands) "+
+		"and each with a one-line justification\n"+
+		"3. If WAIT: the specific condition that would flip the call (e.g. an RSI or MACD "+
+		"threshold, a reclaim/loss of a moving average in the snapshot)\n"+
+		"Include the caveat that this is not financial advice and the deterministic risk gate "+
+		"governs all real orders. Do NOT invent price levels that are not derivable from the "+
+		"snapshot.\n\nIndicator snapshot:\n%s",
+		req.Symbol, req.Market, req.Interval, language, action, req.Summary)
 }
 
 // validateAnalysisRequest applies the pinned value rules; false means a 400
