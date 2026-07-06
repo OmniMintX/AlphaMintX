@@ -18,14 +18,17 @@ import {
   buildUrl,
   clearStrategyKill,
   fetchAlerts,
+  fetchLimits,
   fetchPaperGate,
   fetchSafety,
   postKill,
   postKillClear,
   postLifecycle,
+  postLimits,
 } from "./client";
 import {
   approvalRequestSchema,
+  buildLimitChanges,
   killClearRequestSchema,
   killRequestSchema,
   lifecycleRequestSchema,
@@ -288,5 +291,89 @@ describe("ops fetchers and proxy POSTs", () => {
     const refetch = vi.fn();
     await expect(clearStrategyKill(STRATEGY_ID, "r", 4, refetch)).rejects.toBeInstanceOf(ApiError);
     expect(refetch).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Risk limits (Settings) ------------------------------------------------------
+
+const limitsBody = {
+  effective: {
+    symbol_whitelist: ["BTC/USDT"],
+    max_open_positions: 3,
+    per_position_notional_cap_quote: "1500.00",
+    daily_loss_limit_quote: "250.00",
+    max_drawdown_pct: "0.15",
+    max_loss_at_stop_quote: "75.00",
+    min_stop_distance_pct: "0.005",
+    max_stop_distance_pct: "0.05",
+    max_orders_per_minute: 10,
+    require_stop_loss: true,
+    allocated_capital_quote: "10000.00",
+    accounting_quote: "USDT",
+    staleness_threshold_seconds: 30,
+    l1_approval_timeout_seconds: 600,
+    l2_envelope: null,
+  },
+  changeable_fields: ["max_open_positions"],
+  changes: [],
+};
+
+const limitChangeRow = {
+  change_id: "d6e7f8a9-b0c1-4d2e-8f3a-5b6c7d8e9f0a",
+  field: "max_open_positions",
+  old_value: "3",
+  new_value: "5",
+  actor_id: "admin-1",
+  changed_at: "2026-07-05T10:00:00Z",
+};
+
+describe("risk limits fetcher and proxy POST", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("GETs limits with the READ token on the API base and parses the status", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "http://cp.local");
+    vi.stubEnv("NEXT_PUBLIC_READ_TOKEN", "read-tok");
+    const mock = stubFetch(jsonResponse(200, limitsBody));
+
+    const status = await fetchLimits(STRATEGY_ID);
+
+    expect(mock.mock.calls[0]?.[0]).toBe(`http://cp.local/api/v1/strategies/${STRATEGY_ID}/limits`);
+    expect(mock.mock.calls[0]?.[1]).toMatchObject({
+      headers: { authorization: "Bearer read-tok" },
+      cache: "no-store",
+    });
+    expect(status.effective.daily_loss_limit_quote).toBe("250.00");
+    expect(status.effective.l2_envelope).toBeNull();
+  });
+
+  it("POSTs limit changes same-origin with the exact body and NO auth header", async () => {
+    vi.stubEnv("NEXT_PUBLIC_READ_TOKEN", "read-tok");
+    const mock = stubFetch(jsonResponse(200, { changes: [limitChangeRow] }));
+
+    const res = await postLimits(
+      STRATEGY_ID,
+      buildLimitChanges({ max_open_positions: 5, per_position_notional_cap_quote: "1500.00" }),
+    );
+
+    expect(mock.mock.calls[0]?.[0]).toBe(`/api/strategies/${STRATEGY_ID}/limits`);
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"changes":{"max_open_positions":5,"per_position_notional_cap_quote":"1500.00"}}',
+    );
+    // The operator credential never reaches this client: content-type only.
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.changes[0]?.new_value).toBe("5");
+  });
+
+  it("surfaces upstream error bodies untouched through ApiError", async () => {
+    stubFetch(jsonResponse(403, { code: "FORBIDDEN", message: "role lacks limit changes" }));
+    const err = await postLimits(STRATEGY_ID, buildLimitChanges({ max_open_positions: 5 })).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(403);
+    expect((err as ApiError).body?.code).toBe("FORBIDDEN");
   });
 });

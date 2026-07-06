@@ -13,6 +13,9 @@ import {
   apiErrorBodySchema,
   approvalDecisionSchema,
   approvalRequestSchema,
+  buildLimitChanges,
+  limitChangeResponseSchema,
+  limitsStatusSchema,
   paperGateReportSchema,
   runDetailSchema,
   runsPageSchema,
@@ -422,5 +425,140 @@ describe("paperGateReportSchema (LC-23)", () => {
         conditions: [{ name: "x", passed: true, measured: "not-a-number", required: "1" }],
       }).success,
     ).toBe(false);
+  });
+});
+
+// ---- Risk limits (Settings) ------------------------------------------------------
+
+const effectiveLimits = {
+  symbol_whitelist: ["BTC/USDT", "ETH/USDT"],
+  max_open_positions: 3,
+  per_position_notional_cap_quote: "1500.00",
+  daily_loss_limit_quote: "250.00",
+  max_drawdown_pct: "0.15",
+  max_loss_at_stop_quote: "75.00",
+  min_stop_distance_pct: "0.005",
+  max_stop_distance_pct: "0.05",
+  max_orders_per_minute: 10,
+  require_stop_loss: true,
+  allocated_capital_quote: "10000.00",
+  accounting_quote: "USDT",
+  staleness_threshold_seconds: 30,
+  l1_approval_timeout_seconds: 600,
+  l2_envelope: null,
+};
+
+const limitChangeRow = {
+  change_id: "d6e7f8a9-b0c1-4d2e-8f3a-5b6c7d8e9f0a",
+  field: "max_open_positions",
+  old_value: "3",
+  new_value: "5",
+  actor_id: "admin-1",
+  changed_at: "2026-07-05T10:00:00Z",
+};
+
+const limitsStatus = {
+  effective: effectiveLimits,
+  changeable_fields: [
+    "max_open_positions",
+    "max_orders_per_minute",
+    "per_position_notional_cap_quote",
+    "daily_loss_limit_quote",
+    "max_loss_at_stop_quote",
+  ],
+  changes: [limitChangeRow],
+};
+
+describe("limitsStatusSchema", () => {
+  it("parses a full status with a null l2_envelope", () => {
+    const parsed = limitsStatusSchema.parse(limitsStatus);
+    expect(parsed.effective.per_position_notional_cap_quote).toBe("1500.00");
+    expect(parsed.effective.l2_envelope).toBeNull();
+    expect(parsed.changeable_fields).toHaveLength(5);
+    expect(parsed.changes[0]?.new_value).toBe("5");
+  });
+
+  it("parses a non-null l2_envelope", () => {
+    const parsed = limitsStatusSchema.parse({
+      ...limitsStatus,
+      effective: {
+        ...effectiveLimits,
+        l2_envelope: { max_size_quote: "500.00", allowed_symbols: ["BTC/USDT"] },
+      },
+    });
+    expect(parsed.effective.l2_envelope?.max_size_quote).toBe("500.00");
+  });
+
+  it("accepts a null old_value (no prior override)", () => {
+    const parsed = limitsStatusSchema.parse({
+      ...limitsStatus,
+      changes: [{ ...limitChangeRow, old_value: null }],
+    });
+    expect(parsed.changes[0]?.old_value).toBeNull();
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(limitsStatusSchema.safeParse({ ...limitsStatus, extra: 1 }).success).toBe(false);
+    expect(
+      limitsStatusSchema.safeParse({
+        ...limitsStatus,
+        effective: { ...effectiveLimits, extra: 1 },
+      }).success,
+    ).toBe(false);
+    expect(
+      limitsStatusSchema.safeParse({
+        ...limitsStatus,
+        changes: [{ ...limitChangeRow, extra: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a non-decimal quote cap and a non-int position count", () => {
+    expect(
+      limitsStatusSchema.safeParse({
+        ...limitsStatus,
+        effective: { ...effectiveLimits, daily_loss_limit_quote: "not-a-number" },
+      }).success,
+    ).toBe(false);
+    expect(
+      limitsStatusSchema.safeParse({
+        ...limitsStatus,
+        effective: { ...effectiveLimits, max_open_positions: 2.5 },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("limitChangeResponseSchema", () => {
+  it("parses the POST 200 envelope of audit rows", () => {
+    const parsed = limitChangeResponseSchema.parse({ changes: [limitChangeRow] });
+    expect(parsed.changes[0]?.change_id).toBe(limitChangeRow.change_id);
+  });
+
+  it("rejects unknown envelope fields", () => {
+    expect(
+      limitChangeResponseSchema.safeParse({ changes: [], extra: 1 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("buildLimitChanges", () => {
+  it("includes only defined keys, keeping int vs string types", () => {
+    expect(
+      buildLimitChanges({
+        max_open_positions: 5,
+        per_position_notional_cap_quote: "1500.00",
+      }),
+    ).toEqual({
+      changes: { max_open_positions: 5, per_position_notional_cap_quote: "1500.00" },
+    });
+    const built = buildLimitChanges({ max_orders_per_minute: 12, daily_loss_limit_quote: "300" });
+    expect(typeof built.changes.max_orders_per_minute).toBe("number");
+    expect(typeof built.changes.daily_loss_limit_quote).toBe("string");
+  });
+
+  it("drops undefined keys and builds an empty body from an empty input", () => {
+    expect(buildLimitChanges({ max_open_positions: undefined })).toEqual({ changes: {} });
+    expect(buildLimitChanges({})).toEqual({ changes: {} });
   });
 });

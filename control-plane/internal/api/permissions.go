@@ -65,6 +65,10 @@ func Permissions() []RoutePermission {
 		// mode-independent and paper-mode agents must not 404 per 30 s.
 		{Method: "POST", Path: "/api/v1/strategies/{id}/heartbeat", Classes: []string{classAgent}},
 		{Method: "POST", Path: "/api/v1/strategies/{id}/limits", Roles: admins, Classes: []string{classEnvAdmin}, Requires: requiresLimits},
+		// Effective-limits read (multi-tenant-rbac.md §Runtime limit
+		// changes): the standard reader tier (the GET .../safety row);
+		// registered only with a limits provider, like the POST.
+		{Method: "GET", Path: "/api/v1/strategies/{id}/limits", Roles: readers, Classes: []string{classRead}, Requires: requiresLimits},
 		{Method: "POST", Path: "/api/v1/tenants", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tenants/{tenant_id}/kill", Roles: admins, Classes: []string{classEnvAdmin}},
 		// Kill tiers (safety-wiring.md §Kill endpoints): the strategy tier

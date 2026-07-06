@@ -286,6 +286,81 @@ export const paperGateReportSchema = z.strictObject({
   conditions: z.array(paperGateConditionSchema),
 });
 
+// ---- Risk limits (Settings) ------------------------------------------------------
+
+// L2 envelope carve-out; null when the strategy has no envelope configured.
+export const l2EnvelopeSchema = z.strictObject({
+  max_size_quote: z.string(),
+  allowed_symbols: z.array(z.string()),
+});
+
+// Effective (DB-backed) risk limits as served by GET .../limits. Decimals
+// stay strings end-to-end — never parsed to floats.
+export const riskLimitsSchema = z.strictObject({
+  symbol_whitelist: z.array(z.string()),
+  max_open_positions: z.number().int().min(0),
+  per_position_notional_cap_quote: decimal,
+  daily_loss_limit_quote: decimal,
+  max_drawdown_pct: decimal,
+  max_loss_at_stop_quote: decimal,
+  min_stop_distance_pct: decimal,
+  max_stop_distance_pct: decimal,
+  max_orders_per_minute: z.number().int().min(0),
+  require_stop_loss: z.boolean(),
+  allocated_capital_quote: decimal,
+  accounting_quote: z.string().min(1),
+  staleness_threshold_seconds: z.number().int().min(0),
+  l1_approval_timeout_seconds: z.number().int().min(0),
+  l2_envelope: l2EnvelopeSchema.nullable(),
+});
+
+// One audit row: old_value is null when the field had no prior override.
+export const limitChangeRowSchema = z.strictObject({
+  change_id: z.string().min(1),
+  field: z.string().min(1),
+  old_value: z.string().nullable(),
+  new_value: z.string(),
+  actor_id: z.string().min(1),
+  changed_at: utcTimestamp,
+});
+
+// GET .../limits envelope: effective limits, the server's list of
+// runtime-changeable fields, and the change audit trail.
+export const limitsStatusSchema = z.strictObject({
+  effective: riskLimitsSchema,
+  changeable_fields: z.array(z.string()),
+  changes: z.array(limitChangeRowSchema),
+});
+
+// POST .../limits 200 envelope: the audit rows recorded by this request.
+export const limitChangeResponseSchema = z.strictObject({
+  changes: z.array(limitChangeRowSchema),
+});
+
+// The five runtime-changeable fields. Ints are JSON numbers; quote caps are
+// decimal STRINGS on the wire.
+export interface LimitChangesInput {
+  max_open_positions?: number;
+  max_orders_per_minute?: number;
+  per_position_notional_cap_quote?: string;
+  daily_loss_limit_quote?: string;
+  max_loss_at_stop_quote?: string;
+}
+
+export interface LimitChangeRequest {
+  changes: Record<string, number | string>;
+}
+
+// Body of POST .../limits: {changes: {<field>: <value>}} with ONLY the
+// fields the operator actually entered — undefined keys are dropped.
+export function buildLimitChanges(input: LimitChangesInput): LimitChangeRequest {
+  const changes: Record<string, number | string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) changes[key] = value;
+  }
+  return { changes };
+}
+
 // ---- Lifecycle / kill / clear bodies and responses ------------------------------
 
 // Body of POST .../lifecycle (LC-4). to: "killed" is never offered by the
@@ -381,6 +456,11 @@ export type SafetyAlert = z.infer<typeof safetyAlertSchema>;
 export type AlertsPage = z.infer<typeof alertsPageSchema>;
 export type PaperGateCondition = z.infer<typeof paperGateConditionSchema>;
 export type PaperGateReport = z.infer<typeof paperGateReportSchema>;
+export type L2Envelope = z.infer<typeof l2EnvelopeSchema>;
+export type RiskLimits = z.infer<typeof riskLimitsSchema>;
+export type LimitChangeRow = z.infer<typeof limitChangeRowSchema>;
+export type LimitsStatus = z.infer<typeof limitsStatusSchema>;
+export type LimitChangeResponse = z.infer<typeof limitChangeResponseSchema>;
 export type LifecycleRequest = z.infer<typeof lifecycleRequestSchema>;
 export type LifecycleResponse = z.infer<typeof lifecycleResponseSchema>;
 export type KillRequest = z.infer<typeof killRequestSchema>;

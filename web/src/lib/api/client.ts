@@ -22,6 +22,8 @@ import {
   killClearResponseSchema,
   killResponseSchema,
   lifecycleResponseSchema,
+  limitChangeResponseSchema,
+  limitsStatusSchema,
   paperGateReportSchema,
   runDetailSchema,
   runsPageSchema,
@@ -39,6 +41,9 @@ import {
   type LifecycleRequest,
   type LifecycleResponse,
   type LifecycleState,
+  type LimitChangeRequest,
+  type LimitChangeResponse,
+  type LimitsStatus,
   type PaperGateReport,
   type RunDetail,
   type RunsPage,
@@ -172,6 +177,12 @@ export function fetchPaperGate(strategyId: string): Promise<PaperGateReport> {
   return apiGet(`/api/v1/strategies/${strategyId}/paper-gate`, paperGateReportSchema);
 }
 
+// DB-backed risk limits: effective values, changeable fields, and the
+// change audit trail.
+export function fetchLimits(strategyId: string): Promise<LimitsStatus> {
+  return apiGet(`/api/v1/strategies/${strategyId}/limits`, limitsStatusSchema);
+}
+
 // POSTs to a same-origin Next proxy route (which holds the OPERATOR_TOKEN;
 // this client never sees it and attaches no auth header). Upstream errors
 // pass through verbatim and surface as ApiError (OS-30).
@@ -210,6 +221,16 @@ export function postLifecycle(
 // Strategy-tier kill (OS-28); the response acknowledges persistence only.
 export function postKill(strategyId: string, payload: KillRequest): Promise<KillResponse> {
   return proxyPost(`/api/strategies/${strategyId}/kill`, payload, killResponseSchema);
+}
+
+// Runtime risk-limit changes through the same-origin proxy; the response
+// carries the audit rows recorded by this request. The control plane
+// resolves the caller's role — a 403 surfaces verbatim as ApiError.
+export function postLimits(
+  strategyId: string,
+  payload: LimitChangeRequest,
+): Promise<LimitChangeResponse> {
+  return proxyPost(`/api/strategies/${strategyId}/limits`, payload, limitChangeResponseSchema);
 }
 
 // Strategy-tier clear (OS-29).

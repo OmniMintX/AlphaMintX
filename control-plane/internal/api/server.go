@@ -213,6 +213,7 @@ func New(cfg Config) *Server {
 		"POST /api/v1/strategies/{id}/proposals":         s.handlePostProposal,
 		"POST /api/v1/strategies/{id}/heartbeat":         s.handleHeartbeat,
 		"POST /api/v1/strategies/{id}/limits":            s.handlePostLimits,
+		"GET /api/v1/strategies/{id}/limits":             s.handleGetLimits,
 		"POST /api/v1/strategies/{id}/kill":              s.handleStrategyKill,
 		"POST /api/v1/strategies/{id}/lifecycle":         s.handlePostLifecycle,
 		"GET /api/v1/strategies/{id}/paper-gate":         s.handleGetPaperGate,

@@ -3,24 +3,33 @@
 // Ops panel (operator-surface.md OS-22..OS-30): safety status card with kill
 // banner / breaker badge / watchdog liveness, lifecycle controls per the
 // PINNED OS-26 display table, strategy-tier kill and clear controls, alerts
-// feed, and the paper-gate report. Mutations go through the same-origin
+// feed, the paper-gate report, and the DB-backed risk-limits settings card.
+// Mutations go through the same-origin
 // proxies (the OPERATOR_TOKEN never reaches this bundle); every upstream
 // error surfaces verbatim via ApiError (OS-30) — never remapped or retried.
 
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  ApiError,
   PAPER_GATE_POLL_INTERVAL_MS,
   buildKillPayload,
   buildLifecyclePayload,
   clearStrategyKill,
   fetchAlerts,
+  fetchLimits,
   fetchPaperGate,
   fetchSafety,
   postKill,
   postLifecycle,
+  postLimits,
 } from "../../../src/lib/api/client";
-import type { SafetyStatus } from "../../../src/lib/api/schema";
+import {
+  buildLimitChanges,
+  type LimitChangeRow,
+  type RiskLimits,
+  type SafetyStatus,
+} from "../../../src/lib/api/schema";
 import { usePoll } from "../../../src/lib/api/usePoll";
 import {
   defaultFlatten,
@@ -74,6 +83,9 @@ export function OpsPanel({
           </>
         )}
         <PaperGateSection strategyId={strategyId} />
+        <div style={{ gridColumn: "1 / -1" }}>
+          <LimitsSection strategyId={strategyId} />
+        </div>
         <div style={{ gridColumn: "1 / -1" }}>
           <AlertsSection strategyId={strategyId} />
         </div>
@@ -477,5 +489,303 @@ function PaperGateSection({ strategyId }: { strategyId: string }) {
         </>
       )}
     </div>
+  );
+}
+
+
+// Settings — DB-backed risk limits: effective values, the runtime edit form
+// (the five changeable fields; blank = unchanged), and the change audit
+// trail. Decimals stay strings end-to-end — never parsed to floats.
+function LimitsSection({ strategyId }: { strategyId: string }) {
+  const loadLimits = useCallback(() => fetchLimits(strategyId), [strategyId]);
+  const limits = usePoll(loadLimits);
+
+  return (
+    <div className="card">
+      <h3 className="card-title">Risk limits</h3>
+      {limits.error && <ErrorBanner message={limits.error} />}
+      {!limits.data && !limits.error && <div className="skeleton" style={{ height: 120 }} />}
+      {limits.data && (
+        <>
+          <EffectiveLimits effective={limits.data.effective} />
+          <hr className="divider" />
+          <LimitsEditForm
+            strategyId={strategyId}
+            effective={limits.data.effective}
+            onDone={limits.refresh}
+          />
+          <hr className="divider" />
+          <LimitChangeHistory changes={limits.data.changes} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function EffectiveLimits({ effective }: { effective: RiskLimits }) {
+  const q = effective.accounting_quote;
+  return (
+    <dl className="kv">
+      <dt>Symbol whitelist</dt>
+      <dd>
+        {effective.symbol_whitelist.length === 0 ? (
+          <span className="faint small">—</span>
+        ) : (
+          effective.symbol_whitelist.map((s) => (
+            <span key={s} className="badge badge-neutral" style={{ marginRight: 4 }}>
+              {s}
+            </span>
+          ))
+        )}
+      </dd>
+      <dt>Max open positions</dt>
+      <dd className="mono">{effective.max_open_positions}</dd>
+      <dt>Per-position notional cap</dt>
+      <dd className="mono">
+        {effective.per_position_notional_cap_quote} {q}
+      </dd>
+      <dt>Daily loss limit</dt>
+      <dd className="mono">
+        {effective.daily_loss_limit_quote} {q}
+      </dd>
+      <dt>Max drawdown pct</dt>
+      <dd className="mono">{effective.max_drawdown_pct}</dd>
+      <dt>Max loss at stop</dt>
+      <dd className="mono">
+        {effective.max_loss_at_stop_quote} {q}
+      </dd>
+      <dt>Stop distance pct (min–max)</dt>
+      <dd className="mono">
+        {effective.min_stop_distance_pct} – {effective.max_stop_distance_pct}
+      </dd>
+      <dt>Max orders / minute</dt>
+      <dd className="mono">{effective.max_orders_per_minute}</dd>
+      <dt>Require stop loss</dt>
+      <dd>
+        {effective.require_stop_loss ? (
+          <span className="badge badge-green">ON</span>
+        ) : (
+          <span className="badge badge-neutral">off</span>
+        )}
+      </dd>
+      <dt>Allocated capital</dt>
+      <dd className="mono">
+        {effective.allocated_capital_quote} {q}
+      </dd>
+      <dt>Accounting quote</dt>
+      <dd className="mono">{q}</dd>
+      <dt>Staleness threshold</dt>
+      <dd className="mono">{effective.staleness_threshold_seconds}s</dd>
+      <dt>L1 approval timeout</dt>
+      <dd className="mono">{effective.l1_approval_timeout_seconds}s</dd>
+      <dt>L2 envelope</dt>
+      <dd>
+        {effective.l2_envelope === null ? (
+          <span className="faint small">none</span>
+        ) : (
+          <>
+            <span className="mono">
+              max size {effective.l2_envelope.max_size_quote} {q}
+            </span>{" "}
+            {effective.l2_envelope.allowed_symbols.map((s) => (
+              <span key={s} className="badge badge-neutral" style={{ marginRight: 4 }}>
+                {s}
+              </span>
+            ))}
+          </>
+        )}
+      </dd>
+    </dl>
+  );
+}
+
+// The five runtime-changeable fields. Blank = unchanged; the payload carries
+// only entered fields (buildLimitChanges drops undefined keys). A 403 means
+// the proxy's credential lacks the required role — rendered visibly, never
+// hidden.
+function LimitsEditForm({
+  strategyId,
+  effective,
+  onDone,
+}: {
+  strategyId: string;
+  effective: RiskLimits;
+  onDone: () => void;
+}) {
+  const [maxOpen, setMaxOpen] = useState("");
+  const [maxOrders, setMaxOrders] = useState("");
+  const [notionalCap, setNotionalCap] = useState("");
+  const [dailyLoss, setDailyLoss] = useState("");
+  const [lossAtStop, setLossAtStop] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<{ status: number | null; message: string } | null>(null);
+  const [appliedCount, setAppliedCount] = useState<number | null>(null);
+
+  const intOr = (v: string) => (v.trim() === "" ? undefined : Number(v.trim()));
+  const strOr = (v: string) => (v.trim() === "" ? undefined : v.trim());
+
+  const input = {
+    max_open_positions: intOr(maxOpen),
+    max_orders_per_minute: intOr(maxOrders),
+    per_position_notional_cap_quote: strOr(notionalCap),
+    daily_loss_limit_quote: strOr(dailyLoss),
+    max_loss_at_stop_quote: strOr(lossAtStop),
+  };
+  const nothingEntered = Object.values(input).every((v) => v === undefined);
+
+  const submit = async () => {
+    setPending(true);
+    setError(null);
+    setAppliedCount(null);
+    try {
+      const res = await postLimits(strategyId, buildLimitChanges(input));
+      setMaxOpen("");
+      setMaxOrders("");
+      setNotionalCap("");
+      setDailyLoss("");
+      setLossAtStop("");
+      setAppliedCount(res.changes.length);
+      onDone();
+    } catch (err) {
+      setError({
+        status: err instanceof ApiError ? err.status : null,
+        message: errText(err),
+      });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <>
+      {error &&
+        (error.status === 403 ? (
+          <div className="banner banner-error" role="alert">
+            <span aria-hidden>&#9888;</span>
+            <div>
+              <strong>Not permitted: this credential lacks the required role.</strong>
+              <p className="small" style={{ margin: "4px 0 0" }}>
+                Limit changes need an admin/owner user token — {error.message}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <ErrorBanner message={error.message} />
+        ))}
+      {appliedCount !== null && (
+        <p className="faint small">
+          Applied — {appliedCount} change{appliedCount === 1 ? "" : "s"} recorded.
+        </p>
+      )}
+      <div className="row">
+        <label className="field">
+          <span className="field-label">Max open positions</span>
+          <input
+            className="input"
+            type="number"
+            step={1}
+            min={0}
+            value={maxOpen}
+            onChange={(e) => setMaxOpen(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Max orders / minute</span>
+          <input
+            className="input"
+            type="number"
+            step={1}
+            min={0}
+            value={maxOrders}
+            onChange={(e) => setMaxOrders(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Per-position notional cap ({effective.accounting_quote})</span>
+          <input
+            className="input"
+            placeholder={effective.per_position_notional_cap_quote}
+            value={notionalCap}
+            onChange={(e) => setNotionalCap(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Daily loss limit ({effective.accounting_quote})</span>
+          <input
+            className="input"
+            placeholder={effective.daily_loss_limit_quote}
+            value={dailyLoss}
+            onChange={(e) => setDailyLoss(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Max loss at stop ({effective.accounting_quote})</span>
+          <input
+            className="input"
+            placeholder={effective.max_loss_at_stop_quote}
+            value={lossAtStop}
+            onChange={(e) => setLossAtStop(e.target.value)}
+          />
+        </label>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={pending || nothingEntered}
+          onClick={() => void submit()}
+        >
+          Apply changes
+        </button>
+        <span className="faint small">Blank fields are left unchanged.</span>
+      </div>
+    </>
+  );
+}
+
+function LimitChangeHistory({ changes }: { changes: LimitChangeRow[] }) {
+  const sorted = [...changes].sort((a, b) => b.changed_at.localeCompare(a.changed_at));
+  return (
+    <details>
+      <summary className="faint small" style={{ cursor: "pointer" }}>
+        Change history ({changes.length})
+      </summary>
+      {sorted.length === 0 ? (
+        <div className="empty">No changes recorded.</div>
+      ) : (
+        <table className="tbl" style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th>Changed at</th>
+              <th>Field</th>
+              <th>Change</th>
+              <th>Actor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((c) => (
+              <tr key={c.change_id}>
+                <td className="mono-cell">{c.changed_at}</td>
+                <td className="mono-cell">{c.field}</td>
+                <td className="mono-cell">
+                  {c.old_value ?? "—"} &rarr; {c.new_value}
+                </td>
+                <td
+                  className="mono-cell"
+                  style={{
+                    maxWidth: "10rem",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c.actor_id}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </details>
   );
 }

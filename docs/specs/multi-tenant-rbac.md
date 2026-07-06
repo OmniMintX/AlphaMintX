@@ -289,6 +289,12 @@ Phase 1 meanings.
   the proposal path reads under the existing per-strategy lock and the
   preflight reads the current snapshot — either the old or the new limits,
   never a torn set.
+- **Effective-limits read.** `GET /api/v1/strategies/{id}/limits` — viewer+
+  own tenant plus the env read class (the `GET .../safety` tier); registered
+  iff a limits provider is wired, like the POST. Returns `effective` (the
+  provider view, decimal fields as ADR-0003 strings), `changeable_fields`
+  (the sorted runtime-changeable whitelist), and `changes` (this strategy's
+  `risk_limit_changes` audit rows in `rowid` order, oldest first).
 
 ## Tenant kill-switch (NEW)
 

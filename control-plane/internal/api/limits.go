@@ -187,9 +187,11 @@ type limitChangeRequest struct {
 	Changes map[string]json.RawMessage `json:"changes"`
 }
 
-// limitChangeResponse echoes the appended audit rows.
+// limitChangeResponse echoes the appended audit rows in the same
+// limitChangeView shape as the GET read (strategy_id is implied by the
+// path — the web limitChangeRowSchema is strict on both bodies).
 type limitChangeResponse struct {
-	Changes []store.RiskLimitChange `json:"changes"`
+	Changes []limitChangeView `json:"changes"`
 }
 
 // handlePostLimits is the runtime limit change (multi-tenant-rbac.md
@@ -266,7 +268,14 @@ func (s *Server) handlePostLimits(w http.ResponseWriter, r *http.Request) {
 		s.writeInternal(w, r, err) // unreachable: values pre-validated above
 		return
 	}
-	writeJSON(w, http.StatusOK, limitChangeResponse{Changes: changes})
+	views := make([]limitChangeView, 0, len(changes))
+	for _, c := range changes {
+		views = append(views, limitChangeView{
+			ChangeID: c.ChangeID, Field: c.Field, OldValue: c.OldValue,
+			NewValue: c.NewValue, ActorID: c.ActorID, ChangedAt: c.ChangedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, limitChangeResponse{Changes: views})
 }
 
 // normalizeLimitValue converts the request's raw JSON value into the
@@ -306,4 +315,123 @@ func currentLimitValue(limits riskgate.RiskLimits, field string) string {
 	default: // fieldMaxLossAtStopQuote: normalizeLimitValue pinned the set
 		return limits.MaxLossAtStopQuote.String()
 	}
+}
+
+// changeableLimitFields is the sorted runtime-changeable whitelist echoed
+// by the limits read — exactly the applyLimitChange field set.
+var changeableLimitFields = []string{
+	fieldDailyLossLimitQuote,
+	fieldMaxLossAtStopQuote,
+	fieldMaxOpenPositions,
+	fieldMaxOrdersPerMinute,
+	fieldPerPositionNotionalCapQuote,
+}
+
+// effectiveLimitsView serializes riskgate.RiskLimits for the limits read:
+// decimal fields as strings (ADR-0003), slices never null.
+type effectiveLimitsView struct {
+	SymbolWhitelist             []string        `json:"symbol_whitelist"`
+	MaxOpenPositions            int             `json:"max_open_positions"`
+	PerPositionNotionalCapQuote string          `json:"per_position_notional_cap_quote"`
+	DailyLossLimitQuote         string          `json:"daily_loss_limit_quote"`
+	MaxDrawdownPct              string          `json:"max_drawdown_pct"`
+	MaxLossAtStopQuote          string          `json:"max_loss_at_stop_quote"`
+	MinStopDistancePct          string          `json:"min_stop_distance_pct"`
+	MaxStopDistancePct          string          `json:"max_stop_distance_pct"`
+	MaxOrdersPerMinute          int             `json:"max_orders_per_minute"`
+	RequireStopLoss             bool            `json:"require_stop_loss"`
+	AllocatedCapitalQuote       string          `json:"allocated_capital_quote"`
+	AccountingQuote             string          `json:"accounting_quote"`
+	StalenessThresholdSeconds   int             `json:"staleness_threshold_seconds"`
+	L1ApprovalTimeoutSeconds    int             `json:"l1_approval_timeout_seconds"`
+	L2Envelope                  *l2EnvelopeView `json:"l2_envelope"`
+}
+
+// l2EnvelopeView is the optional L2 envelope; null when unset.
+type l2EnvelopeView struct {
+	MaxSizeQuote   string   `json:"max_size_quote"`
+	AllowedSymbols []string `json:"allowed_symbols"`
+}
+
+func newEffectiveLimitsView(limits riskgate.RiskLimits) effectiveLimitsView {
+	v := effectiveLimitsView{
+		SymbolWhitelist:             append([]string{}, limits.SymbolWhitelist...),
+		MaxOpenPositions:            limits.MaxOpenPositions,
+		PerPositionNotionalCapQuote: limits.PerPositionNotionalCapQuote.String(),
+		DailyLossLimitQuote:         limits.DailyLossLimitQuote.String(),
+		MaxDrawdownPct:              limits.MaxDrawdownPct.String(),
+		MaxLossAtStopQuote:          limits.MaxLossAtStopQuote.String(),
+		MinStopDistancePct:          limits.MinStopDistancePct.String(),
+		MaxStopDistancePct:          limits.MaxStopDistancePct.String(),
+		MaxOrdersPerMinute:          limits.MaxOrdersPerMinute,
+		RequireStopLoss:             limits.RequireStopLoss,
+		AllocatedCapitalQuote:       limits.AllocatedCapitalQuote.String(),
+		AccountingQuote:             limits.AccountingQuote,
+		StalenessThresholdSeconds:   limits.StalenessThresholdSeconds,
+		L1ApprovalTimeoutSeconds:    limits.L1ApprovalTimeoutSeconds,
+	}
+	if limits.L2Envelope != nil {
+		v.L2Envelope = &l2EnvelopeView{
+			MaxSizeQuote:   limits.L2Envelope.MaxSizeQuote.String(),
+			AllowedSymbols: append([]string{}, limits.L2Envelope.AllowedSymbols...),
+		}
+	}
+	return v
+}
+
+// limitChangeView is one audit row of the limits read (the web
+// limitChangeRowSchema shape: strategy_id is implied by the path).
+type limitChangeView struct {
+	ChangeID  string  `json:"change_id"`
+	Field     string  `json:"field"`
+	OldValue  *string `json:"old_value"`
+	NewValue  string  `json:"new_value"`
+	ActorID   string  `json:"actor_id"`
+	ChangedAt string  `json:"changed_at"`
+}
+
+// limitsReadResponse is the GET body: the provider's effective limits, the
+// runtime-changeable whitelist, and this strategy's audit history.
+type limitsReadResponse struct {
+	Effective        effectiveLimitsView `json:"effective"`
+	ChangeableFields []string            `json:"changeable_fields"`
+	Changes          []limitChangeView   `json:"changes"`
+}
+
+// handleGetLimits is the effective-limits read (multi-tenant-rbac.md
+// §Runtime limit changes): the provider view — base overlaid with persisted
+// changes — plus this strategy's risk_limit_changes rows in rowid order
+// (oldest first, the normative replay order).
+func (s *Server) handleGetLimits(w http.ResponseWriter, r *http.Request) {
+	pr := principalFrom(r)
+	strategyID := r.PathValue("id")
+	if _, err := s.rootStrategy(pr, strategyID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, codeUnknownStrategy, "unknown strategy")
+			return
+		}
+		s.writeInternal(w, r, err)
+		return
+	}
+	changes := []limitChangeView{}
+	if s.cfg.Store != nil {
+		rows, err := s.cfg.Store.RiskLimitChanges()
+		if err != nil {
+			s.writeInternal(w, r, err)
+			return
+		}
+		for _, c := range rows {
+			if c.StrategyID == strategyID {
+				changes = append(changes, limitChangeView{
+					ChangeID: c.ChangeID, Field: c.Field, OldValue: c.OldValue,
+					NewValue: c.NewValue, ActorID: c.ActorID, ChangedAt: c.ChangedAt,
+				})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, limitsReadResponse{
+		Effective:        newEffectiveLimitsView(s.limits.Limits(strategyID)),
+		ChangeableFields: changeableLimitFields,
+		Changes:          changes,
+	})
 }

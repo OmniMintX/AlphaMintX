@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -20,6 +21,11 @@ func postLimits(t *testing.T, e *testEnv, token, strategyID string, changes map[
 		map[string]any{"changes": changes})
 }
 
+func getLimits(t *testing.T, e *testEnv, token, strategyID string) *httptest.ResponseRecorder {
+	t.Helper()
+	return e.do(t, "GET", "/api/v1/strategies/"+strategyID+"/limits", token, nil)
+}
+
 // TestLimitChangeAuditAndAtomicReject: one audit row per changed field
 // (old -> new, actor, timestamp) in one transaction; ANY invalid field
 // rejects the whole request with zero rows appended.
@@ -32,6 +38,22 @@ func TestLimitChangeAuditAndAtomicReject(t *testing.T) {
 		"max_open_positions": 5, "daily_loss_limit_quote": "250"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	// The POST echo uses the SAME row shape as the GET read (no
+	// strategy_id — implied by the path; the web schema is strict).
+	var echo struct {
+		Changes []map[string]any `json:"changes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &echo); err != nil {
+		t.Fatalf("unmarshal POST body: %v", err)
+	}
+	if len(echo.Changes) != 2 {
+		t.Fatalf("POST echo rows = %d, want one per field", len(echo.Changes))
+	}
+	for _, row := range echo.Changes {
+		if _, leaked := row["strategy_id"]; leaked || len(row) != 6 {
+			t.Fatalf("POST echo row = %v, want the 6-key limitChangeView shape", row)
+		}
 	}
 	rows, err := e.store.RiskLimitChanges()
 	if err != nil {
@@ -187,5 +209,108 @@ func TestLimitChangePreflightUsesProvider(t *testing.T) {
 		!slices.Contains(second.PreflightReasons, reasonDailyLossLimitBreach) {
 		t.Fatalf("post-change outcome = %q (%v), want blocked on DAILY_LOSS_LIMIT_BREACHED",
 			second.Outcome, second.PreflightReasons)
+	}
+}
+
+// TestGetLimitsEffectiveAndAuditHistory: the read returns the provider's
+// effective (base) values; after runtime changes it reflects the new
+// effective values and this strategy's audit rows in rowid order (oldest
+// first, old -> new), with foreign-strategy rows excluded.
+func TestGetLimitsEffectiveAndAuditHistory(t *testing.T) {
+	e := gatedEnv(t)
+	createTenant(t, e.store, "tenant-1")
+	createStrategy(t, e.store, strat1, "paper")
+	createStrategy(t, e.store, strat2, "paper")
+
+	rec := getLimits(t, e, readTok, strat1)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var got limitsReadResponse
+	decodeJSON(t, rec, &got)
+	eff := got.Effective
+	if !slices.Equal(eff.SymbolWhitelist, []string{"BTC/USDT", "ETH/USDT"}) ||
+		eff.MaxOpenPositions != 3 || eff.PerPositionNotionalCapQuote != "2000" ||
+		eff.DailyLossLimitQuote != "500" || eff.MaxDrawdownPct != "10" ||
+		eff.MaxLossAtStopQuote != "450" || eff.MinStopDistancePct != "0.1" ||
+		eff.MaxStopDistancePct != "25" || eff.MaxOrdersPerMinute != 60 ||
+		!eff.RequireStopLoss || eff.AllocatedCapitalQuote != "10000" ||
+		eff.AccountingQuote != "USDT" || eff.StalenessThresholdSeconds != 60 ||
+		eff.L1ApprovalTimeoutSeconds != 600 || eff.L2Envelope != nil {
+		t.Fatalf("base effective = %+v, want the testRiskLimits base", eff)
+	}
+
+	// Two strat1 changes (the second re-touching max_open_positions) plus a
+	// strat2 change that must never leak into strat1's history.
+	for _, c := range []struct {
+		strategyID string
+		changes    map[string]any
+	}{
+		{strat1, map[string]any{"max_open_positions": 5, "daily_loss_limit_quote": "250"}},
+		{strat2, map[string]any{"max_orders_per_minute": 30}},
+		{strat1, map[string]any{"max_open_positions": 7}},
+	} {
+		if rec := postLimits(t, e, adminTok, c.strategyID, c.changes); rec.Code != http.StatusOK {
+			t.Fatalf("limit change status = %d (body %q)", rec.Code, rec.Body.String())
+		}
+	}
+
+	rec = getLimits(t, e, readTok, strat1)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	decodeJSON(t, rec, &got)
+	if got.Effective.MaxOpenPositions != 7 || got.Effective.DailyLossLimitQuote != "250" ||
+		got.Effective.MaxOrdersPerMinute != 60 {
+		t.Errorf("post-change effective = %+v, want 7/250 with the base order rate (strat2 change must not bleed)", got.Effective)
+	}
+	// Exactly strat1's 3 rows (strat2's max_orders_per_minute row excluded),
+	// rowid-ordered oldest first with a consistent old->new chain.
+	if len(got.Changes) != 3 {
+		t.Fatalf("changes = %d rows (%+v), want strat1's 3", len(got.Changes), got.Changes)
+	}
+	if got.Changes[0].Field != "daily_loss_limit_quote" || *got.Changes[0].OldValue != "500" || got.Changes[0].NewValue != "250" ||
+		got.Changes[1].Field != "max_open_positions" || *got.Changes[1].OldValue != "3" || got.Changes[1].NewValue != "5" ||
+		got.Changes[2].Field != "max_open_positions" || *got.Changes[2].OldValue != "5" || got.Changes[2].NewValue != "7" ||
+		got.Changes[0].ActorID != "env-admin" {
+		t.Fatalf("changes = %+v, want the rowid-ordered old->new chain", got.Changes)
+	}
+}
+
+// TestGetLimitsRBACAndUnknownStrategy: agent/operator/env-admin classes are
+// outside the reader row (403 FORBIDDEN); an unknown strategy is 404.
+func TestGetLimitsRBACAndUnknownStrategy(t *testing.T) {
+	e := gatedEnv(t)
+	createTenant(t, e.store, "tenant-1")
+	createStrategy(t, e.store, strat1, "paper")
+
+	for _, tok := range []string{agent1Tok, opTok, adminTok} {
+		wantError(t, getLimits(t, e, tok, strat1), 403, codeForbidden)
+	}
+	wantError(t, getLimits(t, e, readTok, uid(9)), 404, codeUnknownStrategy)
+}
+
+// TestGetLimitsEmptyHistory: a strategy with no persisted changes returns
+// "changes": [] (never null) and the sorted runtime-changeable whitelist.
+func TestGetLimitsEmptyHistory(t *testing.T) {
+	e := gatedEnv(t)
+	createTenant(t, e.store, "tenant-1")
+	createStrategy(t, e.store, strat1, "paper")
+
+	rec := getLimits(t, e, readTok, strat1)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	decodeJSON(t, rec, &raw)
+	if string(raw["changes"]) != "[]" {
+		t.Errorf("changes = %s, want the empty array (never null)", raw["changes"])
+	}
+	var got limitsReadResponse
+	decodeJSON(t, rec, &got)
+	want := []string{"daily_loss_limit_quote", "max_loss_at_stop_quote",
+		"max_open_positions", "max_orders_per_minute", "per_position_notional_cap_quote"}
+	if !slices.Equal(got.ChangeableFields, want) {
+		t.Errorf("changeable_fields = %v, want %v", got.ChangeableFields, want)
 	}
 }
