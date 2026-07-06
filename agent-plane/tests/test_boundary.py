@@ -24,6 +24,23 @@ FORBIDDEN_TOP_LEVEL = {
     "web3",
 }
 
+# Direct LLM-provider modules (mintrouter is the sole gateway, ADR-0004).
+# AST-level twin of scripts/check_plane_boundary.py: robust against alias
+# and line-continuation spellings the substring gate cannot see.
+FORBIDDEN_LLM_TOP_LEVEL = {
+    "openai",
+    "anthropic",
+    "google",
+    "cohere",
+    "mistralai",
+    "groq",
+    "together",
+    "litellm",
+    "langchain_openai",
+    "langchain_anthropic",
+    "boto3",
+}
+
 
 def test_no_exchange_modules_loaded() -> None:
     loaded = {name.split(".")[0] for name in sys.modules}
@@ -42,7 +59,7 @@ def _imported_top_levels(tree: ast.AST) -> set[str]:
 
 def test_no_exchange_or_credential_imports_in_source() -> None:
     src_root = Path(alphamintx_agent_plane.__file__).resolve().parent
-    forbidden = FORBIDDEN_TOP_LEVEL | {"hmac"}
+    forbidden = FORBIDDEN_TOP_LEVEL | FORBIDDEN_LLM_TOP_LEVEL | {"hmac"}
     for module_path in sorted(src_root.rglob("*.py")):
         imported = _imported_top_levels(ast.parse(module_path.read_text(encoding="utf-8")))
         offending = imported & forbidden

@@ -21,12 +21,21 @@ def load(path: Path) -> dict:
         return json.load(f)
 
 
+EXPECTED_SCHEMAS = frozenset(
+    {"proposal.schema.json", "riskverdict.schema.json", "agent_trace.schema.json"}
+)
+
+
 def main() -> int:
+    # Pin the schema set: a silently deleted/renamed/added mirror must fail here,
+    # and EVERY schema (agent_trace included) must be valid draft 2020-12.
+    present = {p.name for p in ROOT.glob("*.schema.json")}
+    assert present == EXPECTED_SCHEMAS, f"schema set drift: {sorted(present ^ EXPECTED_SCHEMAS)}"
+    for name in sorted(EXPECTED_SCHEMAS):
+        Draft202012Validator.check_schema(load(ROOT / name))
     proposal_schema = load(ROOT / "proposal.schema.json")
     verdict_schema = load(ROOT / "riskverdict.schema.json")
-    for schema in (proposal_schema, verdict_schema):
-        Draft202012Validator.check_schema(schema)
-    print("OK   schemas are valid draft 2020-12")
+    print(f"OK   all {len(EXPECTED_SCHEMAS)} schemas present and valid draft 2020-12")
 
     proposal_v = Draft202012Validator(proposal_schema)
     verdict_v = Draft202012Validator(verdict_schema)

@@ -67,11 +67,19 @@ class Rule(NamedTuple):
     allow: Mapping[str, frozenset[str]] = {}
 
 
+# The AST twin of this gate names banned modules as string literals.
+BOUNDARY_TEST = "agent-plane/tests/test_boundary.py"
+
 RULES: tuple[Rule, ...] = (
     Rule(
         name="agent-plane direct LLM provider (mintrouter is the sole gateway, ADR-0004)",
         roots=("agent-plane/src", "agent-plane/tests"),
         patterns=LLM_PROVIDER_PATTERNS,
+        allow={
+            "litellm": frozenset({BOUNDARY_TEST}),
+            "langchain_openai": frozenset({BOUNDARY_TEST}),
+            "langchain_anthropic": frozenset({BOUNDARY_TEST}),
+        },
     ),
     Rule(
         name="agent-plane control-plane DB access (no DB grants, ARCHITECTURE.md)",
@@ -131,7 +139,9 @@ def iter_text_files(root: Path):
         try:
             yield path, raw.decode("utf-8")
         except UnicodeDecodeError:
-            continue
+            # Fail closed: a non-binary file the gate cannot read is a place
+            # a banned pattern could hide.
+            yield path, None
 
 
 def check(rule: Rule) -> list[str]:
@@ -142,6 +152,9 @@ def check(rule: Rule) -> list[str]:
             continue
         for path, text in iter_text_files(base):
             rel = path.relative_to(REPO).as_posix()
+            if text is None:
+                violations.append(f"{rel}:0: undecodable non-binary file — {rule.name}")
+                continue
             for lineno, line in enumerate(text.splitlines(), start=1):
                 for pattern in rule.patterns:
                     if pattern in line and rel not in rule.allow.get(pattern, ()):

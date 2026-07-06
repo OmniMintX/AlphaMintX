@@ -81,6 +81,7 @@ Web dashboard (unit `alphamintx-web.service`, env file
 
 | Variable | Required | Secret | Meaning |
 |---|---|---|---|
+| `PORT` | no | no | Web server listening port at runtime (Next standalone `server.js`); default 3000. Must match the reverse-proxy upstream (§10.2 `web.env`). |
 | `CONTROLPLANE_API_BASE_URL` | yes | no | Control-plane origin as seen from the Next SERVER; baked into rewrites at `next build` time. |
 | `NEXT_PUBLIC_API_BASE_URL` | no | no | Cross-origin escape hatch for the browser client; empty = same origin. |
 | `NEXT_PUBLIC_READ_TOKEN` | yes | yes | READ token, INLINED into the public JS bundle at build time (GETs only by design — persistence-and-api.md §Auth); use a per-tenant viewer DB token for tenant-facing deployments. |
