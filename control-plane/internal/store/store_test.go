@@ -376,6 +376,15 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// retention in the backup dir) and ListBackups is a readdir —
 		// neither adds an UPDATE/DELETE surface.
 		"Backup": true, "ListBackups": true,
+		// Alert notifier surface (alert-notifier.md AN-1a/AN-2/AN-7..9):
+		// the three List*After reads and MaxAlertSourceRowid are read-only;
+		// Seed/Upsert touch only alert_dispatch_state, which is a mutable
+		// snapshot exempt like strategy_state (AN-9); the combined
+		// recon-event+alert mutator is two INSERTs in one tx (AN-1a).
+		"AlertDispatchWatermark": true, "SeedAlertDispatchWatermark": true,
+		"UpsertAlertDispatchWatermark": true, "MaxAlertSourceRowid": true,
+		"ListKillBreakerEventsAfter": true, "ListKillClearEventsAfter": true,
+		"ListSafetyAlertsAfter": true, "AppendOMSReconEventWithAlert": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

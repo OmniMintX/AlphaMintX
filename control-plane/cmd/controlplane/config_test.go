@@ -229,3 +229,104 @@ func writeTempFile(t *testing.T, dir string) string {
 	}
 	return path
 }
+
+// TestParseAlertWebhook pins the AN-10 fail-fast table (alert-notifier.md)
+// and the AN-11 error hygiene: every rejection names the field and never
+// contains the URL, the bearer, or the raw JSON.
+func TestParseAlertWebhook(t *testing.T) {
+	const secretURL = "https://hooks.example.com/T000/SECRET-URL-TOKEN"
+	const secretBearer = "SECRET-BEARER-TOKEN"
+	cases := []struct {
+		name    string
+		raw     string
+		wantNil bool
+		wantErr string
+	}{
+		{name: "unset disables", raw: "", wantNil: true},
+		{name: "url only with defaults", raw: `{"url":"` + secretURL + `"}`},
+		{name: "full config", raw: `{"url":"` + secretURL + `","authorization_bearer":"` + secretBearer +
+			`","timeout_seconds":10,"poll_seconds":30,"max_per_tick":100,"heartbeat_hours":12,"log_only":false}`},
+		{name: "log-only", raw: `{"log_only":true}`},
+		{name: "log-only with knobs", raw: `{"log_only":true,"poll_seconds":60,"heartbeat_hours":0}`},
+		{name: "not json", raw: `{"url":`, wantErr: "invalid JSON"},
+		{name: "unknown field", raw: `{"url":"` + secretURL + `","bogus":1}`, wantErr: "invalid JSON"},
+		{name: "url required", raw: `{}`, wantErr: "url is REQUIRED"},
+		{name: "empty url", raw: `{"url":""}`, wantErr: "url is REQUIRED"},
+		{name: "bad scheme", raw: `{"url":"ftp://` + secretBearer + `.example.com/hook"}`, wantErr: "scheme"},
+		{name: "no host", raw: `{"url":"https:///hook"}`, wantErr: "host"},
+		{name: "userinfo rejected", raw: `{"url":"https://user:` + secretBearer + `@example.com/hook"}`, wantErr: "userinfo"},
+		{name: "log_only plus url", raw: `{"log_only":true,"url":"` + secretURL + `"}`, wantErr: "url MUST be absent"},
+		{name: "log_only plus bearer", raw: `{"log_only":true,"authorization_bearer":"` + secretBearer + `"}`,
+			wantErr: "authorization_bearer MUST be absent"},
+		{name: "bearer http non-loopback", raw: `{"url":"http://internal.example.com/hook","authorization_bearer":"` +
+			secretBearer + `"}`, wantErr: "loopback"},
+		{name: "bearer http loopback ip", raw: `{"url":"http://127.0.0.1:9000/hook","authorization_bearer":"` + secretBearer + `"}`},
+		{name: "bearer http localhost", raw: `{"url":"http://localhost:9000/hook","authorization_bearer":"` + secretBearer + `"}`},
+		{name: "bearer http v6 loopback", raw: `{"url":"http://[::1]:9000/hook","authorization_bearer":"` + secretBearer + `"}`},
+		{name: "bearer https any host", raw: `{"url":"` + secretURL + `","authorization_bearer":"` + secretBearer + `"}`},
+		{name: "timeout low", raw: `{"url":"` + secretURL + `","timeout_seconds":0}`, wantErr: "timeout_seconds"},
+		{name: "timeout high", raw: `{"url":"` + secretURL + `","timeout_seconds":61}`, wantErr: "timeout_seconds"},
+		{name: "poll low", raw: `{"url":"` + secretURL + `","poll_seconds":0}`, wantErr: "poll_seconds"},
+		{name: "poll high", raw: `{"url":"` + secretURL + `","poll_seconds":301}`, wantErr: "poll_seconds"},
+		{name: "max_per_tick low", raw: `{"url":"` + secretURL + `","max_per_tick":0}`, wantErr: "max_per_tick"},
+		{name: "max_per_tick high", raw: `{"url":"` + secretURL + `","max_per_tick":501}`, wantErr: "max_per_tick"},
+		{name: "heartbeat negative", raw: `{"url":"` + secretURL + `","heartbeat_hours":-1}`, wantErr: "heartbeat_hours"},
+		{name: "heartbeat high", raw: `{"url":"` + secretURL + `","heartbeat_hours":169}`, wantErr: "heartbeat_hours"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parseAlertWebhook(tc.raw)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				for _, secret := range []string{secretURL, secretBearer, tc.raw} {
+					if secret != "" && strings.Contains(err.Error(), secret) {
+						t.Fatalf("error text leaks config material: %q", err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseAlertWebhook: %v", err)
+			}
+			if tc.wantNil {
+				if cfg != nil {
+					t.Fatalf("cfg = %+v, want nil (disabled)", cfg)
+				}
+				return
+			}
+			if cfg == nil {
+				t.Fatal("cfg = nil, want parsed config")
+			}
+			if cfg.logOnly {
+				if cfg.url != "" || cfg.bearer != "" {
+					t.Fatalf("log-only cfg carries url/bearer: %+v", cfg)
+				}
+			} else if cfg.url == "" {
+				t.Fatalf("webhook cfg missing url: %+v", cfg)
+			}
+		})
+	}
+	// Defaults (AN-10 table) and explicit values land as durations.
+	cfg, err := parseAlertWebhook(`{"url":"https://ops.example.com/hook"}`)
+	if err != nil {
+		t.Fatalf("defaults: %v", err)
+	}
+	if cfg.timeout != 5*time.Second || cfg.poll != 5*time.Second ||
+		cfg.maxPerTick != 20 || cfg.heartbeat != 24*time.Hour || cfg.logOnly {
+		t.Errorf("defaults = %+v, want 5s/5s/20/24h/webhook", cfg)
+	}
+	cfg, err = parseAlertWebhook(`{"url":"https://ops.example.com/hook","timeout_seconds":60,"poll_seconds":300,"max_per_tick":500,"heartbeat_hours":168}`)
+	if err != nil {
+		t.Fatalf("upper bounds: %v", err)
+	}
+	if cfg.timeout != 60*time.Second || cfg.poll != 300*time.Second ||
+		cfg.maxPerTick != 500 || cfg.heartbeat != 168*time.Hour {
+		t.Errorf("upper bounds = %+v, want 60s/300s/500/168h", cfg)
+	}
+	cfg, err = parseAlertWebhook(`{"url":"https://ops.example.com/hook","heartbeat_hours":0}`)
+	if err != nil || cfg.heartbeat != 0 {
+		t.Errorf("heartbeat_hours 0 = %+v err=%v, want disabled heartbeat", cfg, err)
+	}
+}

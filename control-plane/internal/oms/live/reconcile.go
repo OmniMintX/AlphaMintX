@@ -442,9 +442,12 @@ func (o *OMS) absenceCheck(ctx context.Context, run *reconRun) error {
 	return nil
 }
 
-// flagVenueReset appends venue_reset, marks the order expired with the
-// reason in the event details, and transitions to RECONCILE_PENDING: ALL
-// sends are refused until an operator acknowledges (§Venue epochs).
+// flagVenueReset appends venue_reset plus its companion safety_alerts
+// row in ONE transaction (alert-notifier.md AN-1a: sends refused until a
+// human acknowledges is the most page-worthy condition — the alert makes
+// it reach the notifier), marks the order expired with the reason in the
+// event details, and transitions to RECONCILE_PENDING: ALL sends are
+// refused until an operator acknowledges (§Venue epochs).
 func (o *OMS) flagVenueReset(runID *string, ord *store.LiveOrder) error {
 	details := map[string]any{"reason": "previously_acked_not_found"}
 	ev := o.event("venue_reset", details)
@@ -453,7 +456,10 @@ func (o *OMS) flagVenueReset(runID *string, ord *store.LiveOrder) error {
 		ev.StrategyID, ev.Symbol = &ord.StrategyID, &ord.Symbol
 		ev.ClientOrderID, ev.ExchangeOrderID = ord.ClientOrderID, ord.ExchangeOrderID
 	}
-	if err := o.st.AppendOMSReconEvent(ev); err != nil {
+	if err := o.st.AppendOMSReconEventWithAlert(ev, store.SafetyAlert{
+		AlertID: newUUID(), Kind: "venue_reset", StrategyID: ev.StrategyID,
+		RefID: &ev.EventID, DetailsJSON: ev.DetailsJSON, RecordedAt: ev.RecordedAt,
+	}); err != nil {
 		return err
 	}
 	if ord != nil {

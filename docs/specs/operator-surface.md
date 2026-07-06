@@ -16,6 +16,9 @@ liveness, WD-8/WD-9), `docs/specs/multi-tenant-rbac.md` (permission
 matrix, registration rule, tenant isolation), `docs/specs/
 persistence-and-api.md` (HTTP conventions, pagination envelope, web
 auth split).
+Push dispatch of the safety events this surface reads is normative in
+`docs/specs/alert-notifier.md` (AN-*); operator procedures in
+`docs/RUNBOOK.md` §9.
 
 ## Goals and non-goals
 

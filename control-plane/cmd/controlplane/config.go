@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -304,6 +306,122 @@ func parseBackupConfig(dir, retainRaw, intervalRaw string) (*backupConfig, error
 		c.interval = time.Duration(n) * time.Hour
 	}
 	return c, nil
+}
+
+// alertWebhookJSON is the CONTROLPLANE_ALERT_WEBHOOK JSON shape
+// (alert-notifier.md AN-10); pointers distinguish absent from zero, so
+// the "MUST be absent" rules are checkable.
+type alertWebhookJSON struct {
+	URL                 *string `json:"url"`
+	AuthorizationBearer *string `json:"authorization_bearer"`
+	TimeoutSeconds      *int    `json:"timeout_seconds"`
+	PollSeconds         *int    `json:"poll_seconds"`
+	MaxPerTick          *int    `json:"max_per_tick"`
+	HeartbeatHours      *int    `json:"heartbeat_hours"`
+	LogOnly             *bool   `json:"log_only"`
+}
+
+// alertConfig carries the parsed AN-10 settings; nil means the notifier
+// is disabled entirely (no goroutine, no seeded watermark rows). url and
+// bearer are secrets: never logged, in errors or otherwise (AN-11).
+type alertConfig struct {
+	url        string
+	bearer     string
+	timeout    time.Duration
+	poll       time.Duration
+	maxPerTick int
+	heartbeat  time.Duration // 0 = AN-14a heartbeat disabled
+	logOnly    bool
+}
+
+// parseAlertWebhook validates CONTROLPLANE_ALERT_WEBHOOK fail-fast
+// (AN-10); "" yields nil (disabled). Per AN-11 no error ever wraps or
+// propagates decoder/parser text (it echoes input fragments) — errors
+// name the offending FIELD only.
+func parseAlertWebhook(raw string) (*alertConfig, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var c alertWebhookJSON
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: invalid JSON (fields and types per docs/specs/alert-notifier.md AN-10)")
+	}
+	out := &alertConfig{
+		timeout: 5 * time.Second, poll: 5 * time.Second,
+		maxPerTick: 20, heartbeat: 24 * time.Hour,
+	}
+	if c.LogOnly != nil {
+		out.logOnly = *c.LogOnly
+	}
+	if out.logOnly {
+		if c.URL != nil {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: url MUST be absent when log_only is true")
+		}
+		if c.AuthorizationBearer != nil {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: authorization_bearer MUST be absent when log_only is true")
+		}
+	} else {
+		if c.URL == nil || *c.URL == "" {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: url is REQUIRED unless log_only is true")
+		}
+		u, err := url.Parse(*c.URL)
+		if err != nil {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: url: not a parseable URL")
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: url: scheme must be http or https")
+		}
+		if u.Host == "" {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: url: host is required")
+		}
+		if u.User != nil {
+			return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: url: userinfo (user:pass@) is rejected")
+		}
+		out.url = *c.URL
+		if c.AuthorizationBearer != nil {
+			if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+				return nil, errors.New("CONTROLPLANE_ALERT_WEBHOOK: authorization_bearer over scheme http requires a loopback host (a bearer on a cleartext non-loopback hop is a config error)")
+			}
+			out.bearer = *c.AuthorizationBearer
+		}
+	}
+	if c.TimeoutSeconds != nil {
+		if *c.TimeoutSeconds < 1 || *c.TimeoutSeconds > 60 {
+			return nil, fmt.Errorf("CONTROLPLANE_ALERT_WEBHOOK: timeout_seconds %d: bounds [1, 60]", *c.TimeoutSeconds)
+		}
+		out.timeout = time.Duration(*c.TimeoutSeconds) * time.Second
+	}
+	if c.PollSeconds != nil {
+		if *c.PollSeconds < 1 || *c.PollSeconds > 300 {
+			return nil, fmt.Errorf("CONTROLPLANE_ALERT_WEBHOOK: poll_seconds %d: bounds [1, 300]", *c.PollSeconds)
+		}
+		out.poll = time.Duration(*c.PollSeconds) * time.Second
+	}
+	if c.MaxPerTick != nil {
+		if *c.MaxPerTick < 1 || *c.MaxPerTick > 500 {
+			return nil, fmt.Errorf("CONTROLPLANE_ALERT_WEBHOOK: max_per_tick %d: bounds [1, 500]", *c.MaxPerTick)
+		}
+		out.maxPerTick = *c.MaxPerTick
+	}
+	if c.HeartbeatHours != nil {
+		if *c.HeartbeatHours < 0 || *c.HeartbeatHours > 168 {
+			return nil, fmt.Errorf("CONTROLPLANE_ALERT_WEBHOOK: heartbeat_hours %d: bounds [0, 168] (0 disables)", *c.HeartbeatHours)
+		}
+		out.heartbeat = time.Duration(*c.HeartbeatHours) * time.Hour
+	}
+	return out, nil
+}
+
+// isLoopbackHost reports whether the AN-10 bearer-over-http exception
+// applies: 127.0.0.0/8, ::1, or the literal "localhost".
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // splitSymbols parses the CONTROLPLANE_SYMBOLS comma list of canonical

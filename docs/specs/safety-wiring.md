@@ -17,6 +17,9 @@ epoch, claims, flatten, protective obligations, Reconciler R1–R7),
 `docs/specs/multi-tenant-rbac.md` (permission matrix, tenant isolation,
 §Tenant kill-switch predicate), and `docs/specs/strategy-lifecycle.md`
 (`killed` state, unlock guards, no auto-restart).
+Push dispatch of the safety events persisted here is normative in
+`docs/specs/alert-notifier.md` (AN-*); operator procedures in
+`docs/RUNBOOK.md` §9.
 
 ## Goals and non-goals
 

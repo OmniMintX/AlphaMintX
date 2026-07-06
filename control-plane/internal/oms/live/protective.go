@@ -303,7 +303,13 @@ func (o *OMS) handleDeadline(ctx context.Context, entry store.LiveOrder, kind st
 	ev.StrategyID, ev.Symbol = &entry.StrategyID, &entry.Symbol
 	o.logf("live: ALERT SL placement deadline breached for %s %s: contingency flatten (%v)",
 		entry.StrategyID, entry.Symbol, cause)
-	if err := o.st.AppendOMSReconEvent(ev); err != nil {
+	// The companion safety_alerts row commits WITH the recon event
+	// (alert-notifier.md AN-1a): the fact reaches the notifier through
+	// the safety_alerts source; a crash window must not lose it.
+	if err := o.st.AppendOMSReconEventWithAlert(ev, store.SafetyAlert{
+		AlertID: newUUID(), Kind: "sl_deadline_contingency", StrategyID: ev.StrategyID,
+		RefID: &ev.EventID, DetailsJSON: ev.DetailsJSON, RecordedAt: ev.RecordedAt,
+	}); err != nil {
 		return err
 	}
 	if err := o.Flatten(ctx, entry.StrategyID, entry.Symbol, "sl_contingency", nil); err != nil {

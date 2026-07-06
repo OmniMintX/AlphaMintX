@@ -121,6 +121,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("lifecycle bootstrap migration %s: %w", path, err)
 	}
+	if err := migrateAlertDispatch(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("alert dispatch migration %s: %w", path, err)
+	}
 	return &Store{db: db, path: path}, nil
 }
 

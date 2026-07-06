@@ -26,6 +26,7 @@ import (
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/marketdata"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/notifier"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/live"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/omsbridge"
@@ -117,6 +118,14 @@ func serve(dbPath string) error {
 	if backupCfg != nil {
 		backup = &backupEngine{st: st, dir: backupCfg.dir, retain: backupCfg.retain}
 		cfg.Backup = backup
+	}
+
+	// The alert notifier (alert-notifier.md AN-10): unset means disabled
+	// entirely — no goroutine, no seeded watermark rows. Parse fails fast;
+	// seeding happens below, before any source-writer goroutine starts.
+	alertCfg, err := parseAlertWebhook(os.Getenv("CONTROLPLANE_ALERT_WEBHOOK"))
+	if err != nil {
+		return err
 	}
 
 	limits, err := parseRiskLimits(os.Getenv("CONTROLPLANE_RISK_LIMITS"))
@@ -289,6 +298,37 @@ func serve(dbPath string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Seed-at-enable runs SYNCHRONOUSLY here (alert-notifier.md AN-8):
+	// after store.Open, before the OMS/monitor goroutines and before
+	// ListenAndServe — no source write can land below the seed point.
+	var alerts *notifier.Engine
+	if alertCfg != nil {
+		alerts, err = notifier.New(notifier.Config{
+			Store: st, URL: alertCfg.url, Bearer: alertCfg.bearer,
+			Timeout: alertCfg.timeout, Poll: alertCfg.poll,
+			MaxPerTick: alertCfg.maxPerTick, Heartbeat: alertCfg.heartbeat,
+			LogOnly: alertCfg.logOnly,
+		})
+		if err != nil {
+			return err
+		}
+		backlog, err := alerts.Seed()
+		if err != nil {
+			return err
+		}
+		mode := "webhook"
+		if alertCfg.logOnly {
+			mode = "log-only"
+		}
+		// The AN-17a one-line non-secret startup summary (never the URL
+		// or bearer).
+		log.Printf("alert notifier enabled: mode=%s poll_seconds=%d max_per_tick=%d heartbeat_hours=%d backlog kill_breaker_events=%d kill_clear_events=%d safety_alerts=%d",
+			mode, int(alertCfg.poll/time.Second), alertCfg.maxPerTick,
+			int(alertCfg.heartbeat/time.Hour), backlog[store.AlertSourceKillBreaker],
+			backlog[store.AlertSourceKillClear], backlog[store.AlertSourceSafetyAlert])
+		go alerts.Run(ctx)
+	}
 
 	if liveOMS != nil {
 		// Run drives the mandatory startup reconcile, the user-data

@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
 // S1: crash after send, before ack — the journal has the intent, the venue
@@ -269,8 +270,19 @@ func TestReconcile_VenueResetDetect(t *testing.T) {
 	e.venue.Reset()
 	e.reconcile()
 
-	if evs := e.events("venue_reset"); len(evs) != 1 {
+	evs := e.events("venue_reset")
+	if len(evs) != 1 {
 		t.Fatalf("venue_reset events = %d, want 1", len(evs))
+	}
+	// AN-1a companion alert: same kind, ref_id = the recon event_id,
+	// committed with the event (alert-notifier.md).
+	alerts, err := e.st.ListSafetyAlerts(store.SafetyAlertFilter{Kind: "venue_reset"})
+	if err != nil {
+		t.Fatalf("ListSafetyAlerts: %v", err)
+	}
+	if len(alerts) != 1 || alerts[0].RefID == nil || *alerts[0].RefID != evs[0].EventID {
+		t.Fatalf("companion alerts = %+v, want one venue_reset alert with ref_id %s",
+			alerts, evs[0].EventID)
 	}
 	if ord := e.order(idN(1, 0)); ord.Status != "expired" {
 		t.Errorf("order status = %s, want expired (never a quiet reject)", ord.Status)

@@ -182,6 +182,14 @@ Scope:
   the OB-12 restore procedure incl. the mandatory post-restore safety
   diff, and the operator `docs/RUNBOOK.md` (OB-14). Live drill on the
   soak deployment: backup verified + restored copy booted and served.)
+  (2026-07-06: alert notifier landed per `docs/specs/alert-notifier.md`
+  — push dispatch of kill/breaker/clear/safety-alert events to one
+  operator webhook (or `SAFETY-EVENT` log lines), rowid-watermark
+  at-least-once delivery with `(source, id)` receiver dedupe, AN-1a
+  atomic companion alerts for venue_reset/sl_deadline_contingency,
+  poison-row skip, heartbeat, secret-hygienic failure classes, RUNBOOK
+  §9. Live drill on soak: heartbeat + kill + clear + companion alert
+  all delivered end-to-end.)
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.

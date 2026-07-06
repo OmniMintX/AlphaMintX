@@ -2,8 +2,8 @@
 
 Operator procedures, per `docs/specs/ops-backup.md` OB-14. This document is
 a companion, not a spec: every rule cited here (OB-*, LC-*, WD-*, OS-*,
-SW-*) is normative in its own spec under `docs/specs/`; on any conflict the
-spec wins. It contains NO secret values — only variable names and
+SW-*, AN-*) is normative in its own spec under `docs/specs/`; on any
+conflict the spec wins. It contains NO secret values — only variable names and
 placeholder syntax (`$CONTROLPLANE_ADMIN_TOKEN`, `<strategy-id>`, ...).
 
 Conventions used below:
@@ -48,6 +48,7 @@ Control-plane (`go run ./cmd/controlplane`, repo `control-plane/`):
 | `CONTROLPLANE_BACKUP_DIR` | for backups | no | Enables the backup surface (ops-backup.md OB-8); must exist, be writable, SHOULD be `0700` local disk. |
 | `CONTROLPLANE_BACKUP_RETAIN` | no | no | Keep newest N artifacts (OB-9); unset/0 = keep everything. |
 | `CONTROLPLANE_BACKUP_INTERVAL_HOURS` | no | no | Periodic backup loop (OB-10); unset/0 = manual only. |
+| `CONTROLPLANE_ALERT_WEBHOOK` | no | yes (the JSON may embed a secret URL and bearer) | Alert-notifier config JSON (alert-notifier.md AN-10); unset = notifier disabled — see §9. |
 
 Agent-plane scheduler (`python -m alphamintx_agent_plane.scheduler`, repo
 `agent-plane/`, one process per strategy):
@@ -210,6 +211,11 @@ the same rewind. In live mode, money truth is NEVER restored from a
 snapshot: the reconciler re-derives it from the venue (fills backfilled by
 trade id; ENTRY-shaped orphans canceled; protective-shaped orphans left
 open with an alert; positions re-derived, never auto-zeroed).
+
+Alert notifier after a restore: `alert_dispatch_state` rolled back with
+the DB, so events dispatched after the snapshot are REDELIVERED, with
+reused `seq` values (alert-notifier.md AN-13). Receivers dedupe on
+`(source, id)`; no action needed.
 
 ## 4. Kill / clear (safety-wiring.md §Kill endpoints; lifecycle-api.md LC-25..LC-38)
 
@@ -379,3 +385,124 @@ is considered; prod enablement is a deliberate three-setting act.
 5. Verify after start: `GET /health` 200, the startup reconcile completes
    (`GET $CP/api/v1/oms/recon/status`), and `GET .../safety` renders for
    every live strategy.
+
+## 9. Alert notifier (alert-notifier.md AN-1..AN-19)
+
+The notifier PUSHES safety events — kills, breaker trips, clears, and
+`safety_alerts` rows — to ONE operator-configured webhook (or, in
+log-only mode, to marker lines for log forwarding — §9.3). Each event is
+one POST of a versioned envelope:
+`{"schema": "alphamintx.safety-event.v1", "source", "id", "seq", "delivered_at", "event"}`
+(AN-13). Delivery is at-least-once, per-source in-order: your receiver
+MUST dedupe on `(source, id)`. NEVER use `seq` as a receiver cursor — it
+is the source table's rowid and REPEATS across restores (§3 note).
+
+### 9.1 Enabling
+
+1. Webhook mode — set `CONTROLPLANE_ALERT_WEBHOOK` at startup (§1.1).
+   The JSON is a SECRET (the URL may embed a capability token; the
+   bearer always is one): export it from your secret store, e.g.
+   `CONTROLPLANE_ALERT_WEBHOOK='{"url": "https://<receiver-host>/<path>", "authorization_bearer": "<from-secret-store>", "timeout_seconds": 5, "poll_seconds": 5, "max_per_tick": 20, "heartbeat_hours": 24}'`.
+   Only `url` is required; the numeric fields default as shown and
+   `authorization_bearer` may be omitted (AN-10).
+2. Log-only mode — no receiver; events become stderr marker lines:
+   `CONTROLPLANE_ALERT_WEBHOOK='{"log_only": true}'`.
+   `url` and `authorization_bearer` MUST be absent in this mode.
+3. A bearer over `http` is refused unless the host is loopback
+   (`127.0.0.0/8`, `::1`, `localhost`) — use `https` for anything
+   off-host (AN-10). Any config error refuses boot and the message
+   names ONLY the offending field, never the URL/bearer/raw JSON
+   (AN-11).
+4. Unset/empty = disabled entirely: no goroutine, no seeded watermarks.
+   First enablement notifies "from now on" — enabling on a long-lived
+   deployment never floods the receiver with history (AN-8).
+
+### 9.2 Verify the pipeline
+
+1. FIRST check — the heartbeat (AN-14a): a synthetic envelope with
+   `source: "notifier"`, `seq: 0`, `event.kind: "notifier_heartbeat"`
+   is delivered ON START (then every `heartbeat_hours`). Receiving it
+   at the receiver proves url, auth, and network without touching any
+   safety machinery.
+2. Check the startup summary (AN-17a): exactly one non-secret log line
+   with mode, `poll_seconds`, `max_per_tick`, `heartbeat_hours`, and
+   the per-source backlog counts. No line = notifier not enabled.
+3. Full test-fire. There is NO synthetic test endpoint — a real kill
+   row is the test; use a throwaway strategy so nothing real is killed:
+   1. Create a throwaway tenant (§7 step 1; keep the returned
+      `$TENANT_OWNER_TOKEN`) with a throwaway strategy in it (the
+      strategy must exist in the tenant — the same provisioning §7
+      step 3 presumes).
+   2. Issue a strategy-tier kill (§4.1: trader/admin/owner own tenant,
+      or env-admin — the throwaway owner token qualifies):
+      `curl -sS -X POST "$CP/api/v1/strategies/<strategy-id>/kill" -H "authorization: Bearer $TENANT_OWNER_TOKEN" -H "content-type: application/json" -d '{"flatten": false}'`
+      and note `event_id` in the 200.
+   3. Expect at the receiver, within ~`poll_seconds`: one envelope with
+      `source: "kill_breaker_events"` and `id` = that `event_id`.
+   4. Clear it (§4.2 conventions: READ the `kill_epoch` from
+      `GET $CP/api/v1/strategies/<strategy-id>/safety` first — that is
+      your CAS `observed_epoch`):
+      `curl -sS -X POST "$CP/api/v1/strategies/<strategy-id>/kill/clear" -H "authorization: Bearer $TENANT_OWNER_TOKEN" -H "content-type: application/json" -d '{"reason": "notifier test-fire", "observed_epoch": <kill_epoch>}'`
+      and note `clear_id` in the 200.
+   5. Expect one envelope with `source: "kill_clear_events"` and `id` =
+      that `clear_id`. Both envelopes received = pipeline verified
+      end-to-end.
+
+### 9.3 Log forwarding (log-only mode)
+
+Each event is exactly one stderr line: the marker `SAFETY-EVENT `
+followed by the AN-13 envelope as a single JSON line. Journald/syslog
+prepend their own metadata, so match the marker as a SUBSTRING — never
+`^`-anchored (AN-14):
+
+- Tail: `journalctl -u <controlplane-unit> -f | grep -F 'SAFETY-EVENT '`
+- Extract envelopes:
+  `journalctl -u <controlplane-unit> -o cat | grep -F 'SAFETY-EVENT ' | sed 's/.*SAFETY-EVENT //' | jq .`
+- NEVER `grep '^SAFETY-EVENT'` — the journald prefix defeats it.
+
+The envelope payload lands in your log aggregation — the §9.6 data
+classification applies to it exactly as to the webhook body.
+
+### 9.4 Failure response
+
+- `ALERT DISPATCH DEGRADED` (a source failed 12+ consecutive ticks,
+  ~1 min at defaults — AN-17): the RECEIVER is down, unreachable, or
+  misconfigured; the log line carries only a derived failure class
+  (`dns`/`connect`/`tls`/`timeout`/`redirect`/`status:<code>`/`other`).
+  Fix the receiver (or correct url/bearer and restart, §9.5). The
+  watermark held at the last success, so the backlog drains in order
+  once deliveries succeed — NO events are lost. Heartbeat silence at
+  the receiver is the same signal from the other end (AN-14a).
+- `ALERT DISPATCH SKIPPED source=<s> id=<id> seq=<n> status=<4xx>`
+  (AN-4a): exactly ONE row was poison — the receiver deterministically
+  rejected it with a 4xx on 12 consecutive attempts, and the dispatcher
+  advanced past it so later kills are not silenced. Inspect that row by
+  `id` via the ops read APIs: alerts through the feeds (§5 step 2),
+  kills/clears through `GET .../safety` (§4.2 step 1). Everything after
+  it flows normally; no operator reset is needed.
+
+### 9.5 Re-enable after a gap; manual reseed
+
+On dispatcher start with existing watermarks, the log reports each
+source's backlog size (`MAX(rowid) − last_rowid`, AN-8a) and then
+DISPATCHES the backlog — a kill recorded while the notifier was off may
+still be active, so silent skipping is forbidden. If "notify me from
+now on" is the actual intent, reseed manually — with the control-plane
+STOPPED (§1.3) — running once per source:
+
+`UPDATE alert_dispatch_state SET last_rowid = (SELECT COALESCE(MAX(rowid),0) FROM <table>), updated_at = '<now RFC 3339 UTC Z>' WHERE source = '<source>';`
+
+for each of `kill_breaker_events`, `kill_clear_events`,
+`safety_alerts` (`<table>` = `<source>` — the AN-1 wire names are the
+table names). Then start the control-plane (§1.2 step 1).
+
+### 9.6 Bearer rotation and data classification
+
+- Rotation is env-only and requires a restart: update
+  `CONTROLPLANE_ALERT_WEBHOOK` in your secret store, then restart the
+  control-plane (§1.3, §1.2). No endpoint reads or writes this config.
+- The receiver sees PnL figures, strategy and actor ids, and UNFILTERED
+  error text from `details_json`. Treat the receiver at the ops-panel
+  trust tier; `https` is strongly recommended for anything off-host.
+  In log-only mode the same payload reaches your log aggregation
+  (AN-14) — the same caveat applies there.

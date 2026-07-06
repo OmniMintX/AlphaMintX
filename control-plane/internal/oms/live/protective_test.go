@@ -8,6 +8,7 @@ import (
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/exchange"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
 // withStops sets the protective obligations on the harness proposal.
@@ -115,8 +116,20 @@ func TestProtective_DeadlineContingencyFlatten(t *testing.T) {
 	e.venue.FailNext("PlaceOrder", definiteReject())
 	e.reconcile()
 
-	if evs := e.events("sl_deadline_contingency"); len(evs) != 1 {
+	evs := e.events("sl_deadline_contingency")
+	if len(evs) != 1 {
 		t.Fatalf("sl_deadline_contingency events = %d, want 1", len(evs))
+	}
+	// AN-1a companion alert: same kind, ref_id = the recon event_id,
+	// committed with the event (alert-notifier.md).
+	alerts, err := e.st.ListSafetyAlerts(store.SafetyAlertFilter{Kind: "sl_deadline_contingency"})
+	if err != nil {
+		t.Fatalf("ListSafetyAlerts: %v", err)
+	}
+	if len(alerts) != 1 || alerts[0].RefID == nil || *alerts[0].RefID != evs[0].EventID ||
+		alerts[0].StrategyID == nil || *alerts[0].StrategyID != uid(1) {
+		t.Fatalf("companion alerts = %+v, want one sl_deadline_contingency alert with ref_id %s",
+			alerts, evs[0].EventID)
 	}
 	fl := e.order(idN(4, 0))
 	if fl.Origin != "sl_contingency" || fl.Class != "PROTECTIVE" || fl.Type != "market" ||
