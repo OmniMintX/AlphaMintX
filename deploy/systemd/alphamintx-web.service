@@ -1,0 +1,35 @@
+# AlphaMintX web dashboard — Next.js standalone build (deploy-and-survive.md
+# DS-11c). Env file: /etc/alphamintx/web.env, 0600 root:root (DS-11),
+# RUNTIME vars only: PORT, OPERATOR_TOKEN.
+#
+# CONTROLPLANE_API_BASE_URL and NEXT_PUBLIC_READ_TOKEN are BUILD-time
+# inputs baked in at `next build` — changing either (including READ-token
+# rotation) is rebuild + restart, per docs/RUNBOOK.md §10.
+
+[Unit]
+Description=AlphaMintX web dashboard
+Wants=network-online.target alphamintx-controlplane.service
+After=network-online.target alphamintx-controlplane.service
+# Terminal `failed` state instead of an infinite silent crash loop (DS-11a).
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+User=alphamintx
+EnvironmentFile=/etc/alphamintx/web.env
+ExecStart=/usr/bin/node /opt/alphamintx/web/server.js
+WorkingDirectory=/opt/alphamintx/web
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (DS-11a). The web tier holds no state, so no ReadWritePaths.
+NoNewPrivileges=yes
+ProtectSystem=strict
+PrivateTmp=yes
+# Site-tunable memory ceiling; uncomment and size per host.
+# MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

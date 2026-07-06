@@ -32,6 +32,13 @@ type approvalResponse struct {
 // the recorded outcome on any second decision; approved:true runs the
 // preflight and appends approved or approved_but_blocked.
 func (s *Server) handlePostApproval(w http.ResponseWriter, r *http.Request) {
+	// DS-3: the restore gate blocks approvals FIRST — before body read or
+	// any lookup — so no approval row is persisted while engaged.
+	if s.cfg.Store.RestoreGateEngaged() {
+		writeError(w, http.StatusServiceUnavailable, codeRestoreGate,
+			"restore gate engaged: acknowledge the restore via POST /api/v1/ops/restore/ack (RUNBOOK §3)")
+		return
+	}
 	// Tenant principals resolve the path strategy FIRST (multi-tenant-
 	// rbac.md §Approvals ordering): a foreign or absent strategy is 404
 	// UNKNOWN_STRATEGY before the verdict chain is even consulted. Env

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
+from alphamintx_agent_plane import __version__
 from alphamintx_agent_plane.client.controlplane import TOKEN_ENV_VAR
 from alphamintx_agent_plane.client.http import ENV_BASE_URL
-from alphamintx_agent_plane.scheduler.__main__ import acquire_instance_lock, build_scheduler
+from alphamintx_agent_plane.scheduler.__main__ import acquire_instance_lock, build_scheduler, main
 from alphamintx_agent_plane.scheduler.checkpoint import ENV_CHECKPOINT_DB
 from alphamintx_agent_plane.scheduler.loop import (
     ENV_HEARTBEAT_INTERVAL_SECONDS,
@@ -115,3 +117,16 @@ def test_instance_lock_is_released_on_close(tmp_path: Path) -> None:
     acquire_instance_lock(state_path).close()
     lock = acquire_instance_lock(state_path)  # re-acquirable after release
     lock.close()
+
+
+def test_version_flag_prints_version_and_exits_zero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # DS-12: --version works with NO env configured — it must run before
+    # any env validation or lock acquisition.
+    monkeypatch.delenv(ENV_STATE_PATH, raising=False)
+    monkeypatch.setattr(sys, "argv", ["alphamintx_agent_plane.scheduler", "--version"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 0
+    assert capsys.readouterr().out.strip() == __version__

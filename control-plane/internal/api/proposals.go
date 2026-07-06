@@ -37,6 +37,15 @@ type proposalResponse struct {
 // 409 RUN_TICK_CONFLICT. Malformed or out-of-scope submissions are recorded
 // append-only in rejected_submissions and NEVER earn a verdict (gate step 0a).
 func (s *Server) handlePostProposal(w http.ResponseWriter, r *http.Request) {
+	// DS-3: the restore-gate check is the FIRST statement — before body
+	// read, decode, strategy resolution, or any lookup — so no verdict, no
+	// rejected_submissions row is persisted, the proposal rate limiter is
+	// not charged, and the 503 is uniform across known/unknown strategies.
+	if s.cfg.Store.RestoreGateEngaged() {
+		writeError(w, http.StatusServiceUnavailable, codeRestoreGate,
+			"restore gate engaged: acknowledge the restore via POST /api/v1/ops/restore/ack (RUNBOOK §3)")
+		return
+	}
 	strategyID := r.PathValue("id")
 	now := s.cfg.Now()
 

@@ -20,7 +20,9 @@ Conventions used below:
 
 ### 1.1 Environment inventories
 
-Control-plane (`go run ./cmd/controlplane`, repo `control-plane/`):
+Control-plane (unit `alphamintx-controlplane.service`, env file
+`/etc/alphamintx/controlplane.env` — §10; dev mode
+`go run ./cmd/controlplane` from `control-plane/`):
 
 | Variable | Required | Secret | Meaning |
 |---|---|---|---|
@@ -50,8 +52,10 @@ Control-plane (`go run ./cmd/controlplane`, repo `control-plane/`):
 | `CONTROLPLANE_BACKUP_INTERVAL_HOURS` | no | no | Periodic backup loop (OB-10); unset/0 = manual only. |
 | `CONTROLPLANE_ALERT_WEBHOOK` | no | yes (the JSON may embed a secret URL and bearer) | Alert-notifier config JSON (alert-notifier.md AN-10); unset = notifier disabled — see §9. |
 
-Agent-plane scheduler (`python -m alphamintx_agent_plane.scheduler`, repo
-`agent-plane/`, one process per strategy):
+Agent-plane scheduler (unit `alphamintx-scheduler@<strategy-id>.service`,
+env file `/etc/alphamintx/scheduler-<strategy-id>.env`, one instance per
+strategy — §10; dev mode `python -m alphamintx_agent_plane.scheduler` from
+`agent-plane/`):
 
 | Variable | Required | Secret | Meaning |
 |---|---|---|---|
@@ -70,7 +74,9 @@ Agent-plane scheduler (`python -m alphamintx_agent_plane.scheduler`, repo
 | `MINTROUTER_API_KEY` | LLM live mode | yes | LLM router credential; read from env only, never logged. |
 | `MINTROUTER_TIMEOUT_SECONDS` | no | no | LLM HTTP timeout override. |
 
-Web dashboard (`pnpm build && pnpm start`, repo `web/`):
+Web dashboard (unit `alphamintx-web.service`, env file
+`/etc/alphamintx/web.env`, runtime vars only — §10; dev mode
+`pnpm build && pnpm start` from `web/`):
 
 | Variable | Required | Secret | Meaning |
 |---|---|---|---|
@@ -79,27 +85,61 @@ Web dashboard (`pnpm build && pnpm start`, repo `web/`):
 | `NEXT_PUBLIC_READ_TOKEN` | yes | yes | READ token, INLINED into the public JS bundle at build time (GETs only by design — persistence-and-api.md §Auth); use a per-tenant viewer DB token for tenant-facing deployments. |
 | `OPERATOR_TOKEN` | for ops controls | yes | Server-only; attached by the approvals/lifecycle/kill/clear proxy routes; never `NEXT_PUBLIC_`. |
 
+Host requirements (deploy-and-survive.md DS-13):
+
+- **NTP in slew mode** (chrony's default, or ntpd `-x`). A wall-clock step
+  BACKWARD is fatal to the breaker latch and the watchdog timers; never
+  run step-mode sync on a live host.
+- **30-day disk projection.** Provision for the sum of: soak-measured
+  `control.db` growth/day × 30; artifact size ×
+  `CONTROLPLANE_BACKUP_RETAIN`; checkpoint-DB growth/day × 30 × strategy
+  count; the journald cap (`SystemMaxUse` in `journald.conf` — set it
+  explicitly; the control-plane unit disables journald rate limiting,
+  §9.3).
+- **Reverse-proxy TLS for any non-loopback exposure** — bearer tokens
+  NEVER travel cleartext off-host (same rule as AN-10). nginx sketch:
+  `server { listen 443 ssl; ssl_certificate ...; ssl_certificate_key ...;`
+  `location / { proxy_pass http://127.0.0.1:3000; } }` (web; same pattern
+  for `$CP` if it must be reachable off-host — otherwise keep it
+  loopback-bound).
+- **Ops-panel token class.** The panel's mutating buttons proxy
+  approvals/lifecycle/kill/clear with `OPERATOR_TOKEN`. An ENV
+  operator-class token authorizes ONLY `POST .../approvals` — the
+  kill/clear/lifecycle buttons 403 with it. For full panel function set
+  `OPERATOR_TOKEN` to a DB token with role trader or above (§7).
+
 ### 1.2 Start order
 
-1. Start the control-plane: `CONTROLPLANE_DB=... go run ./cmd/controlplane`
-   (from `control-plane/`). Confirm `curl -sS $CP/health` returns
+1. Start the control-plane: `systemctl start alphamintx-controlplane`.
+   Confirm `systemctl status alphamintx-controlplane` is
+   `active (running)` and `curl -sS $CP/health` returns
    `{"status":"ok"}`. In live mode the mandatory startup reconcile runs
    before any submission is accepted (`RECONCILE_PENDING` until then).
-2. Start one scheduler per strategy: `python -m alphamintx_agent_plane.scheduler`
-   (from `agent-plane/`, env per §1.1). It fails fast on any missing
-   variable and refuses to start if another instance holds
+2. Start one scheduler per strategy:
+   `systemctl start alphamintx-scheduler@<strategy-id>`. It fails fast on
+   any missing variable and refuses to start if another instance holds
    `$ALPHAMINTX_SCHEDULER_STATE.lock`.
-3. Start the web server: `pnpm build && pnpm start` (from `web/`;
-   `CONTROLPLANE_API_BASE_URL` must be set at BUILD time).
+3. Start the web server: `systemctl start alphamintx-web`.
+
+Dev mode (local development ONLY — production runs built artifacts under
+systemd, deploy-and-survive.md DS-11): control-plane
+`CONTROLPLANE_DB=... go run ./cmd/controlplane` from `control-plane/`;
+scheduler `python -m alphamintx_agent_plane.scheduler` from `agent-plane/`
+(env per §1.1); web `pnpm build && pnpm start` from `web/`
+(`CONTROLPLANE_API_BASE_URL` set at BUILD time).
 
 ### 1.3 Graceful stop
 
-1. Stop schedulers FIRST: send SIGTERM (or SIGINT); the run task cancels
-   cleanly and the in-flight tick is abandoned (its checkpoint survives).
-   Stopping the scheduler before the control-plane avoids orphaned ticks.
-2. Stop the web server (any time; it holds no state).
-3. Stop the control-plane: SIGTERM/SIGINT; it drains in-flight requests
-   with a 5-second shutdown timeout.
+1. Stop schedulers FIRST: `systemctl stop 'alphamintx-scheduler@*'`
+   (SIGTERM; the run task cancels cleanly and the in-flight tick is
+   abandoned — its checkpoint survives. SIGKILL after `TimeoutStopSec` is
+   checkpoint-safe, DS-11b). Stopping the scheduler before the
+   control-plane avoids orphaned ticks.
+2. Stop the web server: `systemctl stop alphamintx-web` (any time; it
+   holds no state).
+3. Stop the control-plane: `systemctl stop alphamintx-controlplane`
+   (SIGTERM); it drains in-flight requests with a 5-second shutdown
+   timeout.
 
 ## 2. Backup (ops-backup.md OB-2..OB-10)
 
@@ -136,8 +176,12 @@ live modes (OB-6).
 ### 2.3 Periodic loop and retention
 
 - With `CONTROLPLANE_BACKUP_INTERVAL_HOURS=N` the server backs up every N
-  hours, first run one interval AFTER boot (OB-10). Failures log with a
-  `BACKUP FAILED` prefix and the loop continues — watch for that string.
+  hours, first run one interval AFTER boot (OB-10). A failed periodic run
+  is PUSHED through the alert notifier as a `safety_alerts` row
+  `kind=backup_failed`, `details_json.category` one of `verify_failed`,
+  `artifact_exists`, `io` (deploy-and-survive.md DS-9; raw error text
+  never leaves the host). The `BACKUP FAILED` log line remains and
+  carries the full error; the loop continues at cadence.
 - With `CONTROLPLANE_BACKUP_RETAIN=N` the oldest artifacts beyond the
   newest N are deleted after each SUCCESSFUL backup (OB-9). `.tmp`,
   `.failed`, and foreign files are never deleted.
@@ -153,14 +197,16 @@ live modes (OB-6).
    (§3 step 4 — works on read-only media) and compare its report against
    the recorded `sha256`/counts.
 
-## 3. Restore (ops-backup.md OB-12, verbatim)
+## 3. Restore (ops-backup.md OB-12; restore gate per deploy-and-survive.md DS-14)
 
 Restore is OFFLINE. A restore is NOT complete until step 7's safety diff
 has been executed — a post-snapshot kill lost by the restore is FAIL-OPEN
 until re-issued (ops-backup.md invariant 8).
 
-1. Stop the control-plane process AND every agent-plane scheduler (§1.3
-   order: schedulers first).
+1. Stop everything in §1.3 order (schedulers first):
+   `systemctl stop 'alphamintx-scheduler@*'`, then
+   `systemctl stop alphamintx-web`, then
+   `systemctl stop alphamintx-controlplane`.
 2. Move aside the live files — KEEP them (forensic record and step-7
    input):
    `mv control.db control.db.incident && mv control.db-wal control.db-wal.incident && mv control.db-shm control.db-shm.incident`
@@ -169,12 +215,13 @@ until re-issued (ops-backup.md invariant 8).
    `cp "$CONTROLPLANE_BACKUP_DIR/control-<stamp>.db" "$CONTROLPLANE_DB"`.
    Do NOT copy any `-wal`/`-shm` alongside — the artifact is fully
    checkpointed and standalone (OB-2).
-4. Verify: from `control-plane/`, `go run ./cmd/backupverify -db "$CONTROLPLANE_DB"`
-   and REQUIRE exit code 0. Do NOT substitute a system `sqlite3` binary
+4. Verify: `/opt/alphamintx/bin/backupverify -db "$CONTROLPLANE_DB"` and
+   REQUIRE exit code 0. Do NOT substitute a system `sqlite3` binary
    (OB-11 — the tool shares the server's exact driver version). Never
    point it at a live, attached DB.
-5. Start the control-plane (§1.2 step 1). `store.Open` re-applies the
-   idempotent schema and migrations; it must be the first writer.
+5. Start the control-plane: `systemctl start alphamintx-controlplane`
+   (§1.2 step 1). `store.Open` re-applies the idempotent schema and
+   migrations; it must be the first writer.
 6. Confirm: `curl -sS $CP/health` is 200;
    `GET $CP/api/v1/strategies/<id>/safety` renders for each strategy; in
    live mode the mandatory startup reconcile completes.
@@ -182,24 +229,49 @@ until re-issued (ops-backup.md invariant 8).
    erased every kill, clear, breaker row, and lifecycle transition issued
    after the snapshot; `GET .../safety` on the restored DB shows a CLEAN
    strategy and cannot reveal this.
-   1. Run `backupverify -db control.db.incident` (the moved-aside copy is
-      no longer attached) and note the row counts and newest timestamps of
-      `kill_breaker_events`, `kill_clear_events`, `lifecycle_transitions`,
-      `safety_alerts`; alternatively inspect the moved-aside copy with
-      read-only SQL.
-   2. Compare against the restored DB (`backupverify -db "$CONTROLPLANE_DB"`).
+   1. Run `/opt/alphamintx/bin/backupverify -db control.db.incident` (the
+      moved-aside copy is no longer attached) and note the row counts and
+      newest timestamps of `kill_breaker_events`, `kill_clear_events`,
+      `lifecycle_transitions`, `safety_alerts`; alternatively inspect the
+      moved-aside copy with read-only SQL.
+   2. Compare against the restored DB
+      (`/opt/alphamintx/bin/backupverify -db "$CONTROLPLANE_DB"`).
    3. RE-ISSUE every post-snapshot kill, clear, and lifecycle action
       through the normal endpoints (§4, `POST .../lifecycle`). A kill
       CLEARED after the snapshot coming back ACTIVE is fail-safe: just
       re-clear it (§4.2).
-8. Rewind each strategy's tick state, THEN restart its scheduler
+8. **Acknowledge the restore gate (env-admin) — AFTER the step-7 safety
+   diff, BEFORE any scheduler restart.** Booting a stamped artifact
+   ENGAGED the gate by construction (deploy-and-survive.md DS-2): a
+   `restore_gate_engaged` alert was pushed at boot, and proposals and
+   approvals return `503 RESTORE_GATE` until you ack:
+   `curl -sS -X POST "$CP/api/v1/ops/restore/ack" -H "authorization: Bearer $CONTROLPLANE_ADMIN_TOKEN"`
+   (empty body) → `200 {"cleared": true}`. Status any time:
+   `GET $CP/api/v1/ops/restore` (read or env-admin). Ack BEFORE any
+   scheduler restart — a scheduler started under the gate burns real LLM
+   spend on ticks whose proposals are 503'd with nothing persisted and
+   leaves permanent run gaps (DS-14).
+   - An ack with no gate engaged (double ack, wrong deployment) is
+     `409 RESTORE_GATE_NOT_ENGAGED`; nothing is written.
+   - Acked by mistake (step 7 incomplete)? The gate cannot be re-armed
+     (DS-5): kill at the affected tier (§4.1) and redo the restore.
+   - DS-8 edge: a pre-restore `pending_approvals` row that survives to
+     post-ack inside its window can then be approved against restored
+     state — the approval preflight (kill epoch, mark freshness,
+     lifecycle) mitigates; review pending approvals before approving.
+   - NEVER restore ad-hoc `cp control.db` copies (deploy-and-survive.md
+     D6): only engine artifacts engage the gate, and pre-slice artifacts
+     restore UNGATED — take a fresh backup right after deploying the
+     deploy-and-survive slice.
+9. Rewind each strategy's tick state, THEN restart its scheduler
    (OB-12a):
    1. Read the restored DB's `MAX(tick_number)` for the strategy (newest
       run via `GET $CP/api/v1/strategies/<id>/runs?page=1&limit=1`).
    2. Edit the `ALPHAMINTX_SCHEDULER_STATE` file — shape
       `{"strategies": {"<strategy-id>": {"next_tick_number": <N>}}}` — to
       `MAX(tick_number) + 1`.
-   3. Restart the scheduler (§1.2 step 2).
+   3. Restart the scheduler:
+      `systemctl start alphamintx-scheduler@<strategy-id>` (§1.2 step 2).
 
 Pre-declared recovery noise (OB-12a): replayed ticks recreate their rows
 idempotently from still-present LangGraph checkpoints (original ids,
@@ -455,9 +527,9 @@ followed by the AN-13 envelope as a single JSON line. Journald/syslog
 prepend their own metadata, so match the marker as a SUBSTRING — never
 `^`-anchored (AN-14):
 
-- Tail: `journalctl -u <controlplane-unit> -f | grep -F 'SAFETY-EVENT '`
+- Tail: `journalctl -u alphamintx-controlplane -f | grep -F 'SAFETY-EVENT '`
 - Extract envelopes:
-  `journalctl -u <controlplane-unit> -o cat | grep -F 'SAFETY-EVENT ' | sed 's/.*SAFETY-EVENT //' | jq .`
+  `journalctl -u alphamintx-controlplane -o cat | grep -F 'SAFETY-EVENT ' | sed 's/.*SAFETY-EVENT //' | jq .`
 - NEVER `grep '^SAFETY-EVENT'` — the journald prefix defeats it.
 
 The envelope payload lands in your log aggregation — the §9.6 data
@@ -488,21 +560,137 @@ source's backlog size (`MAX(rowid) − last_rowid`, AN-8a) and then
 DISPATCHES the backlog — a kill recorded while the notifier was off may
 still be active, so silent skipping is forbidden. If "notify me from
 now on" is the actual intent, reseed manually — with the control-plane
-STOPPED (§1.3) — running once per source:
+STOPPED (`systemctl stop alphamintx-controlplane`, §1.3) — running once
+per source:
 
 `UPDATE alert_dispatch_state SET last_rowid = (SELECT COALESCE(MAX(rowid),0) FROM <table>), updated_at = '<now RFC 3339 UTC Z>' WHERE source = '<source>';`
 
 for each of `kill_breaker_events`, `kill_clear_events`,
 `safety_alerts` (`<table>` = `<source>` — the AN-1 wire names are the
-table names). Then start the control-plane (§1.2 step 1).
+table names). Then `systemctl start alphamintx-controlplane` (§1.2
+step 1).
 
 ### 9.6 Bearer rotation and data classification
 
 - Rotation is env-only and requires a restart: update
-  `CONTROLPLANE_ALERT_WEBHOOK` in your secret store, then restart the
-  control-plane (§1.3, §1.2). No endpoint reads or writes this config.
+  `CONTROLPLANE_ALERT_WEBHOOK` in `/etc/alphamintx/controlplane.env`
+  (value from your secret store), then
+  `systemctl restart alphamintx-controlplane` (§1.3, §1.2). No endpoint
+  reads or writes this config.
 - The receiver sees PnL figures, strategy and actor ids, and UNFILTERED
   error text from `details_json`. Treat the receiver at the ops-panel
   trust tier; `https` is strongly recommended for anything off-host.
   In log-only mode the same payload reaches your log aggregation
   (AN-14) — the same caveat applies there.
+
+## 10. Deployment under systemd (deploy-and-survive.md DS-11..DS-13)
+
+Production runs BUILT artifacts under systemd — never `go run`, a bare
+venv python, or `pnpm dev` (DS-11). Units: `alphamintx-controlplane.service`,
+`alphamintx-scheduler@<strategy-id>.service` (template; instance name =
+strategy ID), `alphamintx-web.service`. All three restart on failure
+(`Restart=on-failure`, `RestartSec=5`) and give up after 10 failures in
+300 s (`StartLimitBurst`) into a terminal `failed` state — §10.4.
+
+### 10.1 Install
+
+1. From a repo checkout root on the VM: `sudo sh deploy/install.sh`
+   (idempotent). It creates the `alphamintx` system user (no login);
+   `/var/lib/alphamintx` and `/var/backups/alphamintx`
+   (`alphamintx:alphamintx 0700`); builds and installs
+   `/opt/alphamintx/bin/controlplane`, `/opt/alphamintx/bin/backupverify`,
+   the agent-plane venv at `/opt/alphamintx/agent-plane/.venv`, and the
+   web standalone at `/opt/alphamintx/web`; installs the three units to
+   `/etc/systemd/system/` and daemon-reloads.
+2. Web BUILD-time inputs: export `CONTROLPLANE_API_BASE_URL` and
+   `NEXT_PUBLIC_READ_TOKEN` before running the script (`sudo -E` so they
+   survive sudo) — they are baked in at `next build` (DS-11c, §10.7).
+3. `CONTROLPLANE_DB`, state files, and checkpoints live under
+   `/var/lib/alphamintx`; artifacts under `/var/backups/alphamintx` —
+   the only paths the hardened units may write
+   (`ProtectSystem=strict` + `ReadWritePaths`).
+
+### 10.2 Env files
+
+`/etc/alphamintx/*.env`, `0600 root:root` (systemd reads them as root
+before dropping to `User=alphamintx`); units MUST NOT inline tokens.
+Plain `KEY=value` lines, no `export`. Variable inventory: §1.1.
+
+- `controlplane.env` — every `CONTROLPLANE_*` variable from the §1.1
+  control-plane table.
+- `scheduler-<strategy-id>.env` — one per strategy; the `ALPHAMINTX_*` /
+  `MINTROUTER_*` variables from the §1.1 scheduler table. MUST set
+  `ALPHAMINTX_STRATEGY_ID=<strategy-id>` equal to the unit instance name,
+  and PER-INSTANCE `ALPHAMINTX_SCHEDULER_STATE` /
+  `ALPHAMINTX_CHECKPOINT_DB` paths — one state file per instance, NEVER
+  shared: a shared file dies at the flock and crash-loops (DS-11b).
+- `web.env` — RUNTIME vars only: `PORT`, `OPERATOR_TOKEN`.
+  `CONTROLPLANE_API_BASE_URL` and `NEXT_PUBLIC_READ_TOKEN` are build-time
+  (§10.7); putting them here does nothing.
+
+### 10.3 Enable, start, verify
+
+1. `systemctl enable --now alphamintx-controlplane`. Verify:
+   `/opt/alphamintx/bin/controlplane --version` (module version +
+   `vcs.revision`/`vcs.time`, DS-12; the same string is logged at
+   startup); `curl -sS $CP/health` returns `{"status":"ok"}`;
+   `systemctl status alphamintx-controlplane` is `active (running)`.
+2. `systemctl enable --now alphamintx-scheduler@<strategy-id>` per
+   strategy. Verify:
+   `/opt/alphamintx/agent-plane/.venv/bin/python -m alphamintx_agent_plane.scheduler --version`
+   (DS-12); `systemctl status alphamintx-scheduler@<strategy-id>`.
+3. `systemctl enable --now alphamintx-web`; `systemctl status
+   alphamintx-web`; the web logs its build id at startup (DS-12).
+
+`enable` = start at boot; retiring a strategy is
+`systemctl disable --now alphamintx-scheduler@<strategy-id>`.
+
+### 10.4 Crash-loop triage
+
+- `systemctl --failed` — a unit in `failed` state exhausted
+  `StartLimitBurst` (10 failures / 300 s): a PERSISTENT defect (bad env
+  var, missing file, held flock), not a transient. Read
+  `journalctl -u <unit> -n 100`, fix the defect,
+  `systemctl reset-failed <unit>`, then start.
+- Control-plane DEATH has no self-notification — the notifier dies with
+  the process. The EXTERNAL detector is receiver-side heartbeat silence
+  (AN-14a, §9.2 step 1): no `notifier_heartbeat` within
+  `heartbeat_hours` = check the control-plane host.
+- Alive-but-failing scheduler (deploy-and-survive.md D7): supervision
+  covers process DEATH only. A scheduler heartbeating while every tick
+  errors shows as runs advancing with null `proposal_id` plus defect
+  log lines in its journal. A restart will not fix a config defect —
+  read the journal.
+- Scheduler SIGKILL after `TimeoutStopSec` in the journal (long
+  in-flight live-LLM tick) is checkpoint-safe by design (DS-11b) — not
+  a fault.
+
+### 10.5 Kill-9 restart drill (pre-beta soak)
+
+1. `systemctl show -p MainPID alphamintx-controlplane`, then
+   `kill -9 <pid>`.
+2. Within ~`RestartSec` (5 s) the unit is `active (running)` again with
+   a new PID; confirm `systemctl status`, `curl -sS $CP/health`, and in
+   live mode the mandatory startup reconcile.
+3. Repeat for one scheduler instance: it must resume from its checkpoint
+   and tick state with no rewind (a rewind is only for restores, §3).
+
+### 10.6 Upgrade and rollback
+
+1. Stop in §1.3 order: `systemctl stop 'alphamintx-scheduler@*'`, then
+   `alphamintx-web`, then `alphamintx-controlplane`.
+2. From the updated checkout: `sudo sh deploy/install.sh`.
+3. Start in §1.2 order (control-plane → schedulers → web), running the
+   §10.3 `--version` check at each step.
+4. Rollback: BINARIES roll back freely (re-run install.sh from the older
+   checkout), but a DB touched by newer migrations is NOT certified for
+   older binaries — restore from backup (§3) is the rollback of record.
+
+### 10.7 Web rebuild (READ-token / API-base rotation)
+
+`CONTROLPLANE_API_BASE_URL` and `NEXT_PUBLIC_READ_TOKEN` are baked into
+the bundle at `next build` (DS-11c). Rotating the READ token or moving
+the control-plane origin = export the new values, re-run the web build +
+copy (`deploy/install.sh` does both), then
+`systemctl restart alphamintx-web`. Editing `web.env` does NOT rotate
+them.

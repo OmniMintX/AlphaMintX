@@ -385,6 +385,11 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		"UpsertAlertDispatchWatermark": true, "MaxAlertSourceRowid": true,
 		"ListKillBreakerEventsAfter": true, "ListKillClearEventsAfter": true,
 		"ListSafetyAlertsAfter": true, "AppendOMSReconEventWithAlert": true,
+		// Restore gate (deploy-and-survive.md DS-2/DS-4/DS-5):
+		// ClearRestoreGate's user_version write is a header flag, not a
+		// row mutation — the append-only invariant holds.
+		"RestoreGateEngaged": true, "RestoreGateUserVersion": true,
+		"RestoreGateAlertPending": true, "ClearRestoreGate": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

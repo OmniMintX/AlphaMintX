@@ -67,6 +67,12 @@ const (
 	codeBackupExists       = "BACKUP_EXISTS"
 	codeBackupFailed       = "BACKUP_FAILED"
 	codeBackupVerifyFailed = "BACKUP_VERIFY_FAILED"
+	// Restore-gate codes (deploy-and-survive.md DS-3/DS-5): the 503
+	// blocks new trading intent while a restored DB awaits the operator
+	// ack; the 409 catches a lost ack race or an ack aimed at the wrong
+	// deployment.
+	codeRestoreGate           = "RESTORE_GATE"
+	codeRestoreGateNotEngaged = "RESTORE_GATE_NOT_ENGAGED"
 	// Lifecycle and kill-clear codes (lifecycle-api.md §Error codes).
 	codeInvalidLifecycleState    = "INVALID_LIFECYCLE_STATE"
 	codeUseKillEndpoint          = "USE_KILL_ENDPOINT"

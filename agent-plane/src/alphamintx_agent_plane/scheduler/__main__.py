@@ -13,9 +13,11 @@ import fcntl
 import logging
 import os
 import signal
+import sys
 from collections.abc import Mapping
 from typing import TextIO
 
+from alphamintx_agent_plane import __version__
 from alphamintx_agent_plane.client.controlplane import (
     HEARTBEAT_INTERVAL_SECONDS,
     TOKEN_ENV_VAR,
@@ -147,6 +149,11 @@ def acquire_instance_lock(state_path: str) -> TextIO:
 
 
 def main() -> None:
+    # DS-12: --version prints the package version and exits 0, before any
+    # env validation or lock acquisition.
+    if "--version" in sys.argv[1:]:
+        print(__version__)
+        raise SystemExit(0)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )

@@ -139,9 +139,9 @@ func TestRBACMatrix(t *testing.T) {
 // edit cannot silently weaken them: Trader cannot change limits; agent
 // tokens are rejected by every endpoint outside their two ingestion routes;
 // env-admin's read surface is exactly the platform feeds (billing reads,
-// GET /api/v1/alerts per operator-surface.md OS-19, and GET
-// /api/v1/ops/backups per ops-backup.md OB-7) — never the tenant strategy
-// reads.
+// GET /api/v1/alerts per operator-surface.md OS-19, GET
+// /api/v1/ops/backups per ops-backup.md OB-7, and GET /api/v1/ops/restore
+// per deploy-and-survive.md DS-6) — never the tenant strategy reads.
 func TestRBACMatrixPins(t *testing.T) {
 	e, dbToks := rbacEnv(t)
 	wantError(t, e.do(t, "POST", "/api/v1/strategies/"+strat1+"/limits", dbToks.trader,

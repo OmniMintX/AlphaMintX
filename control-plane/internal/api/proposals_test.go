@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,7 +44,14 @@ func testRiskLimits() riskgate.RiskLimits {
 // apply on top (rbacEnv wires the fake ReconStatusProvider this way).
 func gatedEnv(t *testing.T, mutate ...func(*Config)) *testEnv {
 	t.Helper()
-	return newEnv(t, func(cfg *Config) {
+	return gatedEnvAt(t, filepath.Join(t.TempDir(), "control-plane.db"), mutate...)
+}
+
+// gatedEnvAt is gatedEnv over an explicit DB path (restoredEnv stamps the
+// file before Open).
+func gatedEnvAt(t *testing.T, dbPath string, mutate ...func(*Config)) *testEnv {
+	t.Helper()
+	return newEnvAt(t, dbPath, func(cfg *Config) {
 		limits := testRiskLimits()
 		cfg.Limits = &limits
 		cfg.RuntimeState = &runstate.Hydrator{

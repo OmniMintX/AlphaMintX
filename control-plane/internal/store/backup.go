@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -196,7 +197,10 @@ func (s *Store) copySnapshot(ctx context.Context, tmp string) (fp []tableCount, 
 		return nil, "", 0, fmt.Errorf("create tmp artifact: %w", err)
 	}
 	h := sha256.New()
-	written, err = copyContext(ctx, io.MultiWriter(dst, h), src)
+	// DS-1: the user_version stamp substitutes bytes 60-63 IN-STREAM, so
+	// the tmp file and the streaming digest both see the stamped bytes —
+	// OB-5a's copy-digest == re-read-digest property holds verbatim.
+	written, err = copyContext(ctx, &stampWriter{w: io.MultiWriter(dst, h)}, src)
 	if err == nil {
 		err = dst.Sync()
 	}
@@ -208,6 +212,41 @@ func (s *Store) copySnapshot(ctx context.Context, tmp string) (fp []tableCount, 
 		return nil, "", 0, fmt.Errorf("copy to tmp artifact: %w", err)
 	}
 	return fp, hex.EncodeToString(h.Sum(nil)), written, nil
+}
+
+// stampedUserVersion is the DS-1 restore-detection stamp: every engine
+// artifact carries user_version = 1 in the SQLite header (bytes 60-63,
+// 4-byte big-endian), so a DB booted from an artifact engages the restore
+// gate by construction (deploy-and-survive.md D1). The stamp never goes
+// through a SQLite connection and never touches the live DB.
+const stampedUserVersion = 1
+
+// userVersionOffset is the SQLite header offset of the user_version field.
+const userVersionOffset = 60
+
+// stampWriter substitutes the DS-1 user_version bytes as they pass
+// through the copy loop — one write pass, no post-copy WriteAt. The
+// caller's buffer is never mutated (io.Writer contract): the overlapping
+// chunk is cloned before patching.
+type stampWriter struct {
+	w   io.Writer
+	off int64 // absolute artifact offset of the next incoming byte
+}
+
+func (sw *stampWriter) Write(p []byte) (int, error) {
+	if sw.off < userVersionOffset+4 && sw.off+int64(len(p)) > userVersionOffset {
+		p = append([]byte(nil), p...)
+		var stamp [4]byte
+		binary.BigEndian.PutUint32(stamp[:], stampedUserVersion)
+		for i := int64(0); i < 4; i++ {
+			if idx := userVersionOffset + i - sw.off; idx >= 0 && idx < int64(len(p)) {
+				p[idx] = stamp[i]
+			}
+		}
+	}
+	n, err := sw.w.Write(p)
+	sw.off += int64(n)
+	return n, err
 }
 
 // failVerify renames the artifact to `<name>.failed` (kept for forensics)

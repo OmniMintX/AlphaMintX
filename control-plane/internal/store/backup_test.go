@@ -7,6 +7,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -326,7 +329,9 @@ func TestBackupCheckpointFailure(t *testing.T) {
 
 // TestBackupZeroLogicalWrites: a backup whose WAL was already checkpointed
 // leaves the source main file bit-identical (invariant 3 observable form)
-// and produces an artifact with the source's exact digest (invariant 2).
+// and produces an artifact whose digest equals the source's EXCEPT the
+// 4-byte DS-1 user_version stamp (invariant 2 as amended by
+// deploy-and-survive.md DS-1).
 func TestBackupZeroLogicalWrites(t *testing.T) {
 	s := openStore(t)
 	createStrategy(t, s, uid(1))
@@ -353,8 +358,14 @@ func TestBackupZeroLogicalWrites(t *testing.T) {
 	if before != after {
 		t.Errorf("source main file changed across an already-checkpointed backup: %s -> %s", before, after)
 	}
-	if res.SHA256 != before {
-		t.Errorf("artifact digest %s != source digest %s (invariant 2)", res.SHA256, before)
+	src, err := os.ReadFile(s.path)
+	if err != nil {
+		t.Fatalf("ReadFile(source): %v", err)
+	}
+	binary.BigEndian.PutUint32(src[userVersionOffset:userVersionOffset+4], stampedUserVersion)
+	sum := sha256.Sum256(src)
+	if want := hex.EncodeToString(sum[:]); res.SHA256 != want {
+		t.Errorf("artifact digest %s != stamped source digest %s (invariant 2 + DS-1)", res.SHA256, want)
 	}
 }
 

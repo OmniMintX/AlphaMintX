@@ -233,6 +233,8 @@ func New(cfg Config) *Server {
 		"POST /api/v1/oms/recon/run":                     s.handlePostReconRun,
 		"POST /api/v1/ops/backups/run":                   s.handlePostBackupRun,
 		"GET /api/v1/ops/backups":                        s.handleListBackups,
+		"GET /api/v1/ops/restore":                        s.handleGetRestoreStatus,
+		"POST /api/v1/ops/restore/ack":                   s.handlePostRestoreAck,
 	}
 	for _, perm := range Permissions() {
 		switch perm.Requires {

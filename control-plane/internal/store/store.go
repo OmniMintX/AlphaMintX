@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,6 +86,12 @@ type Store struct {
 	// backupVerify overrides the OB-5 artifact verification in tests;
 	// nil = verifyBackupArtifact.
 	backupVerify func(artifactPath string, fingerprint []tableCount) error
+
+	// restoreGate holds the user_version read at Open (deploy-and-
+	// survive.md DS-2): >= 1 marks a restored artifact and engages the
+	// restore gate; ClearRestoreGate compare-and-swaps it to 0 exactly
+	// once (DS-5).
+	restoreGate atomic.Int64
 }
 
 // Open opens (creating if absent) the DB at path, applies the connection
@@ -125,7 +132,17 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("alert dispatch migration %s: %w", path, err)
 	}
-	return &Store{db: db, path: path}, nil
+	// DS-2: user_version is read AFTER migrations (they never touch it);
+	// a value >= 1 is the DS-1 artifact stamp — this DB is a restored
+	// artifact and the restore gate engages.
+	var userVersion int64
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("read user_version %s: %w", path, err)
+	}
+	s := &Store{db: db, path: path}
+	s.restoreGate.Store(userVersion)
+	return s, nil
 }
 
 // migrateTenancy is the additive Phase-2 migration (multi-tenant-rbac.md

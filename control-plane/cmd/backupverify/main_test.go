@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
@@ -58,7 +59,8 @@ func TestVerifyGoodArtifact(t *testing.T) {
 	if code := run([]string{"-db", path}, &out, &errOut); code != 0 {
 		t.Fatalf("exit = %d (stdout %q, stderr %q), want 0", code, out.String(), errOut.String())
 	}
-	for _, want := range []string{"integrity_check: ok", "foreign_key_check violations: 0", "newest runs.created_at:"} {
+	for _, want := range []string{"integrity_check: ok", "foreign_key_check violations: 0",
+		"user_version: 0", "newest runs.created_at:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report %q missing %q", out.String(), want)
 		}
@@ -134,6 +136,34 @@ func TestVerifyFKViolation(t *testing.T) {
 		t.Fatalf("exit = %d (stdout %q, stderr %q), want 1", code, out.String(), errOut.String())
 	}
 	for _, want := range []string{"integrity_check: ok", "foreign_key_check violations: 1"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("report %q missing %q", out.String(), want)
+		}
+	}
+}
+
+// TestVerifyStampedArtifact: an engine artifact carries the DS-1
+// user_version stamp; verification passes unchanged (deploy-and-
+// survive.md DS-1a) and the report prints the user_version line.
+func TestVerifyStampedArtifact(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	dir := t.TempDir()
+	res, err := s.Backup(context.Background(), dir, 0)
+	if err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := run([]string{"-db", filepath.Join(dir, res.Artifact)}, &out, &errOut); code != 0 {
+		t.Fatalf("exit = %d (stdout %q, stderr %q), want 0", code, out.String(), errOut.String())
+	}
+	for _, want := range []string{"integrity_check: ok", "foreign_key_check violations: 0", "user_version: 1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report %q missing %q", out.String(), want)
 		}

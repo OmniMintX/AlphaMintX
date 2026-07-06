@@ -46,7 +46,15 @@ type testEnv struct {
 // configured (agent tokens scoped to strat1 and strat2) and a fixed clock.
 func newEnv(t *testing.T, mutate func(*Config)) *testEnv {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "control-plane.db"))
+	return newEnvAt(t, filepath.Join(t.TempDir(), "control-plane.db"), mutate)
+}
+
+// newEnvAt is newEnv over an explicit DB path (the restore-gate tests
+// stamp user_version into the file BEFORE Open, deploy-and-survive.md
+// DS-2).
+func newEnvAt(t *testing.T, dbPath string, mutate func(*Config)) *testEnv {
+	t.Helper()
+	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

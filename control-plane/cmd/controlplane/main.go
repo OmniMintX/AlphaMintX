@@ -15,11 +15,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/api"
@@ -41,6 +43,11 @@ import (
 const sweepInterval = 30 * time.Second
 
 func main() {
+	// DS-12: --version prints the build identity and exits 0.
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println(versionString())
+		return
+	}
 	if dbPath := os.Getenv("CONTROLPLANE_DB"); dbPath != "" {
 		if err := serve(dbPath); err != nil {
 			log.Fatal(err)
@@ -50,6 +57,27 @@ func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// versionString is the DS-12 identity: the module version plus
+// vcs.revision/vcs.time from the embedded build info (absent under plain
+// `go run`/`go test` builds).
+func versionString() string {
+	version, revision, at := "(devel)", "unknown", "unknown"
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Version != "" {
+			version = bi.Main.Version
+		}
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				revision = s.Value
+			case "vcs.time":
+				at = s.Value
+			}
+		}
+	}
+	return fmt.Sprintf("controlplane %s (vcs.revision=%s vcs.time=%s)", version, revision, at)
 }
 
 // serve runs the Phase-1 HTTP API until SIGINT/SIGTERM: the read + L1
@@ -65,6 +93,7 @@ func main() {
 // SUBMITTER_UNAVAILABLE, and no feed means the gate rejects
 // MARK_PRICE_UNAVAILABLE.
 func serve(dbPath string) error {
+	log.Printf("%s", versionString()) // DS-12: the same string as --version
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return err
@@ -330,6 +359,23 @@ func serve(dbPath string) error {
 		go alerts.Run(ctx)
 	}
 
+	// DS-2/DS-4: the restore-gate boot alert appends AFTER the notifier
+	// watermark seed (AN-8: an earlier append would let a first-enable
+	// seed swallow it) and before ListenAndServe — once per ENGAGEMENT,
+	// not per boot (crash loops must not flood the table or the webhook).
+	if st.RestoreGateEngaged() {
+		log.Printf("RESTORE GATE ENGAGED: proposals and approvals are blocked until POST /api/v1/ops/restore/ack (RUNBOOK §3)")
+		pending, err := st.RestoreGateAlertPending()
+		if err != nil {
+			return err
+		}
+		if pending {
+			if err := st.AppendSafetyAlert(restoreGateEngagedAlert(st.RestoreGateUserVersion(), formatTime(time.Now()))); err != nil {
+				return err
+			}
+		}
+	}
+
 	if liveOMS != nil {
 		// Run drives the mandatory startup reconcile, the user-data
 		// stream, and the periodic reconcile until shutdown.
@@ -411,7 +457,15 @@ func serve(dbPath string) error {
 					case errors.Is(err, store.ErrBackupInProgress):
 						log.Printf("periodic backup: another backup in progress, skipping this tick")
 					case err != nil:
+						// DS-9: the full error goes to the log ONLY;
+						// the alert carries the category, never raw
+						// error text (it can embed filesystem paths).
 						log.Printf("BACKUP FAILED: periodic backup: %v", err)
+						if aerr := st.AppendSafetyAlert(backupFailedAlert(backupFailureCategory(err), formatTime(time.Now()))); aerr != nil {
+							// DS-10: an alert-append failure never
+							// wedges the backup loop.
+							log.Printf("backup_failed alert append: %v", aerr)
+						}
 					default:
 						log.Printf("periodic backup: artifact %s sha256 %s bytes %d duration %s",
 							res.Artifact, res.SHA256, res.Bytes, res.FinishedAt.Sub(res.StartedAt))
@@ -463,6 +517,50 @@ func (b *backupEngine) Run(ctx context.Context) (store.BackupResult, error) {
 
 func (b *backupEngine) List() ([]store.BackupInfo, error) {
 	return b.st.ListBackups(b.dir)
+}
+
+// backupFailureCategory maps a periodic-backup error to the DS-9 alert
+// category: verify_failed, artifact_exists, or io (everything else —
+// including a retention failure after a good artifact; the log line
+// disambiguates).
+func backupFailureCategory(err error) string {
+	switch {
+	case errors.Is(err, store.ErrBackupVerifyFailed):
+		return "verify_failed"
+	case errors.Is(err, store.ErrBackupExists):
+		return "artifact_exists"
+	default:
+		return "io"
+	}
+}
+
+// restoreGateEngagedAlert is the DS-4 boot-alert row: kind
+// restore_gate_engaged, strategy_id NULL, details carrying ONLY the
+// stamped user_version.
+func restoreGateEngagedAlert(userVersion int64, now string) store.SafetyAlert {
+	return store.SafetyAlert{
+		AlertID:     uuid.NewString(),
+		Kind:        "restore_gate_engaged",
+		DetailsJSON: fmt.Sprintf(`{"user_version": %d}`, userVersion),
+		RecordedAt:  now,
+	}
+}
+
+// backupFailedAlert is the DS-9 alert row: kind backup_failed, strategy_id
+// NULL, details carrying the trigger and category ONLY — never raw error
+// text (it can embed filesystem paths).
+func backupFailedAlert(category, now string) store.SafetyAlert {
+	return store.SafetyAlert{
+		AlertID:     uuid.NewString(),
+		Kind:        "backup_failed",
+		DetailsJSON: fmt.Sprintf(`{"trigger": "periodic", "category": %q}`, category),
+		RecordedAt:  now,
+	}
+}
+
+// formatTime renders RFC 3339 UTC with Z suffix (store column convention).
+func formatTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 // parseAgentTokens parses "strategy_id=token,strategy_id=token". Values are

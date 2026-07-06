@@ -1,0 +1,43 @@
+# AlphaMintX agent-plane scheduler template (deploy-and-survive.md DS-11b).
+# Instance name (%i) = the strategy ID (UUID charset needs no systemd
+# escaping): `systemctl start alphamintx-scheduler@<strategy-id>`.
+#
+# Env file: /etc/alphamintx/scheduler-<strategy-id>.env, 0600 root:root
+# (DS-11) — variable inventory in docs/RUNBOOK.md §1.1. Each instance file
+# MUST set ALPHAMINTX_STRATEGY_ID=%i and PER-INSTANCE
+# ALPHAMINTX_SCHEDULER_STATE / ALPHAMINTX_CHECKPOINT_DB paths: one state
+# file per instance, NEVER shared — a shared file dies at the flock and
+# crash-loops.
+#
+# SIGKILL after TimeoutStopSec (a long in-flight live-LLM tick can exceed
+# the 90 s default) is checkpoint-safe by design — seeing it in the journal
+# is not a fault (DS-11b).
+
+[Unit]
+Description=AlphaMintX scheduler for strategy %i
+Wants=network-online.target alphamintx-controlplane.service
+After=network-online.target alphamintx-controlplane.service
+# Terminal `failed` state instead of an infinite silent crash loop (DS-11a).
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+User=alphamintx
+EnvironmentFile=/etc/alphamintx/scheduler-%i.env
+ExecStart=/opt/alphamintx/agent-plane/.venv/bin/python -m alphamintx_agent_plane.scheduler
+WorkingDirectory=/opt/alphamintx/agent-plane
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (DS-11a)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/alphamintx
+PrivateTmp=yes
+# Site-tunable memory ceiling; uncomment and size per host.
+# MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

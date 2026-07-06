@@ -122,5 +122,12 @@ func Permissions() []RoutePermission {
 		// (CONTROLPLANE_BACKUP_DIR); unconfigured deployments 404.
 		{Method: "POST", Path: "/api/v1/ops/backups/run", Classes: []string{classEnvAdmin}, Requires: requiresBackup},
 		{Method: "GET", Path: "/api/v1/ops/backups", Classes: []string{classEnvAdmin}, Requires: requiresBackup},
+		// Restore gate (deploy-and-survive.md DS-5/DS-6): the ack is a
+		// deployer act (env-admin ONLY); status is platform operational
+		// data (the GET /api/v1/alerts OS-19 precedent — the ops panel's
+		// READ token must render WHY approvals 503). Always registered:
+		// unlike the backup routes, no CONTROLPLANE_BACKUP_DIR required.
+		{Method: "GET", Path: "/api/v1/ops/restore", Classes: []string{classRead, classEnvAdmin}},
+		{Method: "POST", Path: "/api/v1/ops/restore/ack", Classes: []string{classEnvAdmin}},
 	}
 }

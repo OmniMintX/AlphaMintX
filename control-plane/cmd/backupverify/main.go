@@ -82,6 +82,15 @@ func verify(path string, out io.Writer) (ok bool, err error) {
 	}
 	fmt.Fprintf(out, "journal_mode: %s\n", mode)
 
+	// 3a. PRAGMA user_version (informational, deploy-and-survive.md
+	// DS-1a): 1 on engine-stamped artifacts — restoring this file engages
+	// the restore gate.
+	var userVersion int64
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		return false, fmt.Errorf("user_version: %w", err)
+	}
+	fmt.Fprintf(out, "user_version: %d\n", userVersion)
+
 	// 4. Per-table row counts: every user table under the OB-2 step 3
 	// pinned predicate, ordered by name.
 	names, err := queryStrings(db,

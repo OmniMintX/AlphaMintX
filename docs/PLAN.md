@@ -190,6 +190,21 @@ Scope:
   poison-row skip, heartbeat, secret-hygienic failure classes, RUNBOOK
   §9. Live drill on soak: heartbeat + kill + clear + companion alert
   all delivered end-to-end.)
+  (2026-07-06: deploy & survive landed per
+  `docs/specs/deploy-and-survive.md` — fail-closed restore gate
+  (DS-1 in-stream `user_version` artifact stamp; a restored DB boots
+  with proposals/approvals 503 `RESTORE_GATE` until the env-admin
+  `POST /api/v1/ops/restore/ack`, which clears + appends the audit
+  alert in one transaction; kill/clear/reads/reconcile never gated),
+  `backup_failed` safety alert from the periodic loop (notifier pushes
+  it), systemd supervision (`deploy/systemd/` units + `deploy/install.sh`
+  install contract: `/opt/alphamintx`, dedicated user, start limits,
+  hardening), `--version` on all three tiers, and the RUNBOOK §10
+  deployment/upgrade/crash-loop procedures + §1.1 NTP/TLS/disk notes.
+  Live drill on soak: stamped artifact verified, restored copy booted
+  GATED (engaged webhook delivered), proposal 503, kill 200 under gate,
+  ack → cleared webhook, restart stays cleared. systemd restart drill
+  deferred to the beta VM — no systemd in the dev container.)
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.

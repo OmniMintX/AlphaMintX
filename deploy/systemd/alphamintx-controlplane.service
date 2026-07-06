@@ -1,0 +1,38 @@
+# AlphaMintX control-plane (deploy-and-survive.md DS-11a).
+# Env file: /etc/alphamintx/controlplane.env, 0600 root:root (DS-11) —
+# variable inventory in docs/RUNBOOK.md §1.1; units MUST NOT inline tokens.
+
+[Unit]
+Description=AlphaMintX control-plane
+Wants=network-online.target
+After=network-online.target
+# A persistent config defect lands the unit in a terminal `failed` state
+# visible in `systemctl --failed`, instead of an infinite silent crash loop.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+User=alphamintx
+EnvironmentFile=/etc/alphamintx/controlplane.env
+ExecStart=/opt/alphamintx/bin/controlplane
+WorkingDirectory=/var/lib/alphamintx
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# DS-11a / RUNBOOK §9.3: journald's default per-service rate limit can
+# silently drop SAFETY-EVENT lines under burst; journald is a delivery
+# substrate for the alert notifier's log-only mode, so rate limiting is off
+# for the control-plane ONLY.
+LogRateLimitIntervalSec=0
+
+# Hardening (DS-11a)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/alphamintx /var/backups/alphamintx
+PrivateTmp=yes
+# Site-tunable memory ceiling; uncomment and size per host.
+# MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

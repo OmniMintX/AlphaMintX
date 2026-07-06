@@ -133,7 +133,10 @@ all of:
 written during the copy AND re-read from the renamed artifact; both digests
 MUST match, and the re-read MUST complete before the SQLite verify handle
 opens (catches post-rename filesystem corruption; with `immutable=1` the
-verify open itself cannot write).
+verify open itself cannot write). The written bytes are bit-identical to
+the source main file at copy time EXCEPT the 4-byte `user_version` stamp
+substituted in-stream (deploy-and-survive.md DS-1); both digests are
+therefore computed over the stamped bytes.
 
 ## HTTP surface (NORMATIVE)
 
@@ -239,6 +242,8 @@ file that changes underneath it). It prints a report:
    `model_costs.recorded_at`, `safety_alerts.recorded_at`,
    `orders.submitted_at` (a missing table is skipped, never an error) —
    the operator's data-loss bound for a restore.
+6. `user_version: N` (informational; deploy-and-survive.md DS-1a — 1
+   marks a stamped artifact, which engages the restore gate when booted).
 
 Exit code 0 iff checks 1–2 pass. The RUNBOOK forbids substituting a system
 `sqlite3` binary for this tool in the normative restore check (the tool
@@ -275,6 +280,10 @@ shares the exact driver version with the server via one `go.mod`).
    normal endpoints. The opposite direction is fail-safe and acceptable:
    a kill CLEARED after the snapshot comes back ACTIVE and merely needs
    re-clearing.
+7a. Acknowledge the restore gate: `POST /api/v1/ops/restore/ack`
+   (deploy-and-survive.md DS-5/DS-14). A stamped artifact boots with the
+   gate engaged — proposals and approvals 503 until the ack, and the ack
+   MUST follow the step-7 diff and precede step 8.
 8. Rewind each strategy's agent tick-state file (`next_tick_number`) to
    the restored DB's `MAX(tick_number)+1` for that strategy, THEN restart
    the scheduler (OB-12a).
@@ -324,7 +333,8 @@ paths other than the artifact basename.
 1. No writer can commit between the checkpoint (OB-2 step 2) and the end
    of the file copy (step 4) — the pool's only connection is held.
 2. The artifact is bit-identical to the source main file at copy time
-   (OB-5a double-digest) and passes integrity + FK + count parity (OB-5).
+   except the 4-byte `user_version` stamp (deploy-and-survive.md DS-1;
+   OB-5a double-digest) and passes integrity + FK + count parity (OB-5).
 3. The source DB is logically unaffected by backup, success or failure
    (OB-3; the step-2 checkpoint may rewrite physical representation).
 4. No code path ever VACUUMs `control.db` or an artifact (OB-1).
@@ -368,8 +378,9 @@ or endpoints:
 2. Backup: triggering (endpoint + periodic loop), reading the response,
    off-host copy, retention behavior.
 3. Restore: the OB-12 procedure verbatim — including the step 7 safety
-   diff and the step 8 tick-state rewind — plus the OB-12a rationale and
-   the pre-declared 409 trace-conflict recovery noise.
+   diff, the step 7a restore-gate ack (deploy-and-survive.md DS-14), and
+   the step 8 tick-state rewind — plus the OB-12a rationale and the
+   pre-declared 409 trace-conflict recovery noise.
 4. Kill / clear: strategy, tenant, platform tiers — including the
    `observed_epoch` CAS rule and the platform-clear ack literal.
 5. Breaker fired / watchdog escalation: what happened automatically,
