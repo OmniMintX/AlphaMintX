@@ -283,3 +283,10 @@ Exit criteria:
       `TestTestnetDrill_Breaker` against the REAL Binance testnet.)
 - [ ] ≥1 design-partner tenant completes 30 days of live beta within limits with
       zero invariant violations in audit review.
+      (2026-07-06: judgment protocol defined in `docs/BETA-PROTOCOL.md` —
+      Day-0 entry gate (testnet drills, systemd + restore-gate + dead-man
+      drills, countersigned limits, pinned certified strategy), live-day
+      counted clock, change control, class-A/B SLA from persisted
+      `recorded_at`, metrics M1–M8, invariant audits V1–V9, hash-chained
+      beta log, and a total PASS/INCONCLUSIVE/FAIL outcome mapping. This
+      checkbox is ticked only by the exit review defined there.)
