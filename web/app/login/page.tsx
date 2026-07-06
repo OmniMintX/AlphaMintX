@@ -2,12 +2,13 @@
 
 // Sign-in: POST /api/auth/login sets the HttpOnly session cookie
 // server-side, then a hard navigation lands on /dashboard. A 401
-// INVALID_CREDENTIALS (or any upstream error) surfaces verbatim.
+// INVALID_CREDENTIALS (or any upstream error) surfaces verbatim, except the
+// brute-force throttle's 429 RATE_LIMITED, which renders localized.
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-import { login } from "../../src/lib/api/client";
+import { ApiError, login } from "../../src/lib/api/client";
 import { useI18n } from "../../src/lib/i18n";
 import { AuthCard, authErrText } from "../auth-card";
 
@@ -26,7 +27,11 @@ export default function LoginPage() {
       await login(email, password);
       window.location.href = "/dashboard";
     } catch (err) {
-      setError(authErrText(err));
+      setError(
+        err instanceof ApiError && err.status === 429
+          ? t("login.throttled")
+          : authErrText(err),
+      );
       setPending(false);
     }
   }

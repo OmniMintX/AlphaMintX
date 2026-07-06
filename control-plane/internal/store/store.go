@@ -105,11 +105,13 @@ type Store struct {
 
 // Open opens (creating if absent) the DB at path, applies the connection
 // pragmas required by the spec (journal_mode=WAL, busy_timeout >= 5000 ms,
-// foreign_keys ON) and executes the embedded schema idempotently, followed
-// by the guarded tenancy migration (multi-tenant-rbac.md §Migration note).
+// foreign_keys ON, synchronous=FULL — the WAL durability level made
+// explicit rather than an implicit driver default) and executes the
+// embedded schema idempotently, followed by the guarded tenancy migration
+// (multi-tenant-rbac.md §Migration note).
 func Open(path string) (*Store, error) {
 	dsn := "file:" + url.PathEscape(path) +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(FULL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open store %s: %w", path, err)

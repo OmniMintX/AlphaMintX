@@ -203,6 +203,123 @@ func TestAuthSessionExpiry(t *testing.T) {
 	wantError(t, e.do(t, "GET", "/api/v1/auth/me", tok, nil), 401, codeUnauthorized)
 }
 
+// signupOwner creates the Acme tenant with owner@acme.com; helper for the
+// login-throttle tests.
+func signupOwner(t *testing.T, e *testEnv) {
+	t.Helper()
+	rec := e.do(t, "POST", "/api/v1/auth/signup", "", map[string]string{
+		"tenant_name": "Acme", "email": "owner@acme.com", "password": "hunter2-secret"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("signup = %d (body %q)", rec.Code, rec.Body.String())
+	}
+}
+
+// throttleLen reads the throttle map size under its lock (internal test).
+func throttleLen(e *testEnv) int {
+	e.srv.loginRL.mu.Lock()
+	defer e.srv.loginRL.mu.Unlock()
+	return len(e.srv.loginRL.buckets)
+}
+
+// TestAuthLoginThrottleExhaustAndIsolate: 5 failed logins exhaust one
+// email's bucket — the 6th is 429 with Retry-After — while a DIFFERENT
+// email still gets the plain 401 (per-email isolation).
+func TestAuthLoginThrottleExhaustAndIsolate(t *testing.T) {
+	e := newEnv(t, nil)
+	signupOwner(t, e)
+	for i := 0; i < loginFailBurst; i++ {
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("owner@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	}
+	rec := e.do(t, "POST", "/api/v1/auth/login", "", authBody("owner@acme.com", "wrong-password"))
+	wantError(t, rec, 429, codeRateLimited)
+	wantRetryAfter(t, rec)
+	wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+		authBody("other@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+}
+
+// TestAuthLoginThrottleRefill: once exhausted, advancing the clock past
+// one 30 s refill readmits the email — a correct-password login succeeds.
+func TestAuthLoginThrottleRefill(t *testing.T) {
+	now := testNow
+	e := newEnv(t, func(cfg *Config) { cfg.Now = func() time.Time { return now } })
+	signupOwner(t, e)
+	for i := 0; i < loginFailBurst; i++ {
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("owner@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	}
+	wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+		authBody("owner@acme.com", "hunter2-secret")), 429, codeRateLimited)
+	now = testNow.Add(31 * time.Second)
+	login(t, e, "owner@acme.com", "hunter2-secret")
+}
+
+// TestAuthLoginThrottleResetOnSuccess: a successful login deletes the
+// email's bucket, so subsequent failures start from the full burst again.
+func TestAuthLoginThrottleResetOnSuccess(t *testing.T) {
+	e := newEnv(t, nil)
+	signupOwner(t, e)
+	for i := 0; i < loginFailBurst-1; i++ {
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("owner@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	}
+	login(t, e, "owner@acme.com", "hunter2-secret")
+	for i := 0; i < loginFailBurst; i++ {
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("owner@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	}
+	rec := e.do(t, "POST", "/api/v1/auth/login", "", authBody("owner@acme.com", "wrong-password"))
+	wantError(t, rec, 429, codeRateLimited)
+	wantRetryAfter(t, rec)
+}
+
+// TestAuthLoginThrottleNoEnumeration: an exhausted KNOWN email and an
+// exhausted UNKNOWN email answer byte-identical 429s with the same
+// Retry-After — the throttle keys on the attempted string regardless of
+// account existence.
+func TestAuthLoginThrottleNoEnumeration(t *testing.T) {
+	e := newEnv(t, nil)
+	signupOwner(t, e)
+	for i := 0; i < loginFailBurst; i++ {
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("owner@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("ghost@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	}
+	known := e.do(t, "POST", "/api/v1/auth/login", "", authBody("owner@acme.com", "wrong-password"))
+	unknown := e.do(t, "POST", "/api/v1/auth/login", "", authBody("ghost@acme.com", "wrong-password"))
+	wantError(t, known, 429, codeRateLimited)
+	wantError(t, unknown, 429, codeRateLimited)
+	if known.Body.String() != unknown.Body.String() ||
+		known.Header().Get("Retry-After") != unknown.Header().Get("Retry-After") {
+		t.Errorf("known/unknown 429s differ: body %q / %q, Retry-After %q / %q",
+			known.Body.String(), unknown.Body.String(),
+			known.Header().Get("Retry-After"), unknown.Header().Get("Retry-After"))
+	}
+}
+
+// TestAuthLoginThrottlePruning: a fully-refilled bucket carries no
+// information and is pruned on the next access, so the map size shrinks
+// (the memory bound for attacker-chosen emails).
+func TestAuthLoginThrottlePruning(t *testing.T) {
+	now := testNow
+	e := newEnv(t, func(cfg *Config) { cfg.Now = func() time.Time { return now } })
+	for i := 0; i < loginFailBurst; i++ {
+		wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+			authBody("ghost@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	}
+	if got := throttleLen(e); got != 1 {
+		t.Fatalf("throttle map size after exhaustion = %d, want 1", got)
+	}
+	// Full refill from 0 tokens takes burst/perSec = 150 s.
+	now = testNow.Add(151 * time.Second)
+	wantError(t, e.do(t, "POST", "/api/v1/auth/login", "",
+		authBody("other@acme.com", "wrong-password")), 401, codeInvalidCredentials)
+	if got := throttleLen(e); got != 1 {
+		t.Errorf("throttle map size after prune = %d, want 1 (ghost@ pruned, other@ present)", got)
+	}
+}
+
 // TestAuthPasswordPolicy: the 8..72-byte password policy and email shape
 // bind bootstrap and signup with 400 SCHEMA_INVALID — and a policy 400
 // persists nothing (bootstrap stays available).

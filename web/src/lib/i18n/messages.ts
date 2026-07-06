@@ -69,6 +69,7 @@ export const messages = {
   "login.title": { en: "Sign in", vi: "Đăng nhập" },
   "login.sub": { en: "Session-based access — your token never reaches the browser.", vi: "Truy cập theo phiên — token của bạn không bao giờ tới trình duyệt." },
   "login.pending": { en: "Signing in…", vi: "Đang đăng nhập…" },
+  "login.throttled": { en: "Too many sign-in attempts. Wait a moment and try again.", vi: "Quá nhiều lần thử đăng nhập. Hãy chờ một lát rồi thử lại." },
   "login.noaccount": { en: "No account?", vi: "Chưa có tài khoản?" },
   "login.bootstrap": { en: "First-run bootstrap", vi: "Khởi tạo lần đầu" },
   "signup.title": { en: "Create a workspace", vi: "Tạo không gian làm việc" },

@@ -53,6 +53,13 @@ func TestConnectionPragmas(t *testing.T) {
 	if busy < 5000 {
 		t.Errorf("busy_timeout = %d ms, want >= 5000", busy)
 	}
+	var syncMode int
+	if err := s.db.QueryRow("PRAGMA synchronous").Scan(&syncMode); err != nil {
+		t.Fatalf("PRAGMA synchronous: %v", err)
+	}
+	if syncMode != 2 {
+		t.Errorf("synchronous = %d, want 2 (FULL)", syncMode)
+	}
 }
 
 func TestInsertProposalIdempotency(t *testing.T) {

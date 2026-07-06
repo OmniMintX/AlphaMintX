@@ -158,6 +158,23 @@ func (s *Server) evaluateAndRoute(st store.Strategy, p *contract.Proposal, now t
 	// runtime change on the next evaluation.
 	verdict := riskgate.Evaluate(p, s.limits.Limits(st.StrategyID), state, now)
 	if _, err := s.cfg.Store.InsertVerdict(&verdict); err != nil {
+		if errors.Is(err, store.ErrIdempotencyConflict) {
+			// A concurrent evaluation won the verdicts insert: a verbatim
+			// at-least-once retry raced the original request through the
+			// "proposal persisted, verdict missing" fall-through, and each
+			// minted its own verdict_id/evaluated_at. Answer the STORED
+			// verdict verbatim and skip routeExecution — the winning request
+			// owns routing; running it again risks double-arming the L1
+			// timer or a second OMS submission.
+			payload, verr := s.cfg.Store.GetVerdictByProposalID(p.ProposalID)
+			if errors.Is(verr, store.ErrNotFound) {
+				return proposalResponse{}, err
+			}
+			if verr != nil {
+				return proposalResponse{}, verr
+			}
+			return proposalResponse{Verdict: payload}, nil
+		}
 		return proposalResponse{}, err
 	}
 	raw, err := json.Marshal(&verdict)

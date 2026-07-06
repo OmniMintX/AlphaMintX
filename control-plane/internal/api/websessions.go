@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +33,112 @@ const invalidCredentialsMsg = "invalid email or password"
 // dummyPasswordHash equalizes login timing when the email is unknown: the
 // handler compares against it so absent and present accounts cost the same.
 var dummyPasswordHash, _ = bcrypt.GenerateFromPassword([]byte("amx-timing-equalizer"), bcrypt.DefaultCost)
+
+// Login brute-force throttle: POST /api/v1/auth/login is Public, so the
+// guard's per-token limiter never covers it. Each normalized email gets a
+// bucket of loginFailBurst failed attempts refilling one per 30 s; ONLY
+// failures charge it, and a successful login deletes the bucket.
+const (
+	loginFailBurst  = 5
+	loginFailPerSec = float64(1) / 30
+	// loginThrottleMax bounds the bucket map — emails are attacker-chosen,
+	// so it must not grow without limit: fully-refilled buckets are pruned
+	// on every access (a full bucket is indistinguishable from an absent
+	// one, so it carries no information), and at the cap the entry closest
+	// to full refill is evicted for the newcomer. Memory therefore never
+	// exceeds loginThrottleMax live buckets.
+	loginThrottleMax = 4096
+)
+
+// loginThrottle is the per-email failed-login token bucket: the same
+// refill math and mutex discipline as rateLimiter, plus the prune/evict
+// memory bound above. Unlike rateLimiter it separates the empty check
+// (exhausted, uncharged) from the charge (fail), because only FAILED
+// logins spend attempts.
+type loginThrottle struct {
+	now func() time.Time
+
+	mu      sync.Mutex
+	buckets map[string]*bucket
+}
+
+func newLoginThrottle(now func() time.Time) *loginThrottle {
+	return &loginThrottle{now: now, buckets: make(map[string]*bucket)}
+}
+
+// exhausted reports whether email's bucket is empty WITHOUT charging it,
+// plus the time until it refills to one attempt (the Retry-After hint).
+// It keys on the ATTEMPTED email whether or not an account exists, so the
+// caller can reject before any user lookup or bcrypt work with identical
+// behavior for known and unknown emails.
+func (lt *loginThrottle) exhausted(email string) (bool, time.Duration) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	now := lt.now()
+	lt.prune(now)
+	b, ok := lt.buckets[email]
+	if !ok {
+		return false, 0
+	}
+	b.tokens = min(loginFailBurst, b.tokens+now.Sub(b.last).Seconds()*loginFailPerSec)
+	b.last = now
+	if b.tokens < 1 {
+		return true, time.Duration((1 - b.tokens) / loginFailPerSec * float64(time.Second))
+	}
+	return false, 0
+}
+
+// fail charges one failed attempt against email, creating its bucket if
+// absent and evicting at the cap.
+func (lt *loginThrottle) fail(email string) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	now := lt.now()
+	lt.prune(now)
+	b, ok := lt.buckets[email]
+	if !ok {
+		if len(lt.buckets) >= loginThrottleMax {
+			lt.evict(now)
+		}
+		b = &bucket{tokens: loginFailBurst, last: now}
+		lt.buckets[email] = b
+	}
+	b.tokens = min(loginFailBurst, b.tokens+now.Sub(b.last).Seconds()*loginFailPerSec)
+	b.last = now
+	if b.tokens > 0 {
+		b.tokens--
+	}
+}
+
+// reset deletes email's bucket on a successful login.
+func (lt *loginThrottle) reset(email string) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	delete(lt.buckets, email)
+}
+
+// prune drops every fully-refilled bucket (caller holds mu).
+func (lt *loginThrottle) prune(now time.Time) {
+	for k, b := range lt.buckets {
+		if b.tokens+now.Sub(b.last).Seconds()*loginFailPerSec >= loginFailBurst {
+			delete(lt.buckets, k)
+		}
+	}
+}
+
+// evict removes the bucket closest to full refill — the one carrying the
+// least throttle information — to admit a new email at the cap (caller
+// holds mu).
+func (lt *loginThrottle) evict(now time.Time) {
+	var victim string
+	best := math.Inf(-1)
+	for k, b := range lt.buckets {
+		if t := b.tokens + now.Sub(b.last).Seconds()*loginFailPerSec; t > best {
+			best, victim = t, k
+		}
+	}
+	delete(lt.buckets, victim)
+}
 
 // mintSessionPlaintext generates the amxs_ + 64-lowercase-hex session
 // credential (32 CSPRNG bytes) and its storage hash. The plaintext leaves
@@ -215,9 +323,17 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(creds.Email))
+	// Brute-force throttle, checked BEFORE any lookup or bcrypt work — but
+	// only rejecting when already exhausted, keyed on the attempted email
+	// regardless of existence (no enumeration signal).
+	if blocked, retryAfter := s.loginRL.exhausted(email); blocked {
+		writeRateLimited(w, retryAfter, "too many failed login attempts")
+		return
+	}
 	u, passwordHash, err := s.cfg.Store.UserByEmail(email)
 	if errors.Is(err, store.ErrNotFound) {
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(creds.Password))
+		s.loginRL.fail(email)
 		writeError(w, http.StatusUnauthorized, codeInvalidCredentials, invalidCredentialsMsg)
 		return
 	}
@@ -227,9 +343,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(creds.Password)) != nil ||
 		u.DisabledAt != nil {
+		s.loginRL.fail(email)
 		writeError(w, http.StatusUnauthorized, codeInvalidCredentials, invalidCredentialsMsg)
 		return
 	}
+	s.loginRL.reset(email)
 	now := s.cfg.Now()
 	ws := store.WebSession{
 		UserID:    u.UserID,

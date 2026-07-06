@@ -173,12 +173,13 @@ type Config struct {
 
 // Server is the http.Handler for the control-plane API.
 type Server struct {
-	cfg    Config
-	mux    *http.ServeMux
-	limits *LimitsProvider   // effective-limits read path (nil: no gating)
-	routes []RoutePermission // the registered subset of Permissions()
-	rl     *rateLimiter      // per-token 60/min, every POST
-	prl    *rateLimiter      // per-strategy 30/min, proposal ingestion only
+	cfg     Config
+	mux     *http.ServeMux
+	limits  *LimitsProvider   // effective-limits read path (nil: no gating)
+	routes  []RoutePermission // the registered subset of Permissions()
+	rl      *rateLimiter      // per-token 60/min, every POST
+	prl     *rateLimiter      // per-strategy 30/min, proposal ingestion only
+	loginRL *loginThrottle    // per-email failed-login throttle (public login)
 
 	// gateMu serializes gate evaluations per strategy_id (risk-limits.md
 	// "Gate evaluation order").
@@ -205,6 +206,7 @@ func New(cfg Config) *Server {
 		limits:     cfg.LimitsProvider,
 		rl:         newRateLimiter(cfg.Now, rateLimitBurst, rateLimitPerSec),
 		prl:        newRateLimiter(cfg.Now, proposalRateBurst, proposalRatePerSec),
+		loginRL:    newLoginThrottle(cfg.Now),
 		strategyMu: make(map[string]*sync.Mutex),
 	}
 	if s.limits == nil && cfg.Limits != nil {

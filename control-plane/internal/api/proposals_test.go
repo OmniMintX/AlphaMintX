@@ -199,6 +199,79 @@ func TestPostProposalDuplicateReturnsVerdictVerbatim(t *testing.T) {
 	wantError(t, rec, http.StatusConflict, codeIdempotencyConflict)
 }
 
+// racingRuntimeState wraps the real hydrator and, before returning the
+// state, commits a competing verdict for the proposal directly through the
+// store — mimicking the original request finishing its evaluation while a
+// verbatim at-least-once retry is mid-evaluation (proposal row committed,
+// verdict landing between the retry's duplicate check and its insert).
+type racingRuntimeState struct {
+	t       *testing.T
+	inner   RuntimeStateSource
+	store   *store.Store
+	verdict *contract.Verdict
+}
+
+func (r *racingRuntimeState) State(strategyID, lifecycleState, symbol string, now time.Time) (riskgate.RuntimeState, error) {
+	if _, err := r.store.InsertVerdict(r.verdict); err != nil {
+		r.t.Fatalf("racing InsertVerdict: %v", err)
+	}
+	return r.inner.State(strategyID, lifecycleState, symbol, now)
+}
+
+func TestPostProposalConcurrentEvaluationReturnsStoredVerdict(t *testing.T) {
+	// The competing verdict a concurrent request commits mid-evaluation.
+	competingID := uid(11)
+	e := gatedEnv(t, func(cfg *Config) {
+		cfg.RuntimeState = &racingRuntimeState{
+			t: t, inner: cfg.RuntimeState, store: cfg.Store,
+			verdict: testVerdict(t, competingID, uid(10)),
+		}
+	})
+	createStrategy(t, e.store, strat1, "live_l3")
+	putMark(e, "BTC/USDT", "64000")
+
+	// One POST: the handler's own InsertVerdict loses the race with
+	// ErrIdempotencyConflict and must answer 200 with the stored verdict
+	// verbatim, never 500.
+	rec := e.do(t, http.MethodPost, "/api/v1/strategies/"+strat1+"/proposals", agent1Tok,
+		store.ProposalSubmission{TickNumber: 0, Proposal: openProposal(t, uid(10), strat1, uid(12))})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	stored, err := e.store.GetVerdictByProposalID(uid(10))
+	if err != nil {
+		t.Fatalf("GetVerdictByProposalID: %v", err)
+	}
+	var env proposalEnvelope
+	decodeJSON(t, rec, &env)
+	if !bytes.Equal(env.Verdict, stored) {
+		t.Errorf("verdict not the stored bytes verbatim:\n got %s\nwant %s", env.Verdict, stored)
+	}
+	var got contract.Verdict
+	if err := json.Unmarshal(env.Verdict, &got); err != nil {
+		t.Fatalf("decode envelope verdict: %v", err)
+	}
+	if got.VerdictID != competingID {
+		t.Errorf("verdict_id = %s, want the competing (stored) %s", got.VerdictID, competingID)
+	}
+	if env.Submitted != nil || env.SubmitErrorCode != "" || env.PendingApproval != nil {
+		t.Errorf("envelope = %+v, want verdict only (losing path never routes)", env)
+	}
+
+	// Exactly ONE verdict row exists (both are approve on a non-hold
+	// proposal, so a second row would count here too).
+	if n, err := e.store.CountRateVerdictsSince(strat1, "2000-01-01T00:00:00Z"); err != nil || n != 1 {
+		t.Errorf("verdict rows = %d (%v), want exactly 1", n, err)
+	}
+	// Routing skipped by the loser: no OMS submission, no pending approval.
+	if e.sub.count() != 0 {
+		t.Errorf("submitter calls = %d, want 0 (winning request owns routing)", e.sub.count())
+	}
+	if _, ok, err := e.store.GetPendingApproval(competingID); err != nil || ok {
+		t.Errorf("pending approval = %v %v, want none", ok, err)
+	}
+}
+
 func TestPostProposalRunTickConflict(t *testing.T) {
 	e := gatedEnv(t)
 	createStrategy(t, e.store, strat1, "live_l3")
