@@ -6,7 +6,7 @@
 // fetch failure renders a quiet placeholder — the desk never blocks the
 // control-plane view.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   DESK_SYMBOLS,
@@ -35,6 +35,33 @@ function dir(pct: string): "up" | "down" {
   return Number(pct) >= 0 ? "up" : "down";
 }
 
+// Enter/Space activate a clickable card like a click (cards stay divs for the
+// grid CSS). Per the ARIA button pattern, Enter fires on keydown while Space
+// fires on keyup — keydown only swallows Space so the page doesn't scroll.
+function cardKeys(activate: () => void) {
+  return {
+    onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === " ") e.preventDefault();
+      if (e.key === "Enter") activate();
+    },
+    onKeyUp: (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === " ") activate();
+    },
+  };
+}
+
+// Flash class for a price cell when a poll moves the price; the caller keeps
+// a per-symbol map of previous prices across renders. Leading space so the
+// result concatenates straight into a className template.
+function pxFlash(prev: Map<string, string>, symbol: string, price: string): string {
+  const last = prev.get(symbol);
+  prev.set(symbol, price);
+  if (last === undefined || last === price) return "";
+  const delta = Number(price) - Number(last);
+  if (!Number.isFinite(delta) || delta === 0) return "";
+  return delta > 0 ? " px-flash-up" : " px-flash-down";
+}
+
 // Inline SVG sparkline over hourly closes; stroke follows 24h direction.
 function Sparkline({ closes, tone }: { closes: number[]; tone: "up" | "down" }) {
   const w = 120;
@@ -60,15 +87,19 @@ function Sparkline({ closes, tone }: { closes: number[]; tone: "up" | "down" }) 
 export function TickerTape() {
   const load = useCallback(() => fetchMarketSnapshot(DESK_SYMBOLS), []);
   const { data } = usePoll<MarketSnapshot>(load, MARKET_POLL_MS);
+  const prevPx = useRef<Map<string, string>>(new Map());
   if (!data) return <div className="ticker-tape ticker-empty" aria-hidden />;
   return (
     <div className="ticker-tape">
       {data.tickers.map((tk) => {
         const tone = dir(tk.priceChangePercent);
+        const flash = pxFlash(prevPx.current, tk.symbol, tk.lastPrice);
         return (
           <span className="ticker-item" key={tk.symbol}>
             <span className="ticker-sym">{displayPair(tk.symbol)}</span>
-            <span className="ticker-px">{fmtPrice(tk.lastPrice)}</span>
+            <span className={`ticker-px${flash}`} key={`${tk.symbol}:${tk.lastPrice}`}>
+              {fmtPrice(tk.lastPrice)}
+            </span>
             <span className={`ticker-chg ${tone}`}>{fmtPct(tk.priceChangePercent)}</span>
           </span>
         );
@@ -95,6 +126,7 @@ function MarketGrid({
   onSelect: (symbol: string) => void;
 }) {
   const { t } = useI18n();
+  const prevPx = useRef<Map<string, string>>(new Map());
 
   if (error && !data) {
     return <div className="empty">{t("market.unavailable")}</div>;
@@ -113,18 +145,24 @@ function MarketGrid({
     <div className="grid grid-4 market-grid">
       {data.tickers.map((tk) => {
         const tone = dir(tk.priceChangePercent);
+        const flash = pxFlash(prevPx.current, tk.symbol, tk.lastPrice);
         return (
           <div
             className={`market-card market-click${selected === tk.symbol ? " selected" : ""}`}
             key={tk.symbol}
+            role="button"
+            tabIndex={0}
             onClick={() => onSelect(tk.symbol)}
+            {...cardKeys(() => onSelect(tk.symbol))}
           >
             <div className="spread">
               <span className="market-sym">{displayPair(tk.symbol)}</span>
               <span className={`market-chg ${tone}`}>{fmtPct(tk.priceChangePercent)}</span>
             </div>
             <div className="spread market-mid">
-              <span className={`market-px ${tone}`}>{fmtPrice(tk.lastPrice)}</span>
+              <span className={`market-px ${tone}${flash}`} key={`${tk.symbol}:${tk.lastPrice}`}>
+                {fmtPrice(tk.lastPrice)}
+              </span>
               <Sparkline closes={data.closes[tk.symbol] ?? []} tone={tone} />
             </div>
             <div className="market-foot">
@@ -161,6 +199,7 @@ function FuturesGrid({
   onSelect: (symbol: string) => void;
 }) {
   const { t } = useI18n();
+  const prevPx = useRef<Map<string, string>>(new Map());
 
   if (error && !data) {
     return <div className="empty">{t("market.futures.unavailable")}</div>;
@@ -181,18 +220,24 @@ function FuturesGrid({
         const tone = dir(row.priceChangePercent);
         // Positive funding = longs pay shorts (red); negative = green.
         const fundingTone = Number(row.lastFundingRate) > 0 ? "down" : "up";
+        const flash = pxFlash(prevPx.current, row.symbol, row.markPrice);
         return (
           <div
             className={`market-card market-click${selected === row.symbol ? " selected" : ""}`}
             key={row.symbol}
+            role="button"
+            tabIndex={0}
             onClick={() => onSelect(row.symbol)}
+            {...cardKeys(() => onSelect(row.symbol))}
           >
             <div className="spread">
               <span className="market-sym">{displayPair(row.symbol)}</span>
               <span className={`market-chg ${tone}`}>{fmtPct(row.priceChangePercent)}</span>
             </div>
             <div className="spread market-mid">
-              <span className={`market-px ${tone}`}>{fmtPrice(row.markPrice)}</span>
+              <span className={`market-px ${tone}${flash}`} key={`${row.symbol}:${row.markPrice}`}>
+                {fmtPrice(row.markPrice)}
+              </span>
               <span className={`market-chg ${fundingTone}`}>
                 {t("market.futures.funding")} {fmtFundingRate(row.lastFundingRate)}
               </span>
@@ -521,12 +566,12 @@ function TaReadout({
       </div>
       <div className="ta-disclaimer">{t("market.ta.disclaimer")}</div>
       <div className="ta-actions">
-        <button type="button" className="btn" onClick={ask} disabled={asking}>
+        <button type="button" className="btn" onClick={ask} disabled={asking} aria-busy={asking}>
           ◈ {asking ? `${t("market.chart.asking")} ${elapsed}s` : t("market.chart.ask")}
         </button>
         {askError && <span className="ta-error">{askError}</span>}
       </div>
-      {asking ? (
+      {asking && (
         <div className="ta-analysis ta-skeleton" aria-busy="true">
           <span className="ta-skeleton-line" style={{ width: "88%" }} />
           <span className="ta-skeleton-line" style={{ width: "97%" }} />
@@ -535,15 +580,25 @@ function TaReadout({
           <span className="ta-skeleton-line" style={{ width: "55%" }} />
           <div className="ta-skeleton-hint">{t("market.chart.asking.hint")}</div>
         </div>
-      ) : (
-        analysis && (
-          <>
-            <div className="ta-analysis">{analysis.text}</div>
-            <div className="ta-model">
-              {t("market.chart.model")}: {analysis.model}
-            </div>
-          </>
-        )
+      )}
+      {/* The live region stays mounted (an unmounted-then-mounted region is
+          never announced); it collapses to zero height while empty. */}
+      <div
+        className="ta-analysis"
+        role="status"
+        aria-live="polite"
+        style={
+          analysis && !asking
+            ? undefined
+            : { margin: 0, padding: 0, border: 0, background: "transparent" }
+        }
+      >
+        {analysis && !asking ? analysis.text : null}
+      </div>
+      {analysis && !asking && (
+        <div className="ta-model">
+          {t("market.chart.model")}: {analysis.model}
+        </div>
       )}
     </div>
   );
@@ -678,7 +733,7 @@ function ChartPanel({
             </button>
           ))}
         </div>
-        <button type="button" className="chart-close" onClick={onClose} aria-label="close">
+        <button type="button" className="chart-close" onClick={onClose} aria-label="Close chart">
           ×
         </button>
       </div>
@@ -724,6 +779,18 @@ export function MarketDesk() {
   const loadFutures = useCallback(() => fetchFuturesSnapshot(DESK_SYMBOLS), []);
   const futures = usePoll<FuturesRow[]>(loadFutures, MARKET_POLL_MS);
 
+  // Arrow keys move between the two tabs (WAI-ARIA tablist pattern); with
+  // only two tabs, Left and Right both toggle to — and focus — the other.
+  const spotTabRef = useRef<HTMLButtonElement | null>(null);
+  const futuresTabRef = useRef<HTMLButtonElement | null>(null);
+  const tabArrow = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next: DeskTab = tab === "spot" ? "futures" : "spot";
+    setTab(next);
+    (next === "spot" ? spotTabRef : futuresTabRef).current?.focus();
+  };
+
   return (
     <>
       <div className="market-tabs" role="tablist">
@@ -731,8 +798,11 @@ export function MarketDesk() {
           type="button"
           role="tab"
           aria-selected={tab === "spot"}
+          tabIndex={tab === "spot" ? 0 : -1}
           className={`market-tab${tab === "spot" ? " active" : ""}`}
+          ref={spotTabRef}
           onClick={() => setTab("spot")}
+          onKeyDown={tabArrow}
         >
           {t("market.tab.spot")}
         </button>
@@ -740,15 +810,18 @@ export function MarketDesk() {
           type="button"
           role="tab"
           aria-selected={tab === "futures"}
+          tabIndex={tab === "futures" ? 0 : -1}
           className={`market-tab${tab === "futures" ? " active" : ""}`}
+          ref={futuresTabRef}
           onClick={() => setTab("futures")}
+          onKeyDown={tabArrow}
         >
           {t("market.tab.futures")}
         </button>
       </div>
       {selected && (
         <ChartPanel
-          key={selected}
+          key={`${tab}:${selected}`}
           market={tab}
           symbol={selected}
           spot={spot.data}

@@ -67,7 +67,9 @@ function TenantsCard() {
     <div className="card">
       <h3 className="card-title">{t("admin.tenants")}</h3>
       {tenants.error && <ErrorBanner message={tenants.error} />}
-      {!tenants.data && !tenants.error && <div className="skeleton" style={{ height: 80 }} />}
+      {!tenants.data && !tenants.error && (
+        <div className="skeleton" style={{ height: 80 }} role="status" aria-busy="true" />
+      )}
       {tenants.data && (
         <>
           {error && <ErrorBanner message={error} />}
@@ -76,6 +78,7 @@ function TenantsCard() {
               className="input"
               style={{ minWidth: "16rem" }}
               placeholder={t("admin.tenantname.placeholder")}
+              aria-label={t("admin.tenantname.placeholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -89,20 +92,20 @@ function TenantsCard() {
             </button>
           </div>
           {tenants.data.items.length === 0 ? (
-            <div className="empty">{t("admin.notenants")}</div>
+            <div className="empty" role="status">{t("admin.notenants")}</div>
           ) : (
             <table className="tbl" style={{ marginTop: 10 }}>
               <thead>
                 <tr>
-                  <th>{t("tbl.id")}</th>
-                  <th>{t("tbl.name")}</th>
-                  <th>{t("tbl.created")}</th>
+                  <th scope="col">{t("tbl.id")}</th>
+                  <th scope="col">{t("tbl.name")}</th>
+                  <th scope="col">{t("tbl.created")}</th>
                 </tr>
               </thead>
               <tbody>
                 {tenants.data.items.map((tn) => (
                   <tr key={tn.tenant_id}>
-                    <td className="mono-cell" title={tn.tenant_id}>
+                    <td className="mono-cell" title={tn.tenant_id} aria-label={tn.tenant_id}>
                       {shortId(tn.tenant_id)}
                     </td>
                     <td>{tn.name}</td>
@@ -126,19 +129,21 @@ function UsersCard() {
     <div className="card">
       <h3 className="card-title">{t("admin.users")}</h3>
       {users.error && <ErrorBanner message={users.error} />}
-      {!users.data && !users.error && <div className="skeleton" style={{ height: 80 }} />}
+      {!users.data && !users.error && (
+        <div className="skeleton" style={{ height: 80 }} role="status" aria-busy="true" />
+      )}
       {users.data &&
         (users.data.items.length === 0 ? (
-          <div className="empty">{t("admin.nousers")}</div>
+          <div className="empty" role="status">{t("admin.nousers")}</div>
         ) : (
           <table className="tbl">
             <thead>
               <tr>
-                <th>{t("auth.email")}</th>
-                <th>{t("admin.tbl.role")}</th>
-                <th>{t("tbl.tenant")}</th>
-                <th>{t("tbl.created")}</th>
-                <th>{t("admin.tbl.status")}</th>
+                <th scope="col">{t("auth.email")}</th>
+                <th scope="col">{t("admin.tbl.role")}</th>
+                <th scope="col">{t("tbl.tenant")}</th>
+                <th scope="col">{t("tbl.created")}</th>
+                <th scope="col">{t("admin.tbl.status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -152,7 +157,11 @@ function UsersCard() {
                       {u.role}
                     </span>
                   </td>
-                  <td className="mono-cell" title={u.tenant_id ?? undefined}>
+                  <td
+                    className="mono-cell"
+                    title={u.tenant_id ?? undefined}
+                    aria-label={u.tenant_id ?? undefined}
+                  >
                     {u.tenant_id ? (
                       shortId(u.tenant_id)
                     ) : (

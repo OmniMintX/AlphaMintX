@@ -95,6 +95,7 @@ export function Pager({
         type="button"
         className="btn"
         disabled={!hasPrevPage(page)}
+        aria-label={t("ui.pager.prev.label")}
         onClick={() => onPage(page - 1)}
       >
         {t("ui.pager.prev")}
@@ -107,6 +108,7 @@ export function Pager({
         type="button"
         className="btn"
         disabled={!hasNextPage(page, total, limit)}
+        aria-label={t("ui.pager.next.label")}
         onClick={() => onPage(page + 1)}
       >
         {t("ui.pager.next")}

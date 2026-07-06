@@ -125,7 +125,7 @@ export function SessionFooter() {
     <div className="session-foot">
       {user && (
         <div className="session-id">
-          <span className="session-email" title={user.email}>
+          <span className="session-email" title={user.email} aria-label={user.email}>
             {user.email}
           </span>
           <span className="session-role">{user.role}</span>

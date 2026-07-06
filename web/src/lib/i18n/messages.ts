@@ -224,4 +224,8 @@ export const messages = {
     en: "OMS submits any gate-approved proposal; kill-switch and risk limits still apply.",
     vi: "OMS gửi mọi đề xuất được gate duyệt; kill-switch và giới hạn rủi ro vẫn áp dụng.",
   },
+
+  // ---- a11y-only labels (shared pager) ----
+  "ui.pager.prev.label": { en: "Previous page", vi: "Trang trước" },
+  "ui.pager.next.label": { en: "Next page", vi: "Trang sau" },
 } as const satisfies Record<string, Msg>;

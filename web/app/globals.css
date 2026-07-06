@@ -42,7 +42,7 @@ html[data-theme="light"] {
   --border-strong: #c9cdd6;
   --text: #171a20;
   --text-2: #555d6b;
-  --text-3: #878f9c;
+  --text-3: #5f6b7d;
   --accent: #4d58c4;
   --accent-strong: #3d47b2;
   --accent-bg: rgba(77, 88, 196, 0.1);
@@ -78,8 +78,23 @@ a { color: var(--accent-strong); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
+.mono { font-variant-numeric: tabular-nums; }
 
 ::selection { background: rgba(110, 121, 214, 0.35); }
+html[data-theme="light"] ::selection { background: rgba(77, 88, 196, 0.22); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-item:focus-visible, .seg-btn:focus-visible { outline-offset: -2px; }
+.input:focus-visible, .select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* ---------- App shell ---------- */
 
@@ -96,6 +111,8 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
   background: var(--bg-subtle);
   border-right: 1px solid var(--border);
   padding: 14px 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-brand {
@@ -176,6 +193,8 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
   min-width: 0;
   padding: 28px 36px 64px;
   max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* ---------- Page headers ---------- */
@@ -249,6 +268,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
 @media (max-width: 720px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
 
 /* ---------- Stat tiles ---------- */
@@ -376,10 +396,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
-.btn:hover:not(:disabled) { background: var(--surface-hover); border-color: #3a404b; }
+.btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); }
+.btn:active:not(:disabled) { transform: translateY(0.5px); background: var(--surface-hover); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn-primary:active:not(:disabled) { background: var(--accent); filter: brightness(0.92); transform: translateY(0.5px); }
 .btn-danger { color: var(--red); border-color: rgba(229, 83, 75, 0.45); background: var(--red-bg); }
 .btn-danger:hover:not(:disabled) { background: rgba(229, 83, 75, 0.2); border-color: var(--red); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
@@ -398,13 +420,18 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   outline: none;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.input:focus, .select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110, 121, 214, 0.18); }
+.input:focus, .select:focus { border-color: var(--accent); }
+/* Pointer focus keeps the soft glow; keyboard focus gets the crisp
+   :focus-visible outline instead — never both rings at once. */
+.input:focus:not(:focus-visible), .select:focus:not(:focus-visible) { box-shadow: 0 0 0 3px rgba(110, 121, 214, 0.18); }
 .input::placeholder { color: var(--text-3); }
+.input:disabled, .select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 11.5px; font-weight: 600; color: var(--text-2); }
 
 .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
 
 /* ---------- Key-value rows / definition lists ---------- */
 
@@ -472,6 +499,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   white-space: nowrap;
   margin: -12px 0 18px;
   padding: 7px 2px;
+  padding-right: 16px;
   border-bottom: 1px solid var(--border);
   font-family: var(--mono);
   font-size: 12px;
@@ -520,7 +548,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   border-top: 1px solid var(--border);
   padding-top: 6px;
 }
-.market-foot b { color: var(--text-2); font-weight: 600; }
+.market-foot b { color: var(--text-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Price flash on live tick updates (applied by market.tsx). */
+@keyframes price-flash-up { from { background: rgba(63, 185, 112, 0.28); } to { background: transparent; } }
+@keyframes price-flash-down { from { background: rgba(229, 83, 75, 0.28); } to { background: transparent; } }
+.px-flash-up { animation: price-flash-up 600ms ease-out; border-radius: 4px; }
+.px-flash-down { animation: price-flash-down 600ms ease-out; border-radius: 4px; }
 
 /* Tabbed desk: Binance-style tab bar, selectable cards, chart panel. */
 .market-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
@@ -541,15 +575,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .market-tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
 .market-click { cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
-.market-click:hover { background: var(--surface-hover); }
+.market-click:hover { background: var(--surface-hover); border-color: var(--border-strong); }
 .market-card.selected { border-color: var(--accent); }
 
+@keyframes panel-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .chart-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
   margin-bottom: 10px;
+  animation: panel-in 180ms ease-out;
 }
 .chart-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .chart-px { font-family: var(--mono); font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -574,7 +610,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   cursor: pointer;
 }
 .chart-close:hover { color: var(--text); background: var(--surface-hover); }
-.chart-body { height: 380px; width: 100%; }
+.chart-body { height: 380px; width: 100%; transition: height 200ms ease; }
 .chart-body-tall { height: 560px; }
 
 /* Indicator chip toggles (MA / EMA / BOLL / RSI / MACD). */
@@ -592,7 +628,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 .chip-toggle:hover { color: var(--text); background: var(--surface-hover); }
-.chip-toggle.active { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-bg); }
+.chip-toggle.active { color: var(--accent-strong); border-color: var(--accent); background: rgba(110, 121, 214, 0.22); }
 
 /* Deterministic technical readout + on-demand agent analysis. */
 .ta-readout {
@@ -601,11 +637,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   padding-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 .ta-row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--text-2); }
 .ta-key { font-family: var(--mono); font-size: 11px; color: var(--text-3); min-width: 112px; }
 .ta-verdict { font-weight: 650; }
+.ta-verdict.up { color: var(--green); }
+.ta-verdict.down { color: var(--red); }
 .ta-disclaimer { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
 .ta-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .ta-error { font-size: 12px; color: var(--red); }
@@ -665,7 +703,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 
 .seg-btn:hover { color: var(--text); background: var(--surface-hover); }
-.seg-btn.active { background: var(--accent-bg); color: var(--accent-strong); }
+.seg-btn.active { background: rgba(110, 121, 214, 0.22); color: var(--accent-strong); }
 
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .spread { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

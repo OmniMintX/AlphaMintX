@@ -56,7 +56,7 @@ export default function SettingsPage() {
       </div>
       {secrets.error && <ErrorBanner message={secrets.error} />}
       {!secrets.data && !secrets.error && (
-        <div className="grid grid-2">
+        <div className="grid grid-2" role="status" aria-busy="true">
           <div className="skeleton" style={{ height: 200 }} />
           <div className="skeleton" style={{ height: 200 }} />
         </div>
@@ -143,9 +143,10 @@ function BinanceCard({
             <option value="prod">prod</option>
           </select>
         </label>
-        <label className="field">
+        <label className="field" htmlFor="binance-api-key">
           <span className="field-label">{t("settings.apikey")}</span>
           <input
+            id="binance-api-key"
             className="input"
             type="password"
             autoComplete="off"
@@ -154,9 +155,10 @@ function BinanceCard({
             onChange={(e) => setApiKey(e.target.value)}
           />
         </label>
-        <label className="field">
+        <label className="field" htmlFor="binance-api-secret">
           <span className="field-label">{t("settings.apisecret")}</span>
           <input
+            id="binance-api-secret"
             className="input"
             type="password"
             autoComplete="off"
@@ -262,9 +264,10 @@ function LlmCard({
           : t("settings.notconfigured")}
       </p>
       <div className="row">
-        <label className="field">
+        <label className="field" htmlFor="llm-base-url">
           <span className="field-label">{t("settings.baseurl")}</span>
           <input
+            id="llm-base-url"
             className="input"
             style={{ minWidth: "16rem" }}
             placeholder="https://api.openai.com/v1"
@@ -272,9 +275,10 @@ function LlmCard({
             onChange={(e) => setBaseUrl(e.target.value)}
           />
         </label>
-        <label className="field">
+        <label className="field" htmlFor="llm-api-key">
           <span className="field-label">{t("settings.apikey")}</span>
           <input
+            id="llm-api-key"
             className="input"
             type="password"
             autoComplete="off"
@@ -283,9 +287,10 @@ function LlmCard({
             onChange={(e) => setApiKey(e.target.value)}
           />
         </label>
-        <label className="field">
+        <label className="field" htmlFor="llm-timeout">
           <span className="field-label">{t("settings.timeout")}</span>
           <input
+            id="llm-timeout"
             className="input"
             type="number"
             step={1}
@@ -296,18 +301,20 @@ function LlmCard({
         </label>
       </div>
       <div className="row" style={{ marginTop: 10 }}>
-        <label className="field">
+        <label className="field" htmlFor="llm-trader-model">
           <span className="field-label">{t("settings.llm.trader_model")}</span>
           <input
+            id="llm-trader-model"
             className="input"
             list="llm-model-suggestions"
             value={traderModel}
             onChange={(e) => setTraderModel(e.target.value)}
           />
         </label>
-        <label className="field">
+        <label className="field" htmlFor="llm-default-model">
           <span className="field-label">{t("settings.llm.default_model")}</span>
           <input
+            id="llm-default-model"
             className="input"
             list="llm-model-suggestions"
             value={defaultModel}

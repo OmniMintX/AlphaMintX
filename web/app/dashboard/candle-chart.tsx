@@ -35,11 +35,12 @@ export interface IndicatorFlags {
   macd: boolean;
 }
 
-// Binance's canonical candle palette (readable on both themes).
+// Binance's canonical candle palette (readable on both themes). The faded
+// pair is volume-only, one notch lighter than the solid MACD histogram.
 const UP = "#0ecb81";
 const DOWN = "#f6465d";
-const UP_FADED = "rgba(14, 203, 129, 0.5)";
-const DOWN_FADED = "rgba(246, 70, 93, 0.5)";
+const UP_FADED = "rgba(14, 203, 129, 0.35)";
+const DOWN_FADED = "rgba(246, 70, 93, 0.35)";
 
 // Indicator palettes — hues that read on both dark and light surfaces.
 const MA_PERIODS = [7, 25, 99] as const;
@@ -67,6 +68,7 @@ function tokenColors() {
   return {
     text: style.getPropertyValue("--text-3").trim() || "#646b76",
     grid: style.getPropertyValue("--border").trim() || "#21252c",
+    gridStrong: style.getPropertyValue("--border-strong").trim() || "#2d323b",
   };
 }
 
@@ -93,7 +95,7 @@ export function CandleChart({
   useEffect(() => {
     const box = boxRef.current;
     if (!box) return;
-    const { text, grid } = tokenColors();
+    const { text, grid, gridStrong } = tokenColors();
     const chart = createChart(box, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
@@ -101,6 +103,10 @@ export function CandleChart({
         attributionLogo: false,
       },
       grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+      crosshair: {
+        vertLine: { color: gridStrong, labelBackgroundColor: gridStrong },
+        horzLine: { color: gridStrong, labelBackgroundColor: gridStrong },
+      },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true },
       autoSize: true,
@@ -111,6 +117,8 @@ export function CandleChart({
       borderVisible: false,
       wickUpColor: UP,
       wickDownColor: DOWN,
+      priceLineVisible: true,
+      lastValueVisible: true,
     });
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
@@ -127,6 +135,10 @@ export function CandleChart({
       chart.applyOptions({
         layout: { textColor: c.text },
         grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        crosshair: {
+          vertLine: { color: c.gridStrong, labelBackgroundColor: c.gridStrong },
+          horzLine: { color: c.gridStrong, labelBackgroundColor: c.gridStrong },
+        },
       });
     });
     observer.observe(document.documentElement, {
@@ -181,10 +193,11 @@ export function CandleChart({
     }
     if (indicators.rsi) {
       const series = chart.addSeries(LineSeries, { ...lineOpts(RSI_COLOR), lineWidth: 2 }, 1);
+      const guide = tokenColors().gridStrong;
       for (const price of [30, 70]) {
         series.createPriceLine({
           price,
-          color: "#7f8fa6",
+          color: guide,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: false,
@@ -266,7 +279,7 @@ export function CandleChart({
                 {
                   time: c.time as UTCTimestamp,
                   value: v,
-                  color: v >= 0 ? UP_FADED : DOWN_FADED,
+                  color: v >= 0 ? UP : DOWN,
                 },
               ]
             : [];

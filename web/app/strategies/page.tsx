@@ -25,7 +25,7 @@ export default function StrategiesPage() {
       </header>
       {error && <ErrorBanner message={error} />}
       {!data && !error && (
-        <div className="grid">
+        <div className="grid" role="status" aria-busy="true">
           <div className="skeleton" style={{ height: 36 }} />
           <div className="skeleton" style={{ height: 36 }} />
           <div className="skeleton" style={{ height: 36 }} />
@@ -35,7 +35,7 @@ export default function StrategiesPage() {
         <>
           <div className="table-wrap">
             {data.items.length === 0 ? (
-              <div className="empty">{t("dash.empty")}</div>
+              <div className="empty" role="status">{t("dash.empty")}</div>
             ) : (
               <table className="tbl">
                 <thead>
