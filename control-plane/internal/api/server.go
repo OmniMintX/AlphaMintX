@@ -257,6 +257,7 @@ func New(cfg Config) *Server {
 		"POST /api/v1/platform/secrets/binance":          s.handleSetBinanceSecret,
 		"POST /api/v1/platform/secrets/llm":              s.handleSetLLMSecret,
 		"GET /api/v1/agent/llm-config":                   s.handleAgentLLMConfig,
+		"POST /api/v1/market/llm-analysis":               s.handleMarketLLMAnalysis,
 		"GET /api/v1/tenants":                            s.handleListTenants,
 		"GET /api/v1/users":                              s.handleListUsers,
 	}

@@ -19,6 +19,7 @@ import {
   limitsStatusSchema,
   loginResponseSchema,
   logoutResponseSchema,
+  marketAnalysisResponseSchema,
   paperGateReportSchema,
   platformSecretsResponseSchema,
   runDetailSchema,
@@ -33,6 +34,9 @@ import {
   tenantsResponseSchema,
   usersResponseSchema,
   type AlertsPage,
+  type AnalysisInterval,
+  type AnalysisLocale,
+  type AnalysisMarket,
   type ApiErrorBody,
   type ApprovalDecision,
   type ApprovalRequest,
@@ -50,6 +54,7 @@ import {
   type LimitsStatus,
   type LoginResponse,
   type LogoutResponse,
+  type MarketAnalysisResponse,
   type PaperGateReport,
   type PlatformSecretsResponse,
   type RunDetail,
@@ -235,6 +240,24 @@ export function postLimits(
   payload: LimitChangeRequest,
 ): Promise<LimitChangeResponse> {
   return proxyPost(`/api/cp/strategies/${strategyId}/limits`, payload, limitChangeResponseSchema);
+}
+
+// One-shot LLM read of the chart's indicator snapshot (Agent analysis). The
+// provider key stays in the control-plane vault — only the model's text
+// answer comes back. A missing LLM config surfaces as ApiError 404
+// NOT_CONFIGURED; provider failures as 502 LLM_UPSTREAM.
+export function requestMarketAnalysis(
+  symbol: string,
+  market: AnalysisMarket,
+  interval: AnalysisInterval,
+  locale: AnalysisLocale,
+  summary: string,
+): Promise<MarketAnalysisResponse> {
+  return proxyPost(
+    "/api/cp/market/llm-analysis",
+    { symbol, market, interval, locale, summary },
+    marketAnalysisResponseSchema,
+  );
 }
 
 // Strategy-tier clear (OS-29).

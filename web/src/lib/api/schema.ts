@@ -459,6 +459,20 @@ export const secretWriteResponseSchema = z.strictObject({
   secret: platformSecretSchema,
 });
 
+// ---- Market LLM analysis (Agent analysis) -----------------------------------------
+
+// Chart dimensions accepted by POST /market/llm-analysis.
+export const analysisMarketSchema = z.enum(["spot", "futures"]);
+export const analysisIntervalSchema = z.enum(["15m", "1h", "4h", "1d"]);
+export const analysisLocaleSchema = z.enum(["en", "vi"]);
+
+// POST /market/llm-analysis 200 envelope: the model's text answer and which
+// model answered — the provider key never crosses the web boundary.
+export const marketAnalysisResponseSchema = z.strictObject({
+  text: z.string().min(1),
+  model: z.string().min(1),
+});
+
 // ---- Tenants / users (Admin) ------------------------------------------------------
 
 // Tenant snapshot as served by GET/POST /tenants (and echoed inside signup).
@@ -586,6 +600,10 @@ export type BinanceEnv = z.infer<typeof binanceEnvSchema>;
 export type PlatformSecret = z.infer<typeof platformSecretSchema>;
 export type PlatformSecretsResponse = z.infer<typeof platformSecretsResponseSchema>;
 export type SecretWriteResponse = z.infer<typeof secretWriteResponseSchema>;
+export type AnalysisMarket = z.infer<typeof analysisMarketSchema>;
+export type AnalysisInterval = z.infer<typeof analysisIntervalSchema>;
+export type AnalysisLocale = z.infer<typeof analysisLocaleSchema>;
+export type MarketAnalysisResponse = z.infer<typeof marketAnalysisResponseSchema>;
 export type Tenant = z.infer<typeof tenantSchema>;
 export type TenantsResponse = z.infer<typeof tenantsResponseSchema>;
 export type AdminUser = z.infer<typeof adminUserSchema>;

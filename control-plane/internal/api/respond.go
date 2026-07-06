@@ -91,6 +91,9 @@ const (
 	// llm-config read before the first set.
 	codeVaultUnavailable = "VAULT_UNAVAILABLE"
 	codeNotConfigured    = "NOT_CONFIGURED"
+	// Market LLM analysis: 502 when the configured provider is
+	// unreachable, answers non-200, or returns no completion content.
+	codeLLMUpstream = "LLM_UPSTREAM"
 	// Lifecycle and kill-clear codes (lifecycle-api.md §Error codes).
 	codeInvalidLifecycleState    = "INVALID_LIFECYCLE_STATE"
 	codeUseKillEndpoint          = "USE_KILL_ENDPOINT"

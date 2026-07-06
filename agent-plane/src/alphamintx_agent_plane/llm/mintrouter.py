@@ -114,7 +114,11 @@ class MintRouterLLM:
         self._sleep = sleep
         self._monotonic = monotonic
         self._rng = rng
-        self._base_url = base_url.rstrip("/")
+        # OpenAI-convention base URLs often already end in /v1; avoid /v1/v1
+        # since CHAT_COMPLETIONS_PATH re-adds the version segment.
+        normalized = base_url.rstrip("/")
+        normalized = normalized.removesuffix("/v1")
+        self._base_url = normalized
         self._client = httpx.Client(
             base_url=self._base_url,
             transport=transport,

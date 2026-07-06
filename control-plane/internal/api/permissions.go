@@ -172,6 +172,11 @@ func Permissions() []RoutePermission {
 		{Method: "POST", Path: "/api/v1/platform/secrets/binance", Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/platform/secrets/llm", Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/agent/llm-config", Classes: []string{classAgent}},
+		// Market LLM analysis (marketanalysis.go): the standard
+		// strategy-data reader tier — the GET /api/v1/strategies row — as
+		// a POST (the request carries the chart snapshot to analyze); the
+		// provider key never crosses this boundary, only the model's text.
+		{Method: "POST", Path: "/api/v1/market/llm-analysis", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
 		// Admin-console listings (platform-secrets.md §Admin listings):
 		// platform-wide views, env-admin ONLY — never a tenant surface.
 		{Method: "GET", Path: "/api/v1/tenants", Classes: []string{classEnvAdmin}},

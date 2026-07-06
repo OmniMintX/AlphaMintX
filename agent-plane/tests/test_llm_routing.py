@@ -122,6 +122,28 @@ def test_x_request_id_header_present_and_unique_per_attempt() -> None:
     assert response.request_id == seen[1]
 
 
+def test_base_url_with_v1_suffix_is_normalized() -> None:
+    """An OpenAI-convention base URL already ending in /v1 must not produce a
+    doubled /v1/v1/chat/completions request path."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return _ok_response()
+
+    llm = MintRouterLLM(
+        base_url=BASE_URL + "/v1/",
+        api_key=TEST_API_KEY,
+        price_table=PriceTable.load_default(),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _s: None,
+        monotonic=lambda: 0.0,
+        rng=lambda: 0.0,
+    )
+    llm.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+    assert seen == ["/v1/chat/completions"]
+
+
 def test_retry_on_429_honors_reset_after_header() -> None:
     calls: list[httpx.Request] = []
 
