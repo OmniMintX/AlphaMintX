@@ -21,19 +21,23 @@ import {
   clearStrategyKill,
   createTenant,
   fetchAlerts,
+  fetchGlobalAlerts,
   fetchLimits,
   fetchMe,
   fetchPaperGate,
   fetchPlatformSecrets,
   fetchSafety,
   fetchTenants,
+  fetchTokens,
   fetchUsers,
   login,
   logout,
+  mintToken,
   postKill,
   postKillClear,
   postLifecycle,
   postLimits,
+  revokeToken,
   setBinanceSecret,
   setLlmSecret,
   signup,
@@ -511,6 +515,130 @@ describe("platform settings and admin helpers", () => {
     expect(vault).toBeInstanceOf(ApiError);
     expect((vault as ApiError).status).toBe(503);
     expect((vault as ApiError).body?.code).toBe("VAULT_UNAVAILABLE");
+  });
+});
+
+// ---- Global alerts & API tokens ------------------------------------------------------
+
+const globalAlert = {
+  alert_id: "c5d6e7f8-a9b0-4c1d-8e2f-4a5b6c7d8e9f",
+  kind: "watchdog_stall",
+  strategy_id: null,
+  ref_id: null,
+  details_json: "{}",
+  recorded_at: "2026-07-05T11:00:00Z",
+};
+
+const userToken = {
+  token_id: "tok-1",
+  tenant_id: "t-1",
+  principal: "user",
+  role: "operator",
+  strategy_id: null,
+  label: "ops laptop",
+  created_by: "u-1",
+  created_at: "2026-07-05T09:00:00Z",
+  revoked_at: null,
+};
+
+const agentToken = {
+  ...userToken,
+  token_id: "tok-2",
+  principal: "agent",
+  role: null,
+  strategy_id: STRATEGY_ID,
+  label: "runner",
+};
+
+describe("global alerts and token helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetchGlobalAlerts GETs /alerts same-origin and omits an empty kind entirely", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { items: [globalAlert], total: 1, page: 1, limit: 20 }),
+      jsonResponse(200, { items: [], total: 0, page: 2, limit: 20 }),
+    );
+
+    const page = await fetchGlobalAlerts();
+    await fetchGlobalAlerts(2, 20, "breaker_daily_loss");
+
+    // No kind param at all when the filter is empty — never kind=.
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/alerts?page=1&limit=20");
+    expect(mock.mock.calls[1]?.[0]).toBe(
+      "/api/cp/alerts?page=2&limit=20&kind=breaker_daily_loss",
+    );
+    for (const call of mock.mock.calls) {
+      expect(call[1]).toEqual({ cache: "no-store" });
+    }
+    expect(page.items[0]?.strategy_id).toBeNull();
+  });
+
+  it("fetchGlobalAlerts surfaces the tenant-principal 403 verbatim (UI gates, not the client)", async () => {
+    stubFetch(jsonResponse(403, { code: "FORBIDDEN", message: "env-class read" }));
+    const err = await fetchGlobalAlerts().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(403);
+    expect((err as ApiError).body?.code).toBe("FORBIDDEN");
+  });
+
+  it("fetchTokens GETs the metadata page (never plaintext)", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { items: [userToken, agentToken], total: 2, page: 1, limit: 20 }),
+    );
+
+    const page = await fetchTokens();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tokens?page=1&limit=20");
+    expect(mock.mock.calls[0]?.[1]).toEqual({ cache: "no-store" });
+    expect(page.items[0]?.principal).toBe("user");
+    expect(page.items[1]?.strategy_id).toBe(STRATEGY_ID);
+  });
+
+  it("mintToken POSTs the exact user-token body and parses the plaintext-once echo", async () => {
+    const mock = stubFetch(jsonResponse(200, { ...userToken, token: "amx_plain_1" }));
+
+    const res = await mintToken({ principal: "user", role: "operator", label: "ops laptop" });
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tokens");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      '{"principal":"user","role":"operator","label":"ops laptop"}',
+    );
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.token).toBe("amx_plain_1");
+    expect(res.role).toBe("operator");
+    expect(res.strategy_id).toBeNull();
+  });
+
+  it("mintToken agent variant carries tenant_id + strategy_id and no role", async () => {
+    const mock = stubFetch(jsonResponse(200, { ...agentToken, token: "amx_plain_2" }));
+
+    const res = await mintToken({
+      tenant_id: "t-1",
+      principal: "agent",
+      strategy_id: STRATEGY_ID,
+      label: "runner",
+    });
+
+    // Undefined keys (role) are dropped by JSON.stringify — never sent as null.
+    expect(mock.mock.calls[0]?.[1]?.body).toBe(
+      `{"tenant_id":"t-1","principal":"agent","strategy_id":"${STRATEGY_ID}","label":"runner"}`,
+    );
+    expect(res.role).toBeNull();
+    expect(res.strategy_id).toBe(STRATEGY_ID);
+  });
+
+  it("revokeToken POSTs {token_id}/revoke with an empty object body and parses the revoked row", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { ...userToken, revoked_at: "2026-07-05T10:00:00Z" }),
+    );
+
+    const res = await revokeToken("tok-1");
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tokens/tok-1/revoke");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe("{}");
+    expect(res.revoked_at).toBe("2026-07-05T10:00:00Z");
   });
 });
 

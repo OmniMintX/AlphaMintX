@@ -10,6 +10,7 @@ import type { z } from "zod";
 import {
   alertsPageSchema,
   apiErrorBodySchema,
+  apiTokenSchema,
   approvalDecisionSchema,
   bootstrapResponseSchema,
   killClearResponseSchema,
@@ -20,6 +21,7 @@ import {
   loginResponseSchema,
   logoutResponseSchema,
   marketAnalysisResponseSchema,
+  mintedTokenSchema,
   paperGateReportSchema,
   platformSecretsResponseSchema,
   runDetailSchema,
@@ -32,12 +34,14 @@ import {
   strategySchema,
   tenantSchema,
   tenantsResponseSchema,
+  tokensPageSchema,
   usersResponseSchema,
   type AlertsPage,
   type AnalysisInterval,
   type AnalysisLocale,
   type AnalysisMarket,
   type ApiErrorBody,
+  type ApiToken,
   type ApprovalDecision,
   type ApprovalRequest,
   type BinanceEnv,
@@ -55,6 +59,8 @@ import {
   type LoginResponse,
   type LogoutResponse,
   type MarketAnalysisResponse,
+  type MintedToken,
+  type MintTokenRequest,
   type PaperGateReport,
   type PlatformSecretsResponse,
   type RunDetail,
@@ -67,6 +73,7 @@ import {
   type Strategy,
   type Tenant,
   type TenantsResponse,
+  type TokensPage,
   type UsersResponse,
 } from "./schema";
 import { DEFAULT_LIMIT } from "./pagination";
@@ -343,6 +350,42 @@ export function createTenant(name: string): Promise<Tenant> {
 
 export function fetchUsers(): Promise<UsersResponse> {
   return apiGet("/users", usersResponseSchema);
+}
+
+// ---- Global safety alerts (env-class read) -----------------------------------------
+
+// Platform-wide safety_alerts feed: the same rows and pagination envelope as
+// the per-strategy feed. Env-class only — platform_admin web sessions can
+// read it; a tenant principal's 403 surfaces verbatim as ApiError (the UI
+// gates the surface, this client never pre-suppresses). kind is an
+// exact-match filter, omitted from the query entirely when empty.
+export function fetchGlobalAlerts(
+  page = 1,
+  limit = DEFAULT_LIMIT,
+  kind = "",
+): Promise<AlertsPage> {
+  return apiGet("/alerts", alertsPageSchema, { page, limit, kind: kind || undefined });
+}
+
+// ---- API tokens (multi-tenant-rbac.md §Token lifecycle) ----------------------------
+
+// Token METADATA list — plaintext and hashes never ride this wire.
+export function fetchTokens(page = 1, limit = DEFAULT_LIMIT): Promise<TokensPage> {
+  return apiGet("/tokens", tokensPageSchema, { page, limit });
+}
+
+// Mints an API token; the response carries the plaintext `token` exactly
+// once — it is never retrievable again (every later read is metadata only).
+// tenant_id in the body is only meaningful for env-admin/platform_admin
+// callers.
+export function mintToken(req: MintTokenRequest): Promise<MintedToken> {
+  return proxyPost("/api/cp/tokens", req, mintedTokenSchema);
+}
+
+// Revokes a token (idempotent server-side) with an empty JSON body; answers
+// the now-revoked metadata row.
+export function revokeToken(tokenId: string): Promise<ApiToken> {
+  return proxyPost(`/api/cp/tokens/${tokenId}/revoke`, {}, apiTokenSchema);
 }
 
 // ---- Auth (session shell) --------------------------------------------------------

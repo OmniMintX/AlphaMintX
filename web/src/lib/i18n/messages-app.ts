@@ -70,4 +70,59 @@ export const messagesApp = {
   "admin.tbl.status": { en: "Status", vi: "Trạng thái" },
   "admin.platform": { en: "platform", vi: "nền tảng" },
   "admin.disabled": { en: "disabled", vi: "vô hiệu hóa" },
+
+  // ---- admin: API tokens ----
+  "admin.tokens.title": { en: "API tokens", vi: "API token" },
+  "admin.tokens.mint": { en: "Mint token", vi: "Tạo token" },
+  "admin.tokens.cancel": { en: "Cancel", vi: "Hủy" },
+  "admin.tokens.principal": { en: "Principal", vi: "Chủ thể" },
+  "admin.tokens.strategy": { en: "Strategy ID", vi: "ID chiến lược" },
+  "admin.tokens.label": { en: "Label", vi: "Nhãn" },
+  "admin.tokens.label.ph": {
+    en: "what this token is for",
+    vi: "token này dùng để làm gì",
+  },
+  "admin.tokens.tenant.ph": { en: "select a tenant…", vi: "chọn tenant…" },
+  "admin.tokens.role.ph": { en: "select a role…", vi: "chọn vai trò…" },
+  "admin.tokens.tbl.rolestrategy": {
+    en: "Role / Strategy",
+    vi: "Vai trò / Chiến lược",
+  },
+  "admin.tokens.active": { en: "active", vi: "hoạt động" },
+  "admin.tokens.revoked": { en: "revoked", vi: "đã thu hồi" },
+  "admin.tokens.revoke": { en: "Revoke", vi: "Thu hồi" },
+  "admin.tokens.revoke.confirm": {
+    en: "Confirm revoke",
+    vi: "Xác nhận thu hồi",
+  },
+  "admin.tokens.warn.once": {
+    en: "Copy this token now — it is shown this one time only and can never be retrieved again.",
+    vi: "Sao chép token này ngay — token chỉ hiển thị duy nhất lần này và không bao giờ có thể xem lại.",
+  },
+  "admin.tokens.copy": { en: "Copy", vi: "Sao chép" },
+  "admin.tokens.copied": {
+    en: "Copied to clipboard.",
+    vi: "Đã sao chép vào clipboard.",
+  },
+  "admin.tokens.none": { en: "No API tokens yet.", vi: "Chưa có API token nào." },
+  "admin.tokens.none.hint": {
+    en: "Mint a token with the button above.",
+    vi: "Tạo token bằng nút phía trên.",
+  },
+  "admin.tokens.err.label": {
+    en: "Label is required.",
+    vi: "Bắt buộc nhập nhãn.",
+  },
+  "admin.tokens.err.tenant": {
+    en: "Select a tenant.",
+    vi: "Hãy chọn tenant.",
+  },
+  "admin.tokens.err.role": {
+    en: "User tokens require a role.",
+    vi: "Token người dùng cần có vai trò.",
+  },
+  "admin.tokens.err.strategy": {
+    en: "Agent tokens require a strategy ID.",
+    vi: "Token agent cần có ID chiến lược.",
+  },
 } as const satisfies Record<string, Msg>;

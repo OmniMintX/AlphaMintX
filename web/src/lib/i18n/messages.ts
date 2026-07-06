@@ -260,4 +260,32 @@ export const messages = {
     en: "Users appear here once they are added to a tenant.",
     vi: "Người dùng sẽ hiện ở đây sau khi được thêm vào tenant.",
   },
+
+  // ---- safety alerts feed (platform_admin only) ----
+  "nav.alerts": { en: "Safety alerts", vi: "Cảnh báo an toàn" },
+  "alerts.title": { en: "Safety alerts", vi: "Cảnh báo an toàn" },
+  "alerts.sub": {
+    en: "Platform-wide safety alert feed — kills, breakers, and watchdog events, newest first.",
+    vi: "Luồng cảnh báo an toàn toàn nền tảng — kill, breaker và sự kiện watchdog, mới nhất trước.",
+  },
+  "alerts.tbl.kind": { en: "Kind", vi: "Loại" },
+  "alerts.tbl.strategy": { en: "Strategy", vi: "Chiến lược" },
+  "alerts.tbl.ref": { en: "Ref", vi: "Tham chiếu" },
+  "alerts.tbl.recorded": { en: "Recorded at", vi: "Ghi nhận lúc" },
+  "alerts.tbl.details": { en: "Details", vi: "Chi tiết" },
+  "alerts.filter.label": { en: "Filter by kind", vi: "Lọc theo loại" },
+  "alerts.filter.clear": { en: "Clear", vi: "Xóa lọc" },
+  "alerts.empty": { en: "No safety alerts yet.", vi: "Chưa có cảnh báo an toàn nào." },
+  "alerts.empty.hint": {
+    en: "Kill, breaker, and watchdog events appear here as they are recorded.",
+    vi: "Sự kiện kill, breaker và watchdog sẽ hiện ở đây khi được ghi nhận.",
+  },
+  "alerts.empty.filtered": {
+    en: "No alerts match this kind filter — try clearing it.",
+    vi: "Không có cảnh báo nào khớp bộ lọc loại này — hãy thử xóa bộ lọc.",
+  },
+  "alerts.denied": {
+    en: "Safety alerts are restricted to platform administrators.",
+    vi: "Cảnh báo an toàn chỉ dành cho quản trị viên nền tảng.",
+  },
 } as const satisfies Record<string, Msg>;

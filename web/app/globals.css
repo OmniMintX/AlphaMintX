@@ -475,6 +475,14 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   margin: 0;
 }
 
+/* ---------- Alerts feed ---------- */
+
+.alerts-filter { margin-bottom: 12px; }
+.alerts-filter .input { width: 14rem; }
+.tbl .alert-ref { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.details-row td { padding: 8px 12px 14px; background: var(--bg-subtle); }
+.details-row .codeblock { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---------- Timeline ---------- */
 
 .timeline { list-style: none; margin: 0; padding: 0; }

@@ -25,6 +25,7 @@ const ICONS = {
   reasoning: "M3 3h10v8H8l-3 3v-3H3z",
   settings: "M2 4h12M10 2v4M2 8h12M5 6v4M2 12h12M9 10v4",
   admin: "M8 2l5 1.5V8c0 3-2 4.8-5 6-3-1.2-5-3-5-6V3.5z",
+  alerts: "M8 2a4 4 0 0 0-4 4v3l-1.5 2.5h11L12 9V6a4 4 0 0 0-4-4zM6.5 13.5a1.5 1.5 0 0 0 3 0",
 } as const;
 
 // Session identity for nav decisions and the footer; a failed fetch leaves
@@ -98,6 +99,9 @@ export function SidebarNav() {
           </NavItem>
           <NavItem href="/admin" icon="admin">
             {t("nav.admin")}
+          </NavItem>
+          <NavItem href="/alerts" icon="alerts">
+            {t("nav.alerts")}
           </NavItem>
         </div>
       )}

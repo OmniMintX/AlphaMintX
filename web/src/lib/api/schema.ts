@@ -502,6 +502,48 @@ export const usersResponseSchema = z.strictObject({
   items: z.array(adminUserSchema),
 });
 
+// ---- API tokens (multi-tenant-rbac.md §Token lifecycle) ---------------------------
+
+// principal is server-constrained to exactly {user, agent} — an enum (the
+// binanceEnvSchema precedent), unlike role, which stays the open-set
+// display-only string.
+export const tokenPrincipalSchema = z.enum(["user", "agent"]);
+
+// Token METADATA as served by GET /tokens — never the plaintext or hash.
+// user tokens carry role and no strategy_id; agent tokens the inverse — the
+// server enforces the pairing, this mirror only shapes the fields.
+export const apiTokenSchema = z.strictObject({
+  token_id: z.string().min(1),
+  tenant_id: z.string().min(1),
+  principal: tokenPrincipalSchema,
+  role: z.string().min(1).nullable(),
+  strategy_id: uuid.nullable(),
+  label: z.string().min(1),
+  created_by: z.string().min(1),
+  created_at: utcTimestamp,
+  revoked_at: utcTimestamp.nullable(),
+});
+
+export const tokensPageSchema = paginated(apiTokenSchema);
+
+// POST /tokens 200 envelope: the stored row PLUS the plaintext `token`,
+// returned exactly once — every later read is metadata only.
+export const mintedTokenSchema = apiTokenSchema.extend({
+  token: z.string().min(1),
+});
+
+// Body of POST /tokens: tenant_id is only meaningful for env-admin /
+// platform_admin callers; user tokens carry role and no strategy_id, agent
+// tokens carry strategy_id and no role. Undefined keys are dropped by
+// JSON.stringify — never sent as null.
+export interface MintTokenRequest {
+  tenant_id?: string;
+  principal: TokenPrincipal;
+  role?: string;
+  strategy_id?: string;
+  label: string;
+}
+
 // ---- Auth (session shell) --------------------------------------------------------
 
 // The session identity as returned by /api/auth/me and inside the login
@@ -608,6 +650,10 @@ export type Tenant = z.infer<typeof tenantSchema>;
 export type TenantsResponse = z.infer<typeof tenantsResponseSchema>;
 export type AdminUser = z.infer<typeof adminUserSchema>;
 export type UsersResponse = z.infer<typeof usersResponseSchema>;
+export type TokenPrincipal = z.infer<typeof tokenPrincipalSchema>;
+export type ApiToken = z.infer<typeof apiTokenSchema>;
+export type TokensPage = z.infer<typeof tokensPageSchema>;
+export type MintedToken = z.infer<typeof mintedTokenSchema>;
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
 export type SignupResponse = z.infer<typeof signupResponseSchema>;

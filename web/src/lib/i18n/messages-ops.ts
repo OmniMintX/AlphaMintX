@@ -253,15 +253,22 @@ export const messagesOps = {
   "run.by": { en: "by", vi: "bởi" },
   "run.at": { en: "at", vi: "lúc" },
 
-  // ---- reasoning viewer (Phase-0 fixtures) ----
+  // ---- reasoning viewer (live persisted traces) ----
   "reason.title": { en: "Reasoning viewer", vi: "Trình xem suy luận" },
-  "reason.sub.1": {
-    en: "Golden-fixture trace (Phase 0). Proposal",
-    vi: "Vết golden-fixture (Phase 0). Proposal",
+  "reason.live.sub": {
+    en: "Live persisted reasoning traces — pick a strategy and run to inspect its analysts, debate, proposal, and verdict.",
+    vi: "Vết suy luận trực tiếp đã lưu — chọn một chiến lược và run để xem analyst, tranh luận, proposal và phán quyết.",
   },
-  "reason.sub.2": { en: "verdict", vi: "verdict" },
-  "reason.proposal": { en: "Proposal", vi: "Proposal" },
-  "reason.k.evaluatedat": { en: "evaluated at", vi: "đánh giá lúc" },
-  "reason.k.dailypnl": { en: "daily realized PnL", vi: "PnL thực hiện trong ngày" },
-  "reason.k.dailyloss": { en: "daily loss limit", vi: "giới hạn lỗ ngày" },
+  "reason.pick.strategy": { en: "Strategy", vi: "Chiến lược" },
+  "reason.pick.run": { en: "Run", vi: "Run" },
+  "reason.empty.strategies": { en: "No strategies yet.", vi: "Chưa có chiến lược nào." },
+  "reason.empty.strategies.hint": {
+    en: "Create a strategy and let it run — its reasoning traces will appear here.",
+    vi: "Tạo một chiến lược và để nó chạy — vết suy luận của nó sẽ xuất hiện ở đây.",
+  },
+  "reason.empty.runs": {
+    en: "No runs for this strategy yet.",
+    vi: "Chiến lược này chưa có run nào.",
+  },
+  "reason.open.run": { en: "Open full run page →", vi: "Mở trang run đầy đủ →" },
 } as const satisfies Record<string, Msg>;

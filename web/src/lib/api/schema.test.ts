@@ -11,11 +11,13 @@ import {
   agentTraceSchema,
   alertsPageSchema,
   apiErrorBodySchema,
+  apiTokenSchema,
   approvalDecisionSchema,
   approvalRequestSchema,
   buildLimitChanges,
   limitChangeResponseSchema,
   limitsStatusSchema,
+  mintedTokenSchema,
   paperGateReportSchema,
   platformSecretSchema,
   platformSecretsResponseSchema,
@@ -27,6 +29,7 @@ import {
   strategiesPageSchema,
   tenantSchema,
   tenantsResponseSchema,
+  tokensPageSchema,
   usersResponseSchema,
 } from "./schema";
 
@@ -652,6 +655,83 @@ describe("platform secrets envelopes", () => {
     expect(platformSecretsResponseSchema.safeParse({ items: [], extra: 1 }).success).toBe(false);
     expect(
       secretWriteResponseSchema.safeParse({ secret: binanceSecretItem, extra: 1 }).success,
+    ).toBe(false);
+  });
+});
+
+// ---- API tokens (multi-tenant-rbac.md §Token lifecycle) ----------------------------
+
+const userToken = {
+  token_id: "tok-1",
+  tenant_id: "t-1",
+  principal: "user",
+  role: "operator",
+  strategy_id: null,
+  label: "ops laptop",
+  created_by: "u-1",
+  created_at: "2026-07-05T09:00:00Z",
+  revoked_at: null,
+};
+
+const agentToken = {
+  ...userToken,
+  token_id: "tok-2",
+  principal: "agent",
+  role: null,
+  strategy_id: STRATEGY_ID,
+  label: "runner",
+};
+
+describe("apiTokenSchema / tokensPageSchema", () => {
+  it("parses user (role, no strategy) and agent (strategy, no role) variants", () => {
+    expect(apiTokenSchema.parse(userToken).role).toBe("operator");
+    expect(apiTokenSchema.parse(userToken).strategy_id).toBeNull();
+    expect(apiTokenSchema.parse(agentToken).role).toBeNull();
+    expect(apiTokenSchema.parse(agentToken).strategy_id).toBe(STRATEGY_ID);
+  });
+
+  it("accepts a revoked row and an unknown role as a plain string (open set)", () => {
+    expect(
+      apiTokenSchema.parse({ ...userToken, revoked_at: "2026-07-05T10:00:00Z" }).revoked_at,
+    ).toBe("2026-07-05T10:00:00Z");
+    expect(apiTokenSchema.parse({ ...userToken, role: "some_future_role" }).role).toBe(
+      "some_future_role",
+    );
+  });
+
+  it("rejects an unknown principal (server-constrained enum, unlike role)", () => {
+    expect(apiTokenSchema.safeParse({ ...userToken, principal: "service" }).success).toBe(false);
+  });
+
+  it("parses the pagination envelope", () => {
+    const page = tokensPageSchema.parse({
+      items: [userToken, agentToken],
+      total: 2,
+      page: 1,
+      limit: 20,
+    });
+    expect(page.items[1]?.principal).toBe("agent");
+  });
+
+  it("rejects unknown keys (strictObject pinned; plaintext/hash never ride list reads)", () => {
+    expect(apiTokenSchema.safeParse({ ...userToken, extra: 1 }).success).toBe(false);
+    expect(apiTokenSchema.safeParse({ ...userToken, token: "leak" }).success).toBe(false);
+    expect(apiTokenSchema.safeParse({ ...userToken, token_hash: "leak" }).success).toBe(false);
+  });
+});
+
+describe("mintedTokenSchema", () => {
+  it("parses the mint echo: the token row PLUS the plaintext, returned exactly once", () => {
+    const parsed = mintedTokenSchema.parse({ ...agentToken, token: "amx_plain_2" });
+    expect(parsed.token).toBe("amx_plain_2");
+    expect(parsed.strategy_id).toBe(STRATEGY_ID);
+  });
+
+  it("rejects a missing or empty plaintext token and unknown keys", () => {
+    expect(mintedTokenSchema.safeParse(userToken).success).toBe(false);
+    expect(mintedTokenSchema.safeParse({ ...userToken, token: "" }).success).toBe(false);
+    expect(
+      mintedTokenSchema.safeParse({ ...userToken, token: "amx_plain_1", extra: 1 }).success,
     ).toBe(false);
   });
 });
