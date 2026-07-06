@@ -1028,3 +1028,30 @@ html[data-theme="light"] .auth-card {
   font-size: 12.5px;
   color: var(--text-2);
 }
+
+/* ---------- Admin platform ops ---------- */
+
+/* Danger disclosure card (/admin platform kill switch): border picks up the
+   error tint (same red as .banner-error) so the most dangerous control reads
+   as such at a glance. */
+.danger-card { border-color: rgba(229, 83, 75, 0.35); }
+
+/* Typed-acknowledgment input: mono + tracking so the literal is easy to
+   compare character-for-character against the placeholder. */
+.ack-input { font-family: var(--mono); letter-spacing: 0.04em; }
+
+/* Inline op result (kill epoch, backup artifact): quiet strip, dismiss right. */
+.result-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.result-line .dismiss { margin-left: auto; }
+.kill-epoch { font-family: var(--mono); font-weight: 650; color: var(--red); }

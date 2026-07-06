@@ -125,4 +125,77 @@ export const messagesApp = {
     en: "Agent tokens require a strategy ID.",
     vi: "Token agent cần có ID chiến lược.",
   },
+
+  // ---- billing ----
+  "nav.billing": { en: "Billing", vi: "Thanh toán" },
+  "billing.title": { en: "Billing", vi: "Thanh toán" },
+  "billing.sub": {
+    en: "Monthly LLM-cost invoices and reconciliation runs against client-reported costs.",
+    vi: "Hóa đơn chi phí LLM hàng tháng và các lần đối soát với chi phí do client báo cáo.",
+  },
+  "billing.invoices": { en: "Invoices", vi: "Hóa đơn" },
+  "billing.recons": { en: "Reconciliations", vi: "Đối soát" },
+  "billing.denied": {
+    en: "Billing is restricted to tenant admins, owners, and platform administrators.",
+    vi: "Trang thanh toán chỉ dành cho quản trị viên tenant, chủ sở hữu và quản trị viên nền tảng.",
+  },
+  "billing.empty.invoices": { en: "No invoices yet.", vi: "Chưa có hóa đơn nào." },
+  "billing.empty.invoices.hint": {
+    en: "Invoices appear here once a billing period is generated.",
+    vi: "Hóa đơn sẽ xuất hiện tại đây khi một kỳ thanh toán được tạo.",
+  },
+  "billing.empty.recons": { en: "No reconciliation runs yet.", vi: "Chưa có lần đối soát nào." },
+  "billing.empty.recons.hint": {
+    en: "Reconciliation runs appear here after invoices are checked against client-reported costs.",
+    vi: "Các lần đối soát sẽ xuất hiện tại đây sau khi hóa đơn được đối chiếu với chi phí do client báo cáo.",
+  },
+  "billing.tbl.period": { en: "Period", vi: "Kỳ" },
+  "billing.tbl.tenant": { en: "Tenant", vi: "Tenant" },
+  "billing.tbl.total": { en: "Total (USD)", vi: "Tổng (USD)" },
+  "billing.tbl.lines": { en: "Lines", vi: "Số dòng" },
+  "billing.tbl.generated": { en: "Generated at", vi: "Tạo lúc" },
+  "billing.tbl.details": { en: "Details", vi: "Chi tiết" },
+  "billing.tbl.strategy": { en: "Strategy", vi: "Chiến lược" },
+  "billing.tbl.model": { en: "Model", vi: "Model" },
+  "billing.tbl.entry": { en: "Entry type", vi: "Loại mục" },
+  "billing.tbl.origperiod": { en: "Original period", vi: "Kỳ gốc" },
+  "billing.tbl.intok": { en: "Input tokens", vi: "Token đầu vào" },
+  "billing.tbl.outtok": { en: "Output tokens", vi: "Token đầu ra" },
+  "billing.tbl.amount": { en: "Amount (USD)", vi: "Số tiền (USD)" },
+  "billing.tbl.status": { en: "Status", vi: "Trạng thái" },
+  "billing.tbl.counts": {
+    en: "Matched / Discrepancies",
+    vi: "Khớp / Chênh lệch",
+  },
+  "billing.tbl.totals": {
+    en: "Invoice / Matched (USD)",
+    vi: "Hóa đơn / Khớp (USD)",
+  },
+  "billing.tbl.runat": { en: "Run at", vi: "Chạy lúc" },
+  "billing.tbl.class": { en: "Class", vi: "Phân loại" },
+  "billing.tbl.request": { en: "Request", vi: "Yêu cầu" },
+  "billing.lines.empty": {
+    en: "This invoice has no lines.",
+    vi: "Hóa đơn này không có dòng nào.",
+  },
+  "billing.disc.empty": {
+    en: "No discrepancies in this run.",
+    vi: "Không có chênh lệch trong lần đối soát này.",
+  },
+  "billing.bucket.matched": {
+    en: "Matched client cost",
+    vi: "Chi phí client khớp",
+  },
+  "billing.bucket.orphan": {
+    en: "Orphan client cost",
+    vi: "Chi phí client không đối ứng",
+  },
+  "billing.bucket.estimated": {
+    en: "Estimated client cost",
+    vi: "Chi phí client ước tính",
+  },
+  "billing.bucket.unattributed": {
+    en: "Unattributed client cost",
+    vi: "Chi phí client chưa quy nguồn",
+  },
 } as const satisfies Record<string, Msg>;

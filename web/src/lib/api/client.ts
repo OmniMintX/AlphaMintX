@@ -12,7 +12,11 @@ import {
   apiErrorBodySchema,
   apiTokenSchema,
   approvalDecisionSchema,
+  backupRunResultSchema,
+  backupsResponseSchema,
   bootstrapResponseSchema,
+  invoiceDetailSchema,
+  invoicesPageSchema,
   killClearResponseSchema,
   killResponseSchema,
   lifecycleResponseSchema,
@@ -23,7 +27,12 @@ import {
   marketAnalysisResponseSchema,
   mintedTokenSchema,
   paperGateReportSchema,
+  platformKillEventSchema,
   platformSecretsResponseSchema,
+  reconciliationDetailSchema,
+  reconciliationsPageSchema,
+  restoreAckResponseSchema,
+  restoreStatusSchema,
   runDetailSchema,
   runsPageSchema,
   safetyStatusSchema,
@@ -32,6 +41,7 @@ import {
   signupResponseSchema,
   strategiesPageSchema,
   strategySchema,
+  tenantKillEventSchema,
   tenantSchema,
   tenantsResponseSchema,
   tokensPageSchema,
@@ -44,8 +54,12 @@ import {
   type ApiToken,
   type ApprovalDecision,
   type ApprovalRequest,
+  type BackupRunResult,
+  type BackupsResponse,
   type BinanceEnv,
   type BootstrapResponse,
+  type InvoiceDetail,
+  type InvoicesPage,
   type KillClearRequest,
   type KillClearResponse,
   type KillRequest,
@@ -62,7 +76,12 @@ import {
   type MintedToken,
   type MintTokenRequest,
   type PaperGateReport,
+  type PlatformKillEvent,
   type PlatformSecretsResponse,
+  type ReconciliationDetail,
+  type ReconciliationsPage,
+  type RestoreAckResponse,
+  type RestoreStatus,
   type RunDetail,
   type RunsPage,
   type SafetyStatus,
@@ -72,6 +91,7 @@ import {
   type StrategiesPage,
   type Strategy,
   type Tenant,
+  type TenantKillEvent,
   type TenantsResponse,
   type TokensPage,
   type UsersResponse,
@@ -386,6 +406,98 @@ export function mintToken(req: MintTokenRequest): Promise<MintedToken> {
 // the now-revoked metadata row.
 export function revokeToken(tokenId: string): Promise<ApiToken> {
   return proxyPost(`/api/cp/tokens/${tokenId}/revoke`, {}, apiTokenSchema);
+}
+
+// ---- Billing: invoices & reconciliation (billing-and-metering.md) -------------------
+// Tenant sessions see ONLY their own tenant's rows; platform reads see every
+// tenant — scoping is server-side, this client never filters.
+
+export function fetchInvoices(page: number, limit = DEFAULT_LIMIT): Promise<InvoicesPage> {
+  return apiGet("/billing/invoices", invoicesPageSchema, { page, limit });
+}
+
+// One invoice with its lines; a foreign or absent invoice_id is the SAME
+// 404 UNKNOWN_INVOICE (no cross-tenant existence oracle).
+export function fetchInvoiceDetail(invoiceId: string): Promise<InvoiceDetail> {
+  return apiGet(`/billing/invoices/${invoiceId}`, invoiceDetailSchema);
+}
+
+export function fetchReconciliations(
+  page: number,
+  limit = DEFAULT_LIMIT,
+): Promise<ReconciliationsPage> {
+  return apiGet("/billing/reconciliations", reconciliationsPageSchema, { page, limit });
+}
+
+export function fetchReconciliationDetail(reconId: string): Promise<ReconciliationDetail> {
+  return apiGet(`/billing/reconciliations/${reconId}`, reconciliationDetailSchema);
+}
+
+// ---- Tenant / platform kill & clear (safety-wiring.md §Kill endpoints) --------------
+
+// Tenant-tier kill; the response acknowledges persistence only, never
+// effect completion.
+export function killTenant(tenantId: string, flatten: boolean): Promise<TenantKillEvent> {
+  return proxyPost(`/api/cp/tenants/${tenantId}/kill`, buildKillPayload(flatten), tenantKillEventSchema);
+}
+
+// Clears the standing tenant kill: observed_epoch is the displayed kill's
+// epoch (the LC-30 CAS token); a 409 CLEAR_CONFLICT surfaces verbatim.
+export function clearTenantKill(
+  tenantId: string,
+  reason: string,
+  observedEpoch: number,
+): Promise<KillClearResponse> {
+  return proxyPost(
+    `/api/cp/tenants/${tenantId}/kill/clear`,
+    buildClearPayload(reason, observedEpoch),
+    killClearResponseSchema,
+  );
+}
+
+// Platform-tier kill (env-admin only). ack is the operator-typed
+// acknowledgment threaded verbatim — the server owns the KILL-PLATFORM
+// literal and 400s anything else; this client never inlines it.
+export function killPlatform(ack: string, flatten: boolean): Promise<PlatformKillEvent> {
+  return proxyPost("/api/cp/platform/kill", { ack, flatten }, platformKillEventSchema);
+}
+
+// Clears the standing platform kill; the server requires the CLEAR-PLATFORM
+// ack — threaded verbatim, same as killPlatform.
+export function clearPlatformKill(
+  ack: string,
+  reason: string,
+  observedEpoch: number,
+): Promise<KillClearResponse> {
+  return proxyPost(
+    "/api/cp/platform/kill/clear",
+    { reason, observed_epoch: observedEpoch, ack },
+    killClearResponseSchema,
+  );
+}
+
+// ---- Platform ops: backups & restore gate (ops-backup.md, deploy-and-survive.md) ----
+
+// Takes one verified snapshot (OB-6): empty JSON body, env-admin only. A
+// concurrent run answers 409 BACKUP_IN_PROGRESS — never queued.
+export function runBackup(): Promise<BackupRunResult> {
+  return proxyPost("/api/cp/ops/backups/run", {}, backupRunResultSchema);
+}
+
+// OB-7 artifact list, newest first BY NAME; basenames only, never paths.
+export function fetchBackups(): Promise<BackupsResponse> {
+  return apiGet("/ops/backups", backupsResponseSchema);
+}
+
+// DS-6: whether the restore gate is 503-blocking proposals/approvals.
+export function fetchRestoreStatus(): Promise<RestoreStatus> {
+  return apiGet("/ops/restore", restoreStatusSchema);
+}
+
+// DS-5 ack (empty JSON body): clears the gate; an un-engaged gate is 409
+// RESTORE_GATE_NOT_ENGAGED and surfaces verbatim as ApiError.
+export function ackRestore(): Promise<RestoreAckResponse> {
+  return proxyPost("/api/cp/ops/restore/ack", {}, restoreAckResponseSchema);
 }
 
 // ---- Auth (session shell) --------------------------------------------------------

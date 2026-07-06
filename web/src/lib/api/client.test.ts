@@ -12,24 +12,35 @@ import {
   CP_PROXY_BASE,
   PAPER_GATE_POLL_INTERVAL_MS,
   POLL_INTERVAL_MS,
+  ackRestore,
   bootstrap,
   buildApprovalPayload,
   buildClearPayload,
   buildKillPayload,
   buildLifecyclePayload,
   buildUrl,
+  clearPlatformKill,
   clearStrategyKill,
+  clearTenantKill,
   createTenant,
   fetchAlerts,
+  fetchBackups,
   fetchGlobalAlerts,
+  fetchInvoiceDetail,
+  fetchInvoices,
   fetchLimits,
   fetchMe,
   fetchPaperGate,
   fetchPlatformSecrets,
+  fetchReconciliationDetail,
+  fetchReconciliations,
+  fetchRestoreStatus,
   fetchSafety,
   fetchTenants,
   fetchTokens,
   fetchUsers,
+  killPlatform,
+  killTenant,
   login,
   logout,
   mintToken,
@@ -38,6 +49,7 @@ import {
   postLifecycle,
   postLimits,
   revokeToken,
+  runBackup,
   setBinanceSecret,
   setLlmSecret,
   signup,
@@ -734,5 +746,254 @@ describe("auth helpers", () => {
     const err = await fetchMe().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(401);
+  });
+});
+
+
+// ---- Billing & platform ops (Phase 5) ------------------------------------------------
+
+const INVOICE_ID = "e7f8a9b0-c1d2-4e3f-8a4b-6c7d8e9f0a1b";
+const RECON_ID = "a9b0c1d2-e3f4-4a5b-8c6d-8e9f0a1b2c3d";
+
+const invoiceBody = {
+  invoice_id: INVOICE_ID,
+  tenant_id: "t-1",
+  period: "2026-06",
+  total_usd: "12.345678",
+  line_count: 1,
+  generated_at: "2026-07-01T00:00:05Z",
+};
+
+const invoiceLineBody = {
+  line_id: "f8a9b0c1-d2e3-4f4a-8b5c-7d8e9f0a1b2c",
+  invoice_id: INVOICE_ID,
+  strategy_id: STRATEGY_ID,
+  model: "gpt-4o",
+  entry_type: "usage",
+  original_period: null,
+  input_tokens: 120000,
+  output_tokens: 24000,
+  amount_usd: "12.345678",
+};
+
+const reconRunBody = {
+  recon_id: RECON_ID,
+  tenant_id: "t-1",
+  period: "2026-06",
+  invoice_id: INVOICE_ID,
+  status: "pass",
+  matched_count: 41,
+  discrepancy_count: 1,
+  matched_client_cost_usd: "12.345678",
+  orphan_client_cost_usd: "0",
+  estimated_client_cost_usd: "0",
+  unattributed_client_cost_usd: "0",
+  invoice_total_usd: "12.345678",
+  run_at: "2026-07-02T00:00:00Z",
+};
+
+const discrepancyBody = {
+  discrepancy_id: "b0c1d2e3-f4a5-4b6c-8d7e-9f0a1b2c3d4e",
+  recon_id: RECON_ID,
+  class: "unattributed",
+  request_id: null,
+  strategy_id: null,
+  details_json: "{}",
+};
+
+describe("billing fetchers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("GETs the invoice and reconciliation pages same-origin through /api/cp", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { items: [invoiceBody], total: 1, page: 1, limit: 20 }),
+      jsonResponse(200, { items: [reconRunBody], total: 1, page: 2, limit: 50 }),
+    );
+
+    const invoices = await fetchInvoices(1);
+    const recons = await fetchReconciliations(2, 50);
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/billing/invoices?page=1&limit=20");
+    expect(mock.mock.calls[1]?.[0]).toBe("/api/cp/billing/reconciliations?page=2&limit=50");
+    for (const call of mock.mock.calls) {
+      expect(call[1]).toEqual({ cache: "no-store" });
+    }
+    expect(invoices.items[0]?.total_usd).toBe("12.345678");
+    expect(recons.items[0]?.status).toBe("pass");
+  });
+
+  it("GETs the invoice and reconciliation details (nulls in discrepancies pass)", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { invoice: invoiceBody, lines: [invoiceLineBody] }),
+      jsonResponse(200, { run: reconRunBody, discrepancies: [discrepancyBody] }),
+    );
+
+    const invoice = await fetchInvoiceDetail(INVOICE_ID);
+    const recon = await fetchReconciliationDetail(RECON_ID);
+
+    expect(mock.mock.calls[0]?.[0]).toBe(`/api/cp/billing/invoices/${INVOICE_ID}`);
+    expect(mock.mock.calls[1]?.[0]).toBe(`/api/cp/billing/reconciliations/${RECON_ID}`);
+    expect(invoice.lines[0]?.original_period).toBeNull();
+    expect(recon.discrepancies[0]?.request_id).toBeNull();
+    expect(recon.discrepancies[0]?.strategy_id).toBeNull();
+  });
+
+  it("surfaces the no-oracle 404 verbatim as ApiError", async () => {
+    stubFetch(jsonResponse(404, { code: "UNKNOWN_INVOICE", message: "unknown invoice" }));
+    const err = await fetchInvoiceDetail(INVOICE_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).body?.code).toBe("UNKNOWN_INVOICE");
+  });
+});
+
+describe("tenant / platform kill and clear helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("killTenant/clearTenantKill POST the exact bodies to the tenant routes", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, {
+        event_id: "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b",
+        tenant_id: "t-1",
+        kill_epoch: 3,
+        recorded_at: "2026-07-05T12:00:00Z",
+        flatten: true,
+      }),
+      jsonResponse(200, {
+        clear_id: "a3b4c5d6-e7f8-4a9b-8c0d-2e3f4a5b6c7d",
+        scope: "tenant",
+        tenant_id: "t-1",
+        cleared_epoch: 4,
+        recorded_at: "2026-07-05T12:01:00Z",
+        superseded_event_ids: ["e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b"],
+      }),
+    );
+
+    const kill = await killTenant("t-1", true);
+    const clear = await clearTenantKill("t-1", "resolved", 3);
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/tenants/t-1/kill");
+    expect(mock.mock.calls[1]?.[0]).toBe("/api/cp/tenants/t-1/kill/clear");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"flatten":true}');
+    expect(mock.mock.calls[1]?.[1]?.body).toBe('{"reason":"resolved","observed_epoch":3}');
+    for (const call of mock.mock.calls) {
+      expect(call[1]?.headers).toEqual({ "content-type": "application/json" });
+    }
+    expect(kill.kill_epoch).toBe(3);
+    expect(clear.tenant_id).toBe("t-1");
+    expect(clear.strategy_id).toBeUndefined();
+  });
+
+  it("killPlatform/clearPlatformKill thread the operator-typed ack verbatim", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, {
+        event_id: "f2a3b4c5-d6e7-4f8a-9b0c-1d2e3f4a5b6c",
+        kill_epoch: 7,
+        recorded_at: "2026-07-05T12:00:00Z",
+        flatten: false,
+      }),
+      jsonResponse(200, {
+        clear_id: "b4c5d6e7-f8a9-4b0c-8d1e-3f4a5b6c7d8e",
+        scope: "platform",
+        cleared_epoch: 8,
+        recorded_at: "2026-07-05T12:01:00Z",
+        superseded_event_ids: [],
+      }),
+    );
+
+    const kill = await killPlatform("KILL-PLATFORM", false);
+    const clear = await clearPlatformKill("CLEAR-PLATFORM", "drill over", 7);
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/platform/kill");
+    expect(mock.mock.calls[1]?.[0]).toBe("/api/cp/platform/kill/clear");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe('{"ack":"KILL-PLATFORM","flatten":false}');
+    expect(mock.mock.calls[1]?.[1]?.body).toBe(
+      '{"reason":"drill over","observed_epoch":7,"ack":"CLEAR-PLATFORM"}',
+    );
+    expect(kill.kill_epoch).toBe(7);
+    expect(clear.tenant_id).toBeUndefined();
+    expect(clear.superseded_event_ids).toEqual([]);
+  });
+
+  it("surfaces a wrong-ack 400 verbatim — the server owns the literal, not this client", async () => {
+    stubFetch(
+      jsonResponse(400, {
+        code: "PLATFORM_KILL_ACK_REQUIRED",
+        message: 'platform kill requires the acknowledgment "ack": "KILL-PLATFORM"',
+      }),
+    );
+    const err = await killPlatform("kill-platform", false).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(400);
+    expect((err as ApiError).body?.code).toBe("PLATFORM_KILL_ACK_REQUIRED");
+  });
+});
+
+describe("backup and restore-gate helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const backupRunBody = {
+    artifact: "controlplane-20260706T020000Z.sqlite.gz",
+    bytes: 1048576,
+    sha256: "b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c",
+    tables: 24,
+    rows_total: 15320,
+    started_at: "2026-07-06T02:00:00Z",
+    finished_at: "2026-07-06T02:00:03Z",
+    verified: true,
+  };
+
+  it("runBackup POSTs an empty JSON body and parses the OB-6 result", async () => {
+    const mock = stubFetch(jsonResponse(200, backupRunBody));
+
+    const res = await runBackup();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/ops/backups/run");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe("{}");
+    expect(mock.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" });
+    expect(res.verified).toBe(true);
+  });
+
+  it("fetchBackups/fetchRestoreStatus GET same-origin (plain items, no page envelope)", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, {
+        items: [{ artifact: backupRunBody.artifact, bytes: 1048576, modified_at: "2026-07-06T02:00:03Z" }],
+      }),
+      jsonResponse(200, { engaged: true }),
+    );
+
+    const backups = await fetchBackups();
+    const restore = await fetchRestoreStatus();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/ops/backups");
+    expect(mock.mock.calls[1]?.[0]).toBe("/api/cp/ops/restore");
+    for (const call of mock.mock.calls) {
+      expect(call[1]).toEqual({ cache: "no-store" });
+    }
+    expect(backups.items[0]?.artifact).toBe(backupRunBody.artifact);
+    expect(restore.engaged).toBe(true);
+  });
+
+  it("ackRestore POSTs an empty JSON body and 409s verbatim when not engaged", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, { cleared: true }),
+      jsonResponse(409, { code: "RESTORE_GATE_NOT_ENGAGED", message: "restore gate is not engaged" }),
+    );
+
+    const res = await ackRestore();
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/ops/restore/ack");
+    expect(mock.mock.calls[0]?.[1]?.body).toBe("{}");
+    expect(res.cleared).toBe(true);
+
+    const err = await ackRestore().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as ApiError).body?.code).toBe("RESTORE_GATE_NOT_ENGAGED");
   });
 });

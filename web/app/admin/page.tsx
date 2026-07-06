@@ -1,19 +1,28 @@
 "use client";
 
 // Admin console (platform_admin only): tenant directory with inline create,
-// API token management (mint/revoke), plus the read-only user directory. A
+// API token management (mint/revoke), the read-only user directory, plus
+// platform ops — tenant/platform kill switches and backup & restore. A
 // non-admin session 403s on the data fetches — the ApiError message renders
 // in the error banner instead of the tables.
 
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 
 import {
+  ackRestore,
+  clearPlatformKill,
+  clearTenantKill,
   createTenant,
+  fetchBackups,
+  fetchRestoreStatus,
   fetchTenants,
   fetchTokens,
   fetchUsers,
+  killPlatform,
+  killTenant,
   mintToken,
   revokeToken,
+  runBackup,
 } from "../../src/lib/api/client";
 import type {
   MintTokenRequest,
@@ -39,6 +48,18 @@ function shortId(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id;
 }
 
+// Human-readable artifact size for the backups table.
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Observed epoch inputs must be a plain non-negative integer.
+function epochOk(s: string): boolean {
+  return /^[0-9]+$/.test(s.trim());
+}
+
 export default function AdminPage() {
   const { t } = useI18n();
   const tenants = usePoll(fetchTenants);
@@ -52,6 +73,8 @@ export default function AdminPage() {
         <TenantsCard tenants={tenants} />
         <TokensCard tenants={tenants.data?.items ?? []} />
         <UsersCard />
+        <SafetyCard />
+        <OpsCard />
       </div>
     </>
   );
@@ -62,6 +85,15 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per-row kill (arm/confirm + flatten) and clear (reason + observed epoch).
+  const [killArmed, setKillArmed] = useState<string | null>(null);
+  const [killFlatten, setKillFlatten] = useState(false);
+  const [clearOpen, setClearOpen] = useState<string | null>(null);
+  const [clearReason, setClearReason] = useState("");
+  const [clearEpoch, setClearEpoch] = useState("");
+  const [acting, setActing] = useState(false);
+  const [killDone, setKillDone] = useState<{ id: string; epoch: number } | null>(null);
+  const [clearDone, setClearDone] = useState<{ id: string; epoch: number } | null>(null);
 
   const create = async () => {
     setPending(true);
@@ -77,6 +109,47 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
     }
   };
 
+  const armKill = (id: string) => {
+    setClearOpen(null);
+    setKillArmed((cur) => (cur === id ? null : id));
+    setKillFlatten(false);
+  };
+
+  const openClear = (id: string) => {
+    setKillArmed(null);
+    setClearOpen((cur) => (cur === id ? null : id));
+    setClearReason("");
+    setClearEpoch("");
+  };
+
+  const kill = async (id: string) => {
+    setActing(true);
+    setError(null);
+    try {
+      const res = await killTenant(id, killFlatten);
+      setKillDone({ id, epoch: res.kill_epoch });
+      setKillArmed(null);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const clear = async (id: string) => {
+    setActing(true);
+    setError(null);
+    try {
+      const res = await clearTenantKill(id, clearReason.trim(), Number(clearEpoch.trim()));
+      setClearDone({ id, epoch: res.cleared_epoch });
+      setClearOpen(null);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setActing(false);
+    }
+  };
+
   return (
     <div className="card">
       <h3 className="card-title">{t("admin.tenants")}</h3>
@@ -87,6 +160,39 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
       {tenants.data && (
         <>
           {error && <ErrorBanner message={error} />}
+          {killDone && (
+            <div className="result-line" role="status">
+              <span>
+                {t("admin.tenants.kill.done", { id: shortId(killDone.id), epoch: killDone.epoch })}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost dismiss"
+                aria-label={t("admin.kill.dismiss")}
+                onClick={() => setKillDone(null)}
+              >
+                &times;
+              </button>
+            </div>
+          )}
+          {clearDone && (
+            <div className="result-line" role="status">
+              <span>
+                {t("admin.tenants.clear.done", {
+                  id: shortId(clearDone.id),
+                  epoch: clearDone.epoch,
+                })}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost dismiss"
+                aria-label={t("admin.kill.dismiss")}
+                onClick={() => setClearDone(null)}
+              >
+                &times;
+              </button>
+            </div>
+          )}
           <div className="row">
             <input
               className="input"
@@ -117,17 +223,120 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
                   <th scope="col">{t("tbl.id")}</th>
                   <th scope="col">{t("tbl.name")}</th>
                   <th scope="col">{t("tbl.created")}</th>
+                  <th scope="col" aria-label={t("admin.tenants.actions")} />
                 </tr>
               </thead>
               <tbody>
                 {tenants.data.items.map((tn) => (
-                  <tr key={tn.tenant_id}>
-                    <td className="mono-cell" title={tn.tenant_id} aria-label={tn.tenant_id}>
-                      {shortId(tn.tenant_id)}
-                    </td>
-                    <td>{tn.name}</td>
-                    <td className="mono-cell">{fmtTime(tn.created_at)}</td>
-                  </tr>
+                  <Fragment key={tn.tenant_id}>
+                    <tr>
+                      <td className="mono-cell" title={tn.tenant_id} aria-label={tn.tenant_id}>
+                        {shortId(tn.tenant_id)}
+                      </td>
+                      <td>{tn.name}</td>
+                      <td className="mono-cell">{fmtTime(tn.created_at)}</td>
+                      <td>
+                        <div className="row" style={{ gap: 6 }}>
+                          <button
+                            type="button"
+                            className="btn btn-danger"
+                            disabled={acting}
+                            aria-expanded={killArmed === tn.tenant_id}
+                            onClick={() => armKill(tn.tenant_id)}
+                          >
+                            {t("admin.tenants.kill.btn")}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={acting}
+                            aria-expanded={clearOpen === tn.tenant_id}
+                            onClick={() => openClear(tn.tenant_id)}
+                          >
+                            {t("admin.tenants.clear.btn")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {killArmed === tn.tenant_id && (
+                      <tr className="details-row">
+                        <td colSpan={4}>
+                          <div className="row">
+                            <label className="checkbox-row">
+                              <input
+                                type="checkbox"
+                                checked={killFlatten}
+                                onChange={(e) => setKillFlatten(e.target.checked)}
+                              />
+                              {t("admin.kill.flatten")}
+                            </label>
+                            <button
+                              type="button"
+                              className="btn btn-danger"
+                              disabled={acting}
+                              onClick={() => void kill(tn.tenant_id)}
+                            >
+                              {t("admin.tenants.kill.confirm")}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={acting}
+                              onClick={() => setKillArmed(null)}
+                            >
+                              {t("admin.kill.cancel")}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {clearOpen === tn.tenant_id && (
+                      <tr className="details-row">
+                        <td colSpan={4}>
+                          <div className="row">
+                            <label className="field" htmlFor={`clr-reason-${tn.tenant_id}`}>
+                              <span className="field-label">{t("admin.kill.reason.label")}</span>
+                              <input
+                                id={`clr-reason-${tn.tenant_id}`}
+                                className="input"
+                                style={{ minWidth: "16rem" }}
+                                placeholder={t("admin.kill.reason.ph")}
+                                value={clearReason}
+                                onChange={(e) => setClearReason(e.target.value)}
+                              />
+                            </label>
+                            <label className="field" htmlFor={`clr-epoch-${tn.tenant_id}`}>
+                              <span className="field-label">{t("admin.kill.epoch.label")}</span>
+                              <input
+                                id={`clr-epoch-${tn.tenant_id}`}
+                                type="number"
+                                className="input mono"
+                                value={clearEpoch}
+                                onChange={(e) => setClearEpoch(e.target.value)}
+                              />
+                              <span className="faint small">{t("admin.kill.epoch.hint")}</span>
+                            </label>
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={acting || clearReason.trim() === "" || !epochOk(clearEpoch)}
+                              onClick={() => void clear(tn.tenant_id)}
+                            >
+                              {t("admin.tenants.clear.submit")}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              disabled={acting}
+                              onClick={() => setClearOpen(null)}
+                            >
+                              {t("admin.kill.cancel")}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -535,6 +744,351 @@ function UsersCard() {
             </tbody>
           </table>
         ))}
+    </div>
+  );
+}
+
+// Platform-wide kill switch: collapsed by default behind a disclosure. The
+// confirm buttons stay disabled until the operator has typed the exact
+// literal; the typed value is passed through to the API unchanged — the
+// typing itself is the safeguard, the literal is never hardcoded in the call.
+function SafetyCard() {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [ack, setAck] = useState("");
+  const [flatten, setFlatten] = useState(false);
+  const [clearAck, setClearAck] = useState("");
+  const [clearReason, setClearReason] = useState("");
+  const [clearEpoch, setClearEpoch] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [killedEpoch, setKilledEpoch] = useState<number | null>(null);
+  const [clearedEpoch, setClearedEpoch] = useState<number | null>(null);
+
+  const kill = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await killPlatform(ack, flatten);
+      setKilledEpoch(res.kill_epoch);
+      setAck("");
+      setFlatten(false);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const clear = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await clearPlatformKill(clearAck, clearReason.trim(), Number(clearEpoch.trim()));
+      setClearedEpoch(res.cleared_epoch);
+      setClearAck("");
+      setClearReason("");
+      setClearEpoch("");
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className="card danger-card">
+      <h3 className="card-title">{t("admin.safety.title")}</h3>
+      <div className="row">
+        <button
+          type="button"
+          className="btn btn-danger"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? t("admin.safety.close") : t("admin.safety.open")}
+        </button>
+      </div>
+      {open && (
+        <>
+          <div className="banner banner-error" role="alert">
+            <span aria-hidden>&#9888;</span>
+            <span>{t("admin.safety.warn")}</span>
+          </div>
+          {error && <ErrorBanner message={error} />}
+          <div className="row">
+            <label className="field" htmlFor="pk-ack">
+              <span className="field-label">{t("admin.safety.ack.label")}</span>
+              <input
+                id="pk-ack"
+                className="input ack-input"
+                style={{ minWidth: "16rem" }}
+                placeholder="KILL-PLATFORM"
+                autoComplete="off"
+                spellCheck={false}
+                value={ack}
+                onChange={(e) => setAck(e.target.value)}
+              />
+            </label>
+          </div>
+          <label className="checkbox-row" style={{ marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={flatten}
+              onChange={(e) => setFlatten(e.target.checked)}
+            />
+            {t("admin.kill.flatten")}
+          </label>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={pending || ack !== "KILL-PLATFORM"}
+              onClick={() => void kill()}
+            >
+              {t("admin.safety.kill.btn")}
+            </button>
+          </div>
+          {killedEpoch !== null && (
+            <div className="result-line" role="status">
+              <span>{t("admin.safety.killed")}</span>
+              <span className="kill-epoch">{killedEpoch}</span>
+              <button
+                type="button"
+                className="btn btn-ghost dismiss"
+                aria-label={t("admin.kill.dismiss")}
+                onClick={() => setKilledEpoch(null)}
+              >
+                &times;
+              </button>
+            </div>
+          )}
+          <hr className="divider" />
+          <p className="field-label" style={{ margin: "0 0 6px" }}>
+            {t("admin.safety.clear.title")}
+          </p>
+          <div className="row">
+            <label className="field" htmlFor="pk-clear-ack">
+              <span className="field-label">{t("admin.safety.clear.ack.label")}</span>
+              <input
+                id="pk-clear-ack"
+                className="input ack-input"
+                style={{ minWidth: "16rem" }}
+                placeholder="CLEAR-PLATFORM"
+                autoComplete="off"
+                spellCheck={false}
+                value={clearAck}
+                onChange={(e) => setClearAck(e.target.value)}
+              />
+            </label>
+            <label className="field" htmlFor="pk-clear-reason">
+              <span className="field-label">{t("admin.kill.reason.label")}</span>
+              <input
+                id="pk-clear-reason"
+                className="input"
+                style={{ minWidth: "16rem" }}
+                placeholder={t("admin.kill.reason.ph")}
+                value={clearReason}
+                onChange={(e) => setClearReason(e.target.value)}
+              />
+            </label>
+            <label className="field" htmlFor="pk-clear-epoch">
+              <span className="field-label">{t("admin.kill.epoch.label")}</span>
+              <input
+                id="pk-clear-epoch"
+                type="number"
+                className="input mono"
+                value={clearEpoch}
+                onChange={(e) => setClearEpoch(e.target.value)}
+              />
+              <span className="faint small">{t("admin.kill.epoch.hint")}</span>
+            </label>
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn"
+              disabled={
+                pending ||
+                clearAck !== "CLEAR-PLATFORM" ||
+                clearReason.trim() === "" ||
+                !epochOk(clearEpoch)
+              }
+              onClick={() => void clear()}
+            >
+              {t("admin.safety.clear.btn")}
+            </button>
+          </div>
+          {clearedEpoch !== null && (
+            <div className="result-line" role="status">
+              <span>{t("admin.safety.cleared")}</span>
+              <span className="kill-epoch">{clearedEpoch}</span>
+              <button
+                type="button"
+                className="btn btn-ghost dismiss"
+                aria-label={t("admin.kill.dismiss")}
+                onClick={() => setClearedEpoch(null)}
+              >
+                &times;
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Backup & restore: the restore gate poll drives a red banner + arm/confirm
+// acknowledge; the backups list 404s when CONTROLPLANE_BACKUP_DIR is unset on
+// this deployment — that renders as a neutral hint, not an error.
+function OpsCard() {
+  const { t } = useI18n();
+  const restore = usePoll(fetchRestoreStatus);
+  const backups = usePoll(fetchBackups);
+  const [ackArmed, setAckArmed] = useState(false);
+  const [ackPending, setAckPending] = useState(false);
+  const [runPending, setRunPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof runBackup>> | null>(null);
+
+  const acknowledge = async () => {
+    setAckPending(true);
+    setError(null);
+    try {
+      await ackRestore();
+      restore.refresh();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setAckPending(false);
+      setAckArmed(false);
+    }
+  };
+
+  const run = async () => {
+    setRunPending(true);
+    setError(null);
+    try {
+      const res = await runBackup();
+      setResult(res);
+      backups.refresh();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setRunPending(false);
+    }
+  };
+
+  const backupsUnconfigured = backups.errorStatus === 404;
+
+  return (
+    <div className="card">
+      <h3 className="card-title">{t("admin.ops.title")}</h3>
+      {error && <ErrorBanner message={error} />}
+      {restore.error && <ErrorBanner message={restore.error} />}
+      {!restore.data && !restore.error && (
+        <div className="skeleton" style={{ height: 24 }} role="status" aria-busy="true" />
+      )}
+      {restore.data &&
+        (restore.data.engaged ? (
+          <>
+            <div className="banner banner-error" role="alert">
+              <span aria-hidden>&#9888;</span>
+              <span>{t("admin.ops.restore.engaged")}</span>
+            </div>
+            <div className="row">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={ackPending}
+                onClick={() => (ackArmed ? void acknowledge() : setAckArmed(true))}
+              >
+                {ackArmed ? t("admin.ops.restore.ack.confirm") : t("admin.ops.restore.ack")}
+              </button>
+              {ackArmed && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={ackPending}
+                  onClick={() => setAckArmed(false)}
+                >
+                  {t("admin.kill.cancel")}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="faint small">{t("admin.ops.restore.ok")}</p>
+        ))}
+      <hr className="divider" />
+      {backupsUnconfigured ? (
+        <p className="faint small">{t("admin.ops.backups.notconfigured")}</p>
+      ) : (
+        <>
+          {backups.error && <ErrorBanner message={backups.error} />}
+          {!backups.data && !backups.error && (
+            <div className="skeleton" style={{ height: 80 }} role="status" aria-busy="true" />
+          )}
+          {backups.data && (
+            <>
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={runPending}
+                  onClick={() => void run()}
+                >
+                  {t("admin.ops.backups.run")}
+                </button>
+              </div>
+              {result && (
+                <div className="result-line" role="status">
+                  <span className="mono">{result.artifact}</span>
+                  <span className="mono" title={result.sha256}>
+                    {result.sha256.slice(0, 12)}…
+                  </span>
+                  <span className={`badge ${result.verified ? "badge-green" : "badge-yellow"}`}>
+                    {result.verified ? t("admin.ops.verified") : t("admin.ops.unverified")}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost dismiss"
+                    aria-label={t("admin.kill.dismiss")}
+                    onClick={() => setResult(null)}
+                  >
+                    &times;
+                  </button>
+                </div>
+              )}
+              {backups.data.items.length === 0 ? (
+                <div className="empty" role="status">
+                  {t("admin.ops.backups.none")}
+                </div>
+              ) : (
+                <table className="tbl" style={{ marginTop: 10 }}>
+                  <thead>
+                    <tr>
+                      <th scope="col">{t("admin.ops.tbl.artifact")}</th>
+                      <th scope="col">{t("admin.ops.tbl.size")}</th>
+                      <th scope="col">{t("admin.ops.tbl.modified")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backups.data.items.map((b) => (
+                      <tr key={b.artifact}>
+                        <td className="mono-cell">{b.artifact}</td>
+                        <td className="mono-cell">{fmtBytes(b.bytes)}</td>
+                        <td className="mono-cell">{fmtTime(b.modified_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }

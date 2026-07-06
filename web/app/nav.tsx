@@ -26,7 +26,13 @@ const ICONS = {
   settings: "M2 4h12M10 2v4M2 8h12M5 6v4M2 12h12M9 10v4",
   admin: "M8 2l5 1.5V8c0 3-2 4.8-5 6-3-1.2-5-3-5-6V3.5z",
   alerts: "M8 2a4 4 0 0 0-4 4v3l-1.5 2.5h11L12 9V6a4 4 0 0 0-4-4zM6.5 13.5a1.5 1.5 0 0 0 3 0",
+  billing: "M4 2h8v12l-2-1.5L8 14l-2-1.5L4 14zM6 5.5h4M6 8h4M6 10.5h2.5",
 } as const;
+
+// Billing is visible to tenant admins/owners and platform admins; role is an
+// open set elsewhere, but these three literals gate a nav link only — the
+// page itself still handles the 403.
+const BILLING_ROLES = new Set(["admin", "owner", "platform_admin"]);
 
 // Session identity for nav decisions and the footer; a failed fetch leaves
 // it null (identity is cosmetic — data fetches own the 401 redirect).
@@ -90,6 +96,11 @@ export function SidebarNav() {
         <NavItem href="/reasoning" icon="reasoning">
           {t("nav.reasoning")}
         </NavItem>
+        {user !== null && user.role !== "platform_admin" && BILLING_ROLES.has(user.role) && (
+          <NavItem href="/billing" icon="billing">
+            {t("nav.billing")}
+          </NavItem>
+        )}
       </div>
       {user?.role === "platform_admin" && (
         <div className="nav-group">
@@ -102,6 +113,9 @@ export function SidebarNav() {
           </NavItem>
           <NavItem href="/alerts" icon="alerts">
             {t("nav.alerts")}
+          </NavItem>
+          <NavItem href="/billing" icon="billing">
+            {t("nav.billing")}
           </NavItem>
         </div>
       )}

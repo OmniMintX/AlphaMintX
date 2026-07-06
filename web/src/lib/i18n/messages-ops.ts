@@ -1,5 +1,6 @@
-// Message catalog for the operator surfaces: /strategies (+detail/runs)
-// and /reasoning, plus shared list UI (pager, error banner, state badges).
+// Message catalog for the operator surfaces: /strategies (+detail/runs),
+// /reasoning and the /admin platform ops cards, plus shared list UI
+// (pager, error banner, state badges).
 
 import type { Msg } from "./messages";
 
@@ -271,4 +272,78 @@ export const messagesOps = {
     vi: "Chiến lược này chưa có run nào.",
   },
   "reason.open.run": { en: "Open full run page →", vi: "Mở trang run đầy đủ →" },
+
+  // ---- admin platform ops (admin/page.tsx) ----
+  // Shared kill/clear form pieces (tenant rows + platform card).
+  "admin.kill.flatten": { en: "flatten positions", vi: "flatten vị thế" },
+  "admin.kill.cancel": { en: "cancel", vi: "hủy" },
+  "admin.kill.dismiss": { en: "dismiss", vi: "đóng" },
+  "admin.kill.reason.label": { en: "Reason", vi: "Lý do" },
+  "admin.kill.reason.ph": { en: "reason (required)", vi: "lý do (bắt buộc)" },
+  "admin.kill.epoch.label": { en: "Observed epoch", vi: "Epoch quan sát được" },
+  "admin.kill.epoch.hint": {
+    en: "From the kill acknowledgment or the alerts feed.",
+    vi: "Lấy từ xác nhận kill hoặc từ luồng cảnh báo.",
+  },
+
+  "admin.tenants.actions": { en: "Actions", vi: "Thao tác" },
+  "admin.tenants.kill.btn": { en: "Kill", vi: "Kill" },
+  "admin.tenants.kill.confirm": { en: "confirm kill", vi: "xác nhận kill" },
+  "admin.tenants.kill.done": {
+    en: "Tenant {id} killed — kill epoch {epoch} (keep it: clearing requires this epoch).",
+    vi: "Đã kill tenant {id} — kill epoch {epoch} (giữ lại: cần epoch này để xóa kill).",
+  },
+  "admin.tenants.clear.btn": { en: "Clear", vi: "Xóa kill" },
+  "admin.tenants.clear.submit": { en: "clear kill", vi: "xóa kill" },
+  "admin.tenants.clear.done": {
+    en: "Kill cleared for tenant {id} — epoch {epoch}.",
+    vi: "Đã xóa kill cho tenant {id} — epoch {epoch}.",
+  },
+
+  "admin.safety.title": { en: "Platform kill switch", vi: "Kill switch toàn nền tảng" },
+  "admin.safety.open": { en: "Show kill switch", vi: "Hiện kill switch" },
+  "admin.safety.close": { en: "Hide kill switch", vi: "Ẩn kill switch" },
+  "admin.safety.warn": {
+    en: "Platform-wide kill: immediately halts every strategy for every tenant. This is the most dangerous action in the product.",
+    vi: "Kill toàn nền tảng: dừng ngay lập tức mọi chiến lược của mọi tenant. Đây là thao tác nguy hiểm nhất của sản phẩm.",
+  },
+  "admin.safety.ack.label": {
+    en: 'Type "KILL-PLATFORM" exactly (case-sensitive)',
+    vi: 'Nhập chính xác "KILL-PLATFORM" (phân biệt hoa thường)',
+  },
+  "admin.safety.kill.btn": { en: "kill platform", vi: "kill toàn nền tảng" },
+  "admin.safety.killed": {
+    en: "Platform kill recorded — kill epoch:",
+    vi: "Đã ghi nhận kill toàn nền tảng — kill epoch:",
+  },
+  "admin.safety.clear.title": { en: "Clear platform kill", vi: "Xóa kill toàn nền tảng" },
+  "admin.safety.clear.ack.label": {
+    en: 'Type "CLEAR-PLATFORM" exactly (case-sensitive)',
+    vi: 'Nhập chính xác "CLEAR-PLATFORM" (phân biệt hoa thường)',
+  },
+  "admin.safety.clear.btn": { en: "clear platform kill", vi: "xóa kill toàn nền tảng" },
+  "admin.safety.cleared": {
+    en: "Platform kill cleared — epoch:",
+    vi: "Đã xóa kill toàn nền tảng — epoch:",
+  },
+
+  "admin.ops.title": { en: "Backup & restore", vi: "Sao lưu & khôi phục" },
+  "admin.ops.restore.engaged": {
+    en: "Restore gate engaged — approvals and proposals return 503 until acknowledged.",
+    vi: "Cổng khôi phục đang kích hoạt — phê duyệt và proposal trả về 503 cho tới khi được xác nhận.",
+  },
+  "admin.ops.restore.ok": { en: "Restore gate not engaged.", vi: "Cổng khôi phục không kích hoạt." },
+  "admin.ops.restore.ack": { en: "Acknowledge restore", vi: "Xác nhận khôi phục" },
+  "admin.ops.restore.ack.confirm": { en: "confirm acknowledge", vi: "xác nhận lần nữa" },
+  "admin.ops.backups.notconfigured": {
+    en: "Backups are not configured on this deployment.",
+    vi: "Sao lưu chưa được cấu hình trên bản triển khai này.",
+  },
+  "admin.ops.backups.none": { en: "No backup artifacts yet.", vi: "Chưa có bản sao lưu nào." },
+  "admin.ops.backups.run": { en: "Run backup", vi: "Chạy sao lưu" },
+  "admin.ops.tbl.artifact": { en: "Artifact", vi: "Artifact" },
+  "admin.ops.tbl.size": { en: "Size", vi: "Kích thước" },
+  "admin.ops.tbl.modified": { en: "Modified", vi: "Sửa đổi" },
+  "admin.ops.verified": { en: "verified", vi: "đã kiểm chứng" },
+  "admin.ops.unverified": { en: "not verified", vi: "chưa kiểm chứng" },
 } as const satisfies Record<string, Msg>;

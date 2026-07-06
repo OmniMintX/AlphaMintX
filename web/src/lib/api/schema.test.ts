@@ -14,19 +14,33 @@ import {
   apiTokenSchema,
   approvalDecisionSchema,
   approvalRequestSchema,
+  backupRunResultSchema,
+  backupsResponseSchema,
   buildLimitChanges,
+  discrepancySchema,
+  invoiceDetailSchema,
+  invoiceLineSchema,
+  invoiceSchema,
+  invoicesPageSchema,
+  killClearResponseSchema,
   limitChangeResponseSchema,
   limitsStatusSchema,
   mintedTokenSchema,
   paperGateReportSchema,
+  platformKillEventSchema,
   platformSecretSchema,
   platformSecretsResponseSchema,
+  reconciliationDetailSchema,
+  reconciliationsPageSchema,
+  restoreAckResponseSchema,
+  restoreStatusSchema,
   runDetailSchema,
   runsPageSchema,
   safetyAlertSchema,
   safetyStatusSchema,
   secretWriteResponseSchema,
   strategiesPageSchema,
+  tenantKillEventSchema,
   tenantSchema,
   tenantsResponseSchema,
   tokensPageSchema,
@@ -765,5 +779,245 @@ describe("tenant / user directory schemas", () => {
     expect(usersResponseSchema.safeParse({ items: [{ ...user, extra: 1 }] }).success).toBe(false);
     const { disabled: _disabled, ...partial } = user;
     expect(usersResponseSchema.safeParse({ items: [partial] }).success).toBe(false);
+  });
+});
+
+// ---- Billing: invoices & reconciliation (billing-and-metering.md) -------------------
+
+const INVOICE_ID = "e7f8a9b0-c1d2-4e3f-8a4b-6c7d8e9f0a1b";
+const RECON_ID = "a9b0c1d2-e3f4-4a5b-8c6d-8e9f0a1b2c3d";
+const REQUEST_ID = "c1d2e3f4-a5b6-4c7d-8e8f-0a1b2c3d4e5f";
+
+const invoice = {
+  invoice_id: INVOICE_ID,
+  tenant_id: "tenant-1",
+  period: "2026-06",
+  total_usd: "12.345678",
+  line_count: 2,
+  generated_at: "2026-07-01T00:00:05Z",
+};
+
+const usageLine = {
+  line_id: "f8a9b0c1-d2e3-4f4a-8b5c-7d8e9f0a1b2c",
+  invoice_id: INVOICE_ID,
+  strategy_id: STRATEGY_ID,
+  model: "gpt-4o",
+  entry_type: "usage",
+  original_period: null,
+  input_tokens: 120000,
+  output_tokens: 24000,
+  amount_usd: "10.000000",
+};
+
+const carryOverLine = {
+  ...usageLine,
+  line_id: "d2e3f4a5-b6c7-4d8e-8f9a-1b2c3d4e5f6a",
+  entry_type: "carry_over",
+  original_period: "2026-05",
+  amount_usd: "2.345678",
+};
+
+describe("invoice schemas", () => {
+  it("parses the pagination envelope and the detail with lines", () => {
+    const page = invoicesPageSchema.parse({ items: [invoice], total: 1, page: 1, limit: 20 });
+    expect(page.items[0]?.total_usd).toBe("12.345678");
+    const detail = invoiceDetailSchema.parse({ invoice, lines: [usageLine, carryOverLine] });
+    expect(detail.lines[0]?.original_period).toBeNull();
+    expect(detail.lines[1]?.original_period).toBe("2026-05");
+  });
+
+  it("accepts an unknown entry_type as a plain string (open set)", () => {
+    expect(invoiceLineSchema.parse({ ...usageLine, entry_type: "credit_note" }).entry_type).toBe(
+      "credit_note",
+    );
+  });
+
+  it("rejects a non-YYYY-MM period and a non-decimal total", () => {
+    expect(invoiceSchema.safeParse({ ...invoice, period: "2026-13" }).success).toBe(false);
+    expect(invoiceSchema.safeParse({ ...invoice, period: "2026-06-01" }).success).toBe(false);
+    expect(invoiceSchema.safeParse({ ...invoice, total_usd: "not-a-number" }).success).toBe(false);
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(invoiceSchema.safeParse({ ...invoice, extra: 1 }).success).toBe(false);
+    expect(invoiceLineSchema.safeParse({ ...usageLine, extra: 1 }).success).toBe(false);
+    expect(
+      invoiceDetailSchema.safeParse({ invoice, lines: [usageLine], extra: 1 }).success,
+    ).toBe(false);
+  });
+});
+
+const reconRun = {
+  recon_id: RECON_ID,
+  tenant_id: "tenant-1",
+  period: "2026-06",
+  invoice_id: INVOICE_ID,
+  status: "fail",
+  matched_count: 41,
+  discrepancy_count: 2,
+  matched_client_cost_usd: "10.5",
+  orphan_client_cost_usd: "0.25",
+  estimated_client_cost_usd: "1.5",
+  unattributed_client_cost_usd: "0.095678",
+  invoice_total_usd: "12.345678",
+  run_at: "2026-07-02T00:00:00Z",
+};
+
+const discrepancy = {
+  discrepancy_id: "b0c1d2e3-f4a5-4b6c-8d7e-9f0a1b2c3d4e",
+  recon_id: RECON_ID,
+  class: "mismatch_tokens",
+  request_id: REQUEST_ID,
+  strategy_id: STRATEGY_ID,
+  details_json: '{"client_input_tokens":10,"gateway_input_tokens":12}',
+};
+
+describe("reconciliation schemas", () => {
+  it("parses the pagination envelope with decimal-string cost sums (ADR-0003)", () => {
+    const page = reconciliationsPageSchema.parse({
+      items: [reconRun],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+    expect(page.items[0]?.matched_client_cost_usd).toBe("10.5");
+    expect(page.items[0]?.status).toBe("fail");
+  });
+
+  it("parses the detail incl. null request_id/strategy_id and an open-set class", () => {
+    const detail = reconciliationDetailSchema.parse({
+      run: reconRun,
+      discrepancies: [
+        discrepancy,
+        { ...discrepancy, class: "some_future_class", request_id: null, strategy_id: null },
+      ],
+    });
+    expect(detail.discrepancies[0]?.request_id).toBe(REQUEST_ID);
+    expect(detail.discrepancies[1]?.request_id).toBeNull();
+    expect(detail.discrepancies[1]?.strategy_id).toBeNull();
+  });
+
+  it("rejects a non-decimal cost sum and unknown keys", () => {
+    expect(
+      reconciliationsPageSchema.safeParse({
+        items: [{ ...reconRun, orphan_client_cost_usd: "oops" }],
+        total: 1,
+        page: 1,
+        limit: 20,
+      }).success,
+    ).toBe(false);
+    expect(discrepancySchema.safeParse({ ...discrepancy, extra: 1 }).success).toBe(false);
+    expect(
+      reconciliationDetailSchema.safeParse({ run: reconRun, discrepancies: [], extra: 1 }).success,
+    ).toBe(false);
+  });
+});
+
+// ---- Tenant / platform kill & clear (safety-wiring.md §Kill endpoints) --------------
+
+const tenantKillEvent = {
+  event_id: "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b",
+  tenant_id: "tenant-1",
+  kill_epoch: 3,
+  recorded_at: "2026-07-05T12:00:00Z",
+  flatten: true,
+};
+
+const clearResponse = {
+  clear_id: "a3b4c5d6-e7f8-4a9b-8c0d-2e3f4a5b6c7d",
+  scope: "tenant",
+  tenant_id: "tenant-1",
+  cleared_epoch: 4,
+  recorded_at: "2026-07-05T12:01:00Z",
+  superseded_event_ids: ["e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b"],
+};
+
+describe("tenant / platform kill events and the LC-33 clear envelope", () => {
+  it("parses the tenant kill acknowledgment", () => {
+    const parsed = tenantKillEventSchema.parse(tenantKillEvent);
+    expect(parsed.kill_epoch).toBe(3);
+    expect(parsed.flatten).toBe(true);
+  });
+
+  it("parses the platform kill acknowledgment (no scope-id field)", () => {
+    const parsed = platformKillEventSchema.parse({
+      event_id: "f2a3b4c5-d6e7-4f8a-9b0c-1d2e3f4a5b6c",
+      kill_epoch: 7,
+      recorded_at: "2026-07-05T12:00:00Z",
+      flatten: false,
+    });
+    expect(parsed.kill_epoch).toBe(7);
+    expect(platformKillEventSchema.safeParse(tenantKillEvent).success).toBe(false);
+  });
+
+  it("parses the clear envelope with tenant_id (tenant tier) and with neither id (platform)", () => {
+    const tenantClear = killClearResponseSchema.parse(clearResponse);
+    expect(tenantClear.tenant_id).toBe("tenant-1");
+    expect(tenantClear.strategy_id).toBeUndefined();
+    const { tenant_id: _tenantId, ...platformClear } = clearResponse;
+    const parsed = killClearResponseSchema.parse({ ...platformClear, scope: "platform" });
+    expect(parsed.tenant_id).toBeUndefined();
+    expect(parsed.superseded_event_ids).toHaveLength(1);
+  });
+
+  it("parses the clear envelope with strategy_id (strategy tier)", () => {
+    const { tenant_id: _tenantId, ...rest } = clearResponse;
+    const parsed = killClearResponseSchema.parse({
+      ...rest,
+      scope: "strategy",
+      strategy_id: STRATEGY_ID,
+    });
+    expect(parsed.strategy_id).toBe(STRATEGY_ID);
+  });
+
+  it("rejects unknown keys", () => {
+    expect(tenantKillEventSchema.safeParse({ ...tenantKillEvent, extra: 1 }).success).toBe(false);
+    expect(killClearResponseSchema.safeParse({ ...clearResponse, extra: 1 }).success).toBe(false);
+  });
+});
+
+// ---- Ops: backups & restore gate (ops-backup.md, deploy-and-survive.md) -------------
+
+const backupRun = {
+  artifact: "controlplane-20260706T020000Z.sqlite.gz",
+  bytes: 1048576,
+  sha256: "b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c",
+  tables: 24,
+  rows_total: 15320,
+  started_at: "2026-07-06T02:00:00Z",
+  finished_at: "2026-07-06T02:00:03Z",
+  verified: true,
+};
+
+const backupItem = {
+  artifact: "controlplane-20260706T020000Z.sqlite.gz",
+  bytes: 1048576,
+  modified_at: "2026-07-06T02:00:03Z",
+};
+
+describe("backup and restore-gate schemas", () => {
+  it("parses the OB-6 run result and the OB-7 list (plain items, no page envelope)", () => {
+    expect(backupRunResultSchema.parse(backupRun).verified).toBe(true);
+    const list = backupsResponseSchema.parse({ items: [backupItem] });
+    expect(list.items[0]?.bytes).toBe(1048576);
+    expect(backupsResponseSchema.parse({ items: [] }).items).toEqual([]);
+  });
+
+  it("rejects a page-envelope shape on the backup list", () => {
+    expect(
+      backupsResponseSchema.safeParse({ items: [backupItem], total: 1, page: 1, limit: 20 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("parses the DS-6 status and the DS-5 ack bodies", () => {
+    expect(restoreStatusSchema.parse({ engaged: true }).engaged).toBe(true);
+    expect(restoreStatusSchema.parse({ engaged: false }).engaged).toBe(false);
+    expect(restoreAckResponseSchema.parse({ cleared: true }).cleared).toBe(true);
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(backupRunResultSchema.safeParse({ ...backupRun, path: "/leak" }).success).toBe(false);
+    expect(restoreStatusSchema.safeParse({ engaged: true, extra: 1 }).success).toBe(false);
   });
 });

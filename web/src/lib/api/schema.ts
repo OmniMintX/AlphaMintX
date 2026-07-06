@@ -411,6 +411,25 @@ export const killClearResponseSchema = z.strictObject({
   superseded_event_ids: z.array(uuid),
 });
 
+// Tenant-tier kill acknowledgment — persistence only, never effects.
+export const tenantKillEventSchema = z.strictObject({
+  event_id: uuid,
+  tenant_id: z.string().min(1),
+  kill_epoch: z.number().int().min(0),
+  recorded_at: utcTimestamp,
+  flatten: z.boolean(),
+});
+
+// Platform-tier kill acknowledgment (no scope-id field: both ids are NULL
+// on the row). The POST body's ack is the operator-typed literal threaded
+// verbatim — the server owns "KILL-PLATFORM", never this client.
+export const platformKillEventSchema = z.strictObject({
+  event_id: uuid,
+  kill_epoch: z.number().int().min(0),
+  recorded_at: utcTimestamp,
+  flatten: z.boolean(),
+});
+
 // ---- Platform secrets (Settings) -------------------------------------------------
 
 // Exchange environment for the platform Binance credential.
@@ -582,6 +601,121 @@ export const meResponseSchema = z.strictObject({
 // Logout answers an empty object.
 export const logoutResponseSchema = z.strictObject({});
 
+// ---- Billing: invoices (billing-and-metering.md §Billing) -------------------------
+
+// YYYY-MM UTC calendar month (the control plane's periodPattern).
+export const billingPeriod = z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/);
+
+// One immutable invoices row; total_usd is a decimal STRING (ADR-0003).
+export const invoiceSchema = z.strictObject({
+  invoice_id: uuid,
+  tenant_id: z.string().min(1),
+  period: billingPeriod,
+  total_usd: decimal,
+  line_count: z.number().int().min(0),
+  generated_at: utcTimestamp,
+});
+
+export const invoicesPageSchema = paginated(invoiceSchema);
+
+// One invoice_lines row. entry_type is an OPEN set (usage, carry_over,
+// future credit_note) — a plain string, never an enum; original_period is
+// non-null iff entry_type is carry_over (server-enforced pairing).
+export const invoiceLineSchema = z.strictObject({
+  line_id: uuid,
+  invoice_id: uuid,
+  strategy_id: uuid,
+  model: z.string().min(1),
+  entry_type: z.string().min(1),
+  original_period: billingPeriod.nullable(),
+  input_tokens: z.number().int().min(0),
+  output_tokens: z.number().int().min(0),
+  amount_usd: decimal,
+});
+
+// GET .../invoices/{invoice_id} envelope; lines is never null.
+export const invoiceDetailSchema = z.strictObject({
+  invoice: invoiceSchema,
+  lines: z.array(invoiceLineSchema),
+});
+
+// ---- Billing: reconciliation (billing-and-metering.md §Reconciliation) ------------
+
+// One reconciliation_runs row. status stays an open string (display only);
+// the four client-cost sums are decimal STRINGS (ADR-0003) that partition
+// the client set exactly (matched + orphan + estimated + unattributed ==
+// invoice_total_usd, the arithmetic identity).
+export const reconciliationRunSchema = z.strictObject({
+  recon_id: uuid,
+  tenant_id: z.string().min(1),
+  period: billingPeriod,
+  invoice_id: uuid,
+  status: z.string().min(1),
+  matched_count: z.number().int().min(0),
+  discrepancy_count: z.number().int().min(0),
+  matched_client_cost_usd: decimal,
+  orphan_client_cost_usd: decimal,
+  estimated_client_cost_usd: decimal,
+  unattributed_client_cost_usd: decimal,
+  invoice_total_usd: decimal,
+  run_at: utcTimestamp,
+});
+
+export const reconciliationsPageSchema = paginated(reconciliationRunSchema);
+
+// One discrepancies row: class is the OPEN set of classification names;
+// details_json is the stored TEXT verbatim (the safety-alert precedent).
+export const discrepancySchema = z.strictObject({
+  discrepancy_id: uuid,
+  recon_id: uuid,
+  class: z.string().min(1),
+  request_id: z.string().min(1).nullable(),
+  strategy_id: uuid.nullable(),
+  details_json: z.string(),
+});
+
+// GET .../reconciliations/{recon_id} envelope; discrepancies never null.
+export const reconciliationDetailSchema = z.strictObject({
+  run: reconciliationRunSchema,
+  discrepancies: z.array(discrepancySchema),
+});
+
+// ---- Ops: backups & restore gate (ops-backup.md, deploy-and-survive.md) -----------
+
+// POST /ops/backups/run 200 (OB-6): one verified snapshot.
+export const backupRunResultSchema = z.strictObject({
+  artifact: z.string().min(1),
+  bytes: z.number().int().min(0),
+  sha256: z.string().min(1),
+  tables: z.number().int().min(0),
+  rows_total: z.number().int().min(0),
+  started_at: utcTimestamp,
+  finished_at: utcTimestamp,
+  verified: z.boolean(),
+});
+
+// One OB-7 list entry — the artifact basename only, never a path (OB-13).
+export const backupItemSchema = z.strictObject({
+  artifact: z.string().min(1),
+  bytes: z.number().int().min(0),
+  modified_at: utcTimestamp,
+});
+
+// GET /ops/backups envelope: a plain items list, NOT the page envelope.
+export const backupsResponseSchema = z.strictObject({
+  items: z.array(backupItemSchema),
+});
+
+// GET /ops/restore (DS-6): whether the restore gate 503-blocks writes.
+export const restoreStatusSchema = z.strictObject({
+  engaged: z.boolean(),
+});
+
+// POST /ops/restore/ack 200 (DS-5).
+export const restoreAckResponseSchema = z.strictObject({
+  cleared: z.boolean(),
+});
+
 // ---- Errors --------------------------------------------------------------------
 
 // Error codes named by the spec; servers may add more, so the schema accepts
@@ -638,6 +772,8 @@ export type KillRequest = z.infer<typeof killRequestSchema>;
 export type KillResponse = z.infer<typeof killResponseSchema>;
 export type KillClearRequest = z.infer<typeof killClearRequestSchema>;
 export type KillClearResponse = z.infer<typeof killClearResponseSchema>;
+export type TenantKillEvent = z.infer<typeof tenantKillEventSchema>;
+export type PlatformKillEvent = z.infer<typeof platformKillEventSchema>;
 export type BinanceEnv = z.infer<typeof binanceEnvSchema>;
 export type PlatformSecret = z.infer<typeof platformSecretSchema>;
 export type PlatformSecretsResponse = z.infer<typeof platformSecretsResponseSchema>;
@@ -660,3 +796,16 @@ export type SignupResponse = z.infer<typeof signupResponseSchema>;
 export type BootstrapResponse = z.infer<typeof bootstrapResponseSchema>;
 export type MeResponse = z.infer<typeof meResponseSchema>;
 export type LogoutResponse = z.infer<typeof logoutResponseSchema>;
+export type Invoice = z.infer<typeof invoiceSchema>;
+export type InvoicesPage = z.infer<typeof invoicesPageSchema>;
+export type InvoiceLine = z.infer<typeof invoiceLineSchema>;
+export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
+export type ReconciliationRun = z.infer<typeof reconciliationRunSchema>;
+export type ReconciliationsPage = z.infer<typeof reconciliationsPageSchema>;
+export type Discrepancy = z.infer<typeof discrepancySchema>;
+export type ReconciliationDetail = z.infer<typeof reconciliationDetailSchema>;
+export type BackupRunResult = z.infer<typeof backupRunResultSchema>;
+export type BackupItem = z.infer<typeof backupItemSchema>;
+export type BackupsResponse = z.infer<typeof backupsResponseSchema>;
+export type RestoreStatus = z.infer<typeof restoreStatusSchema>;
+export type RestoreAckResponse = z.infer<typeof restoreAckResponseSchema>;
