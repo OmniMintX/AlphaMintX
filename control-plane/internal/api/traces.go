@@ -124,6 +124,9 @@ func validateTrace(env *store.TraceEnvelope) string {
 		if c.InputTokens < 0 || c.OutputTokens < 0 {
 			return fmt.Sprintf("model_costs[%d] negative token count", i)
 		}
+		if c.CostUSD.String() == "" {
+			return fmt.Sprintf("model_costs[%d].cost_usd is required", i)
+		}
 		if c.RequestID != nil && !uuidPattern.MatchString(*c.RequestID) {
 			return fmt.Sprintf("model_costs[%d].request_id is not a lowercase UUID", i)
 		}

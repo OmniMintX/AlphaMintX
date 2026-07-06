@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -85,6 +86,11 @@ func TestTraceValidation(t *testing.T) {
 		{"model cost request id", func(env *store.TraceEnvelope) {
 			bad := "NOT-A-UUID"
 			env.ModelCosts[0].RequestID = &bad
+		}},
+		{"model cost usd missing", func(env *store.TraceEnvelope) {
+			// A zero-value Decimal is what json.Unmarshal leaves behind when
+			// the cost_usd key is absent; it must not reach the store as "".
+			env.ModelCosts[0].CostUSD = contract.Decimal{}
 		}},
 		{"budget date", func(env *store.TraceEnvelope) { env.BudgetState.UTCDate = "20260704" }},
 		{"transcripts size", func(env *store.TraceEnvelope) {
