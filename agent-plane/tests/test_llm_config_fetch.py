@@ -7,6 +7,8 @@ both ``httpx.MockTransport``.
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
 
@@ -113,7 +115,11 @@ def test_config_without_models_falls_back_to_defaults() -> None:
     assert client._role_models["market_analyst"] == "gpt-4o-mini"
 
 
-def test_fetched_unpriced_model_fails_fast() -> None:
+def test_fetched_unpriced_model_starts_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unpriced fetched model is a startup WARNING, not an error (spec §2)."""
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -125,12 +131,15 @@ def test_fetched_unpriced_model_fails_fast() -> None:
             },
         )
 
-    with pytest.raises(LLMConfigError, match="price table"):
-        create_llm_client(
+    with caplog.at_level(logging.WARNING):
+        client = create_llm_client(
             environ=dict(LIVE_ENV),
             transport=_MINTROUTER_TRANSPORT,
             config_transport=httpx.MockTransport(handler),
         )
+    assert isinstance(client, MintRouterLLM)
+    assert client._role_models["trader"] == "not-in-price-table"
+    assert any("not in the price table" in rec.message for rec in caplog.records)
 
 
 def test_fetched_empty_model_raises_config_error() -> None:

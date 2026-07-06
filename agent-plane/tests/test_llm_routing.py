@@ -34,9 +34,9 @@ from alphamintx_agent_plane.llm.errors import (
     RateLimitedError,
 )
 from alphamintx_agent_plane.llm.factory import create_llm_client
-from alphamintx_agent_plane.llm.mintrouter import MintRouterLLM
+from alphamintx_agent_plane.llm.mintrouter import MintRouterLLM, validate_role_models
 from alphamintx_agent_plane.llm.pricing import STALENESS_DAYS, PriceTable
-from alphamintx_agent_plane.llm.stub import ROLE_MARKET_ANALYST, StubLLM
+from alphamintx_agent_plane.llm.stub import PIPELINE_ROLES, ROLE_MARKET_ANALYST, StubLLM
 
 TEST_API_KEY = "sk-test-key-that-must-never-leak"
 BASE_URL = "https://mintrouter.test"
@@ -430,6 +430,41 @@ def test_price_table_cost_is_decimal_exact() -> None:
     assert table.cost_usd("gpt-4o-mini", 0, 0) == Decimal("0")
     with pytest.raises(LLMConfigError):
         table.cost_usd("unpriced-model", 1, 1)
+
+
+def test_validate_role_models_accepts_unpriced_model_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    models = {role: "custom-provider-model" for role in PIPELINE_ROLES}
+    with caplog.at_level(logging.WARNING):
+        validate_role_models(models, PriceTable.load_default())
+    assert "not in the price table" in caplog.text
+    assert "custom-provider-model" in caplog.text
+
+
+def test_success_with_unpriced_model_costs_zero_and_is_estimated(tmp_path: Path) -> None:
+    budget = DailyTokenBudget(
+        strategy_id=STRATEGY_ID, daily_token_budget=1_000_000, state_path=tmp_path / "b.json"
+    )
+    llm = MintRouterLLM(
+        base_url=BASE_URL,
+        api_key=TEST_API_KEY,
+        price_table=PriceTable.load_default(),
+        role_models={role: "custom-provider-model" for role in PIPELINE_ROLES},
+        budget=budget,
+        transport=httpx.MockTransport(lambda _req: _ok_response()),
+        sleep=lambda _delay: None,
+        monotonic=lambda: 0.0,
+        rng=lambda: 0.0,
+    )
+    response = llm.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+    # Real token counts are kept; only the cost is the estimated 0.
+    assert response.model == "custom-provider-model"
+    assert response.input_tokens == 100
+    assert response.output_tokens == 50
+    assert response.cost_usd == Decimal("0")
+    assert response.estimated_cost_nodes == (ROLE_MARKET_ANALYST,)
+    assert budget.tokens_used() == 150
 
 
 def test_price_table_staleness_warning(caplog: pytest.LogCaptureFixture) -> None:

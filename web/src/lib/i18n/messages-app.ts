@@ -50,6 +50,10 @@ export const messagesApp = {
     en: "Model — analyst roles",
     vi: "Model — các vai phân tích",
   },
+  "settings.llm.model_hint": {
+    en: "Any model your provider supports; models outside the price table are metered as estimated $0.",
+    vi: "Bất kỳ model nào nhà cung cấp hỗ trợ; model ngoài bảng giá sẽ được ghi nhận chi phí ước tính $0.",
+  },
 
   // ---- admin ----
   "admin.sub": {

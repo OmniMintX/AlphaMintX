@@ -13,12 +13,14 @@ never logged, never in argv, never in error messages.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import random
 import re
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -35,6 +37,8 @@ from alphamintx_agent_plane.llm.errors import (
 from alphamintx_agent_plane.llm.pricing import PriceTable
 from alphamintx_agent_plane.llm.stub import PIPELINE_ROLES, ROLE_TRADER, LLMResponse
 
+logger = logging.getLogger(__name__)
+
 CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 OVERALL_DEADLINE_FACTOR = 3
@@ -44,14 +48,15 @@ BACKOFF_BASE_SECONDS = 1.0
 _RESET_AFTER_HEADER_RE = re.compile(r"^x-mintrouter-.+-reset-after-seconds$", re.IGNORECASE)
 
 # Cheap model for Tier-1/Tier-2 roles, the expensive model for trader only
-# (ARCHITECTURE.md); every model MUST be present in llm/prices.json.
+# (ARCHITECTURE.md); any model name is allowed — models absent from
+# llm/prices.json are metered as estimated 0 cost (spec §3).
 DEFAULT_ROLE_MODELS: dict[str, str] = {
     role: ("gpt-4o" if role == ROLE_TRADER else "gpt-4o-mini") for role in PIPELINE_ROLES
 }
 
 
 def validate_role_models(role_models: Mapping[str, str], price_table: PriceTable) -> None:
-    """Startup validation (spec §2): every role mapped, every model priced."""
+    """Startup validation (spec §2): every role mapped; unpriced models only warn."""
     missing = [role for role in PIPELINE_ROLES if role not in role_models]
     if missing:
         raise LLMConfigError(f"role→model map is missing pipeline roles: {missing}")
@@ -60,7 +65,11 @@ def validate_role_models(role_models: Mapping[str, str], price_table: PriceTable
         raise LLMConfigError(f"role→model map contains unknown roles: {unknown}")
     unpriced = sorted({model for model in role_models.values() if model not in price_table})
     if unpriced:
-        raise LLMConfigError(f"role→model map uses models absent from the price table: {unpriced}")
+        logger.warning(
+            "role→model map uses models not in the price table; "
+            "their costs will be recorded as estimated 0: %s",
+            unpriced,
+        )
 
 
 def _reset_after_seconds(response: httpx.Response) -> float | None:
@@ -120,6 +129,15 @@ class MintRouterLLM:
         if self._budget is not None:
             self._budget.record(tokens)
 
+    def _cost_usd_or_zero(
+        self, model: str, input_tokens: int, output_tokens: int
+    ) -> tuple[Decimal, bool]:
+        """Price-table cost and whether the model is priced; an unpriced model
+        costs Decimal("0") (spec §3: metered as estimated 0, never a raise)."""
+        if model not in self._price_table:
+            return Decimal("0"), False
+        return self._price_table.cost_usd(model, input_tokens, output_tokens), True
+
     def _estimated_cost(
         self, role: str, model: str, estimated_input: int, request_id: str
     ) -> TraceModelCost:
@@ -128,7 +146,7 @@ class MintRouterLLM:
             model=model,
             input_tokens=estimated_input,
             output_tokens=0,
-            cost_usd=self._price_table.cost_usd(model, estimated_input, 0),
+            cost_usd=self._cost_usd_or_zero(model, estimated_input, 0)[0],
             request_id=request_id,
             estimated=True,
         )
@@ -278,12 +296,17 @@ class MintRouterLLM:
                 estimated_cost_nodes=estimated_nodes,
             ) from exc
         self._record_tokens(input_tokens + output_tokens)
+        # An unpriced model keeps its real token counts but a cost of 0; the
+        # node is listed as estimated so the 0 is never mistaken for free.
+        cost_usd, priced = self._cost_usd_or_zero(model, input_tokens, output_tokens)
+        if not priced and role not in estimated_nodes:
+            estimated_nodes.append(role)
         return LLMResponse(
             text=text,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=self._price_table.cost_usd(model, input_tokens, output_tokens),
+            cost_usd=cost_usd,
             request_id=request_id,
             extra_costs=tuple(attempt_costs),
             estimated_cost_nodes=tuple(estimated_nodes),

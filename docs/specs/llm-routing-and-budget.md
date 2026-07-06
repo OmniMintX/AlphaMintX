@@ -40,9 +40,10 @@ never calls LLMs). Applies to `agent-plane/` and its LangGraph pipeline
   `market_analyst`, `news_analyst`, `fundamental_analyst`, `bull_researcher`,
   `bear_researcher`, `debate_judge`, `trader`. Cheap models for Tier-1/Tier-2
   roles, the expensive model for `trader` only (per ARCHITECTURE.md).
-- The map MUST be validated at startup: every role present, every model name
-  present in the local price table (§3). A missing role or unpriced model is a
-  startup failure, not a runtime surprise.
+- The map MUST be validated at startup: every role present. A missing or
+  unknown role is a startup failure, not a runtime surprise. Any model name is
+  allowed — a model absent from the local price table (§3) MUST log a startup
+  WARNING that its costs will be recorded as estimated 0, never an error.
 - Routing is by the OpenAI `model` field: agent-plane sets `model` per role and
   mintrouter maps it to the upstream provider. Agent-plane never selects
   providers directly.
@@ -66,6 +67,10 @@ internal billing; only quota-percent headers are exposed). Therefore:
   pipeline role, `input_tokens` ← `usage.prompt_tokens`, `output_tokens` ←
   `usage.completion_tokens`. Reprompts and retried requests that reached
   mintrouter each append their own entry (tokens were spent).
+- **Unpriced models are not an error.** A configured model absent from the
+  price table still appends its `model_costs` entry with the real `usage`
+  token counts but `cost_usd = 0`, and the node is listed in the trace
+  envelope's `estimated_cost_nodes[]` — an estimated $0, never a crash.
 - **Timed-out / aborted calls spent upstream tokens but return no `usage`.**
   They MUST still append a `model_costs` entry: `input_tokens` estimated as
   ceil(request characters ÷ 4), `output_tokens = 0`, cost from the price

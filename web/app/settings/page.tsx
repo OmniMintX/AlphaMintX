@@ -18,11 +18,13 @@ import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner } from "../strategies/ui";
 
-// Models the agent-plane can price (llm/prices.json) — an unpriced model
-// would fail its startup validation, so the form only offers these.
+// Models the agent-plane can price (llm/prices.json), offered as datalist
+// suggestions — any other model string is allowed and metered as an
+// estimated $0 (docs/specs/llm-routing-and-budget.md §3).
 const LLM_MODELS = ["gpt-4o", "gpt-4o-mini"] as const;
 const DEFAULT_TRADER_MODEL = "gpt-4o";
 const DEFAULT_ANALYST_MODEL = "gpt-4o-mini";
+const MODEL_MAX_LEN = 128; // control-plane caps model names at 128 chars.
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -217,13 +219,20 @@ function LlmCard({
   const timeoutNum = Number(timeoutSecs.trim());
   const timeoutValid = Number.isInteger(timeoutNum) && timeoutNum >= 1;
   const keyOk = apiKey.trim() !== "" || current !== undefined;
+  const traderTrim = traderModel.trim();
+  const defaultTrim = defaultModel.trim();
+  const modelsValid =
+    traderTrim !== "" &&
+    traderTrim.length <= MODEL_MAX_LEN &&
+    defaultTrim !== "" &&
+    defaultTrim.length <= MODEL_MAX_LEN;
 
   const submit = async () => {
     setPending(true);
     setError(null);
     setSaved(false);
     try {
-      await setLlmSecret(baseUrl.trim(), apiKey, timeoutNum, traderModel, defaultModel);
+      await setLlmSecret(baseUrl.trim(), apiKey, timeoutNum, traderTrim, defaultTrim);
       setApiKey("");
       setSaved(true);
       onSaved();
@@ -289,38 +298,34 @@ function LlmCard({
       <div className="row" style={{ marginTop: 10 }}>
         <label className="field">
           <span className="field-label">{t("settings.llm.trader_model")}</span>
-          <select
+          <input
             className="input"
+            list="llm-model-suggestions"
             value={traderModel}
             onChange={(e) => setTraderModel(e.target.value)}
-          >
-            {LLM_MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+          />
         </label>
         <label className="field">
           <span className="field-label">{t("settings.llm.default_model")}</span>
-          <select
+          <input
             className="input"
+            list="llm-model-suggestions"
             value={defaultModel}
             onChange={(e) => setDefaultModel(e.target.value)}
-          >
-            {LLM_MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+          />
         </label>
+        <datalist id="llm-model-suggestions">
+          {LLM_MODELS.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
       </div>
+      <p className="faint small">{t("settings.llm.model_hint")}</p>
       <div className="row" style={{ marginTop: 10 }}>
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pending || baseUrl.trim() === "" || !keyOk || !timeoutValid}
+          disabled={pending || baseUrl.trim() === "" || !keyOk || !timeoutValid || !modelsValid}
           onClick={() => void submit()}
         >
           {t("settings.save")}
