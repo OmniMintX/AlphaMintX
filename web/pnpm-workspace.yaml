@@ -1,3 +1,7 @@
 allowBuilds:
   esbuild: true
   sharp: true
+
+# GHSA-qx2v-qp2m-jg93: next pins postcss 8.4.31 exactly; force the patched line.
+overrides:
+  "postcss@<8.5.10": ">=8.5.10"
