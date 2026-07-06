@@ -20,6 +20,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -98,6 +99,7 @@ class MintRouterLLM:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         rng: Callable[[], float] = random.random,
+        today: Callable[[], date] = lambda: datetime.now(UTC).date(),
     ) -> None:
         if not base_url:
             raise LLMConfigError("mintrouter base URL must not be empty")
@@ -114,6 +116,11 @@ class MintRouterLLM:
         self._sleep = sleep
         self._monotonic = monotonic
         self._rng = rng
+        self._today = today
+        # Startup already warned via factory's warn_if_stale(); re-check at
+        # most once per UTC day so a long-running scheduler never silently
+        # drifts past STALENESS_DAYS (spec §3 risk R1 sets a floor, not a cap).
+        self._staleness_checked_on = today()
         # OpenAI-convention base URLs often already end in /v1; avoid /v1/v1
         # since CHAT_COMPLETIONS_PATH re-adds the version segment.
         normalized = base_url.rstrip("/")
@@ -169,6 +176,10 @@ class MintRouterLLM:
         model = self._role_models.get(role)
         if model is None:
             raise LLMConfigError(f"no model configured for role {role!r}")
+        current_day = self._today()
+        if current_day != self._staleness_checked_on:
+            self._staleness_checked_on = current_day
+            self._price_table.warn_if_stale(current_day)
         if self._budget is not None:
             self._budget.check()
         body = json.dumps(

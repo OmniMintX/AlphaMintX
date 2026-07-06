@@ -163,6 +163,10 @@ export const messagesOps = {
     en: "Blank fields are left unchanged.",
     vi: "Trường bỏ trống sẽ được giữ nguyên.",
   },
+  "strat.ops.limits.decimal.invalid": {
+    en: "Must be a plain decimal, e.g. 1500 or 1500.50",
+    vi: "Phải là số thập phân thuần, ví dụ 1500 hoặc 1500.50",
+  },
   "strat.ops.history": { en: "Change history ({count})", vi: "Lịch sử thay đổi ({count})" },
   "strat.ops.history.empty": { en: "No changes recorded.", vi: "Chưa ghi nhận thay đổi nào." },
   "strat.ops.history.at": { en: "Changed at", vi: "Thay đổi lúc" },

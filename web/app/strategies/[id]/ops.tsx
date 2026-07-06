@@ -32,6 +32,7 @@ import {
   type SafetyStatus,
 } from "../../../src/lib/api/schema";
 import { usePoll } from "../../../src/lib/api/usePoll";
+import { decimalRegex } from "../../../src/lib/contract/schema";
 import { useI18n } from "../../../src/lib/i18n";
 import {
   defaultFlatten,
@@ -655,6 +656,9 @@ function LimitsEditForm({
 
   const intOr = (v: string) => (v.trim() === "" ? undefined : Number(v.trim()));
   const strOr = (v: string) => (v.trim() === "" ? undefined : v.trim());
+  // Client-side mirror of the server's ADR-0003 decimal shape: reject before
+  // the POST so a typo ("1e5", "-3", "1,5") gets an inline hint, not a 400.
+  const decOk = (v: string) => v.trim() === "" || decimalRegex.test(v.trim());
 
   const input = {
     max_open_positions: intOr(maxOpen),
@@ -664,6 +668,12 @@ function LimitsEditForm({
     max_loss_at_stop_quote: strOr(lossAtStop),
   };
   const nothingEntered = Object.values(input).every((v) => v === undefined);
+  const decimalErrors = {
+    notionalCap: !decOk(notionalCap),
+    dailyLoss: !decOk(dailyLoss),
+    lossAtStop: !decOk(lossAtStop),
+  };
+  const anyDecimalError = Object.values(decimalErrors).some(Boolean);
 
   const submit = async () => {
     setPending(true);
@@ -740,40 +750,52 @@ function LimitsEditForm({
             {t("strat.ops.limits.notionalcap")} ({effective.accounting_quote})
           </span>
           <input
-            className="input"
+            className={`input${decimalErrors.notionalCap ? " error" : ""}`}
             placeholder={effective.per_position_notional_cap_quote}
             value={notionalCap}
             onChange={(e) => setNotionalCap(e.target.value)}
+            aria-invalid={decimalErrors.notionalCap || undefined}
           />
+          {decimalErrors.notionalCap && (
+            <span className="field-error">{t("strat.ops.limits.decimal.invalid")}</span>
+          )}
         </label>
         <label className="field">
           <span className="field-label">
             {t("strat.ops.limits.dailyloss")} ({effective.accounting_quote})
           </span>
           <input
-            className="input"
+            className={`input${decimalErrors.dailyLoss ? " error" : ""}`}
             placeholder={effective.daily_loss_limit_quote}
             value={dailyLoss}
             onChange={(e) => setDailyLoss(e.target.value)}
+            aria-invalid={decimalErrors.dailyLoss || undefined}
           />
+          {decimalErrors.dailyLoss && (
+            <span className="field-error">{t("strat.ops.limits.decimal.invalid")}</span>
+          )}
         </label>
         <label className="field">
           <span className="field-label">
             {t("strat.ops.limits.lossatstop")} ({effective.accounting_quote})
           </span>
           <input
-            className="input"
+            className={`input${decimalErrors.lossAtStop ? " error" : ""}`}
             placeholder={effective.max_loss_at_stop_quote}
             value={lossAtStop}
             onChange={(e) => setLossAtStop(e.target.value)}
+            aria-invalid={decimalErrors.lossAtStop || undefined}
           />
+          {decimalErrors.lossAtStop && (
+            <span className="field-error">{t("strat.ops.limits.decimal.invalid")}</span>
+          )}
         </label>
       </div>
       <div className="row" style={{ marginTop: 10 }}>
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pending || nothingEntered}
+          disabled={pending || nothingEntered || anyDecimalError}
           onClick={() => void submit()}
         >
           {t("strat.ops.limits.apply")}

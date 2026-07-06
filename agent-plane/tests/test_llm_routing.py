@@ -528,6 +528,36 @@ def test_price_table_staleness_warning(caplog: pytest.LogCaptureFixture) -> None
     assert "stale" in caplog.text
 
 
+def test_long_running_process_rewarns_when_prices_go_stale(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A scheduler that outlives STALENESS_DAYS must re-warn: the staleness
+    check re-runs on the first complete() of each new UTC day, not only at
+    process startup (spec §3 risk R1 is a floor, not a cap)."""
+    table = PriceTable.load_default()
+    day = [table.as_of]
+    llm = MintRouterLLM(
+        base_url=BASE_URL,
+        api_key=TEST_API_KEY,
+        price_table=table,
+        transport=httpx.MockTransport(lambda _req: _ok_response()),
+        sleep=lambda _s: None,
+        monotonic=lambda: 0.0,
+        rng=lambda: 0.0,
+        today=lambda: day[0],
+    )
+    with caplog.at_level(logging.WARNING):
+        llm.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+        assert "stale" not in caplog.text
+        # Same day again: no re-check, still quiet.
+        llm.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+        assert "stale" not in caplog.text
+        # The process survives past the staleness horizon.
+        day[0] = date.fromordinal(table.as_of.toordinal() + STALENESS_DAYS + 1)
+        llm.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+    assert "stale" in caplog.text
+
+
 def _cost_entry(index: int) -> TraceModelCost:
     return TraceModelCost(
         node=f"node_{index}",
