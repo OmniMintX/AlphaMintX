@@ -168,6 +168,10 @@ export const messages = {
     vi: "Nhận định kỹ thuật tự động — không phải khuyến nghị đầu tư.",
   },
   "dash.empty": { en: "No strategies yet.", vi: "Chưa có chiến lược nào." },
+  "dash.empty.hint": {
+    en: "Strategies appear here once they are registered with the control plane.",
+    vi: "Chiến lược sẽ hiện ở đây sau khi được đăng ký với control plane.",
+  },
   "tbl.name": { en: "Name", vi: "Tên" },
   "tbl.state": { en: "State", vi: "Trạng thái" },
   "tbl.tenant": { en: "Tenant", vi: "Tenant" },
@@ -228,4 +232,22 @@ export const messages = {
   // ---- a11y-only labels (shared pager) ----
   "ui.pager.prev.label": { en: "Previous page", vi: "Trang trước" },
   "ui.pager.next.label": { en: "Next page", vi: "Trang sau" },
+
+  // ---- inline validation + empty-state hints (settings/admin) ----
+  "settings.llm.baseurl.invalid": {
+    en: "Enter a valid http(s) URL.",
+    vi: "Nhập URL http(s) hợp lệ.",
+  },
+  "settings.llm.timeout.invalid": {
+    en: "Timeout must be a whole number of seconds (1 or more).",
+    vi: "Timeout phải là số giây nguyên (từ 1 trở lên).",
+  },
+  "admin.notenants.hint": {
+    en: "Create a tenant with the form above.",
+    vi: "Tạo tenant bằng form phía trên.",
+  },
+  "admin.nousers.hint": {
+    en: "Users appear here once they are added to a tenant.",
+    vi: "Người dùng sẽ hiện ở đây sau khi được thêm vào tenant.",
+  },
 } as const satisfies Record<string, Msg>;

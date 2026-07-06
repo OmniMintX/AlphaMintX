@@ -92,7 +92,10 @@ function TenantsCard() {
             </button>
           </div>
           {tenants.data.items.length === 0 ? (
-            <div className="empty" role="status">{t("admin.notenants")}</div>
+            <div className="empty" role="status">
+              {t("admin.notenants")}
+              <div className="empty-hint">{t("admin.notenants.hint")}</div>
+            </div>
           ) : (
             <table className="tbl" style={{ marginTop: 10 }}>
               <thead>
@@ -134,7 +137,10 @@ function UsersCard() {
       )}
       {users.data &&
         (users.data.items.length === 0 ? (
-          <div className="empty" role="status">{t("admin.nousers")}</div>
+          <div className="empty" role="status">
+            {t("admin.nousers")}
+            <div className="empty-hint">{t("admin.nousers.hint")}</div>
+          </div>
         ) : (
           <table className="tbl">
             <thead>

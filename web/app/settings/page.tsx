@@ -220,6 +220,10 @@ function LlmCard({
 
   const timeoutNum = Number(timeoutSecs.trim());
   const timeoutValid = Number.isInteger(timeoutNum) && timeoutNum >= 1;
+  const timeoutError = timeoutSecs.trim() !== "" && !timeoutValid;
+  const baseTrim = baseUrl.trim();
+  const baseUrlValid = /^https?:\/\/\S+$/.test(baseTrim);
+  const baseUrlError = baseTrim !== "" && !baseUrlValid;
   const keyOk = apiKey.trim() !== "" || current !== undefined;
   const traderTrim = traderModel.trim();
   const defaultTrim = defaultModel.trim();
@@ -234,7 +238,7 @@ function LlmCard({
     setError(null);
     setSaved(false);
     try {
-      await setLlmSecret(baseUrl.trim(), apiKey, timeoutNum, traderTrim, defaultTrim);
+      await setLlmSecret(baseTrim, apiKey, timeoutNum, traderTrim, defaultTrim);
       setApiKey("");
       setSaved(true);
       onSaved();
@@ -268,12 +272,19 @@ function LlmCard({
           <span className="field-label">{t("settings.baseurl")}</span>
           <input
             id="llm-base-url"
-            className="input"
+            className={`input${baseUrlError ? " error" : ""}`}
             style={{ minWidth: "16rem" }}
             placeholder="https://api.openai.com/v1"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
+            aria-invalid={baseUrlError || undefined}
+            aria-describedby={baseUrlError ? "llm-base-url-error" : undefined}
           />
+          {baseUrlError && (
+            <span className="field-error" id="llm-base-url-error">
+              {t("settings.llm.baseurl.invalid")}
+            </span>
+          )}
         </label>
         <label className="field" htmlFor="llm-api-key">
           <span className="field-label">{t("settings.apikey")}</span>
@@ -291,13 +302,20 @@ function LlmCard({
           <span className="field-label">{t("settings.timeout")}</span>
           <input
             id="llm-timeout"
-            className="input"
+            className={`input${timeoutError ? " error" : ""}`}
             type="number"
             step={1}
             min={1}
             value={timeoutSecs}
             onChange={(e) => setTimeoutSecs(e.target.value)}
+            aria-invalid={timeoutError || undefined}
+            aria-describedby={timeoutError ? "llm-timeout-error" : undefined}
           />
+          {timeoutError && (
+            <span className="field-error" id="llm-timeout-error">
+              {t("settings.llm.timeout.invalid")}
+            </span>
+          )}
         </label>
       </div>
       <div className="row" style={{ marginTop: 10 }}>
@@ -332,7 +350,7 @@ function LlmCard({
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pending || baseUrl.trim() === "" || !keyOk || !timeoutValid || !modelsValid}
+          disabled={pending || !baseUrlValid || !keyOk || !timeoutValid || !modelsValid}
           onClick={() => void submit()}
         >
           {t("settings.save")}

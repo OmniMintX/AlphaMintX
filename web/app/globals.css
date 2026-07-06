@@ -336,6 +336,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   color: var(--text-3);
   font-size: 13px;
 }
+.empty-hint { margin-top: 6px; font-size: 12px; color: var(--text-3); }
 
 /* ---------- Badges & pills ---------- */
 
@@ -378,6 +379,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .banner-info { color: var(--cyan); background: var(--cyan-bg); border-color: rgba(76, 179, 212, 0.3); }
 .banner-warn { color: var(--yellow); background: var(--yellow-bg); border-color: rgba(217, 165, 63, 0.3); }
 .banner-error { color: var(--red); background: var(--red-bg); border-color: rgba(229, 83, 75, 0.3); }
+@media (max-width: 420px) { .banner { padding: 8px 10px; font-size: 12px; } }
 
 /* ---------- Buttons ---------- */
 
@@ -394,7 +396,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   border-radius: var(--radius-sm);
   padding: 5px 12px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
 }
 .btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); }
 .btn:active:not(:disabled) { transform: translateY(0.5px); background: var(--surface-hover); }
@@ -426,6 +428,24 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .input:focus:not(:focus-visible), .select:focus:not(:focus-visible) { box-shadow: 0 0 0 3px rgba(110, 121, 214, 0.18); }
 .input::placeholder { color: var(--text-3); }
 .input:disabled, .select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Custom select chevron: the native arrow is near-invisible on dark surfaces. */
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b95e8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  padding-right: 28px;
+}
+html[data-theme="light"] .select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233d47b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+
+/* Validation error state; glow mirrors the accent focus ring in red. */
+.input.error { border-color: var(--red); }
+.input.error:focus:not(:focus-visible) { box-shadow: 0 0 0 3px rgba(229, 83, 75, 0.18); }
+.field-error { font-size: 11.5px; color: var(--red); margin-top: 2px; }
 
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 11.5px; font-weight: 600; color: var(--text-2); }
@@ -613,6 +633,34 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .chart-body { height: 380px; width: 100%; transition: height 200ms ease; }
 .chart-body-tall { height: 560px; }
 
+/* Indicator legend overlaid on the chart (rendered by candle-chart.tsx).
+   The legend is a sibling of .chart-body inside .chart-wrap, so the
+   wrapper is the positioning context. */
+.chart-wrap { position: relative; }
+.chart-legend {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.chart-legend i { width: 8px; height: 2px; border-radius: 1px; display: inline-block; font-style: normal; }
+
 /* Indicator chip toggles (MA / EMA / BOLL / RSI / MACD). */
 .chart-chips { display: flex; gap: 6px; margin: 2px 0 8px; flex-wrap: wrap; }
 .chip-toggle {
@@ -659,6 +707,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   line-height: 1.55;
   white-space: pre-wrap;
 }
+.ta-analysis p { margin: 0 0 8px; }
+.ta-analysis p:last-child { margin-bottom: 0; }
 .ta-model { font-size: 10.5px; color: var(--text-3); font-family: var(--mono); margin-top: 4px; }
 .ta-skeleton { display: flex; flex-direction: column; gap: 8px; }
 .ta-skeleton-line {
@@ -839,11 +889,14 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
   padding: 28px 28px 22px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+html[data-theme="light"] .auth-card {
+  box-shadow: 0 2px 4px rgba(16, 20, 28, 0.08), 0 12px 32px rgba(16, 20, 28, 0.1);
 }
 
 .auth-card .auth-brand { margin-bottom: 14px; }

@@ -9,7 +9,7 @@
 // place so the user's zoom/scroll survives — callers remount (key) on
 // pair/interval change, which is the only time the chart refits.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import {
   CandlestickSeries,
@@ -63,6 +63,21 @@ function lineOpts(color: string) {
   };
 }
 
+// Latest finite value of a computed series (skips the NaN warmup slots and
+// any trailing gaps), formatted for the legend overlay.
+function lastFinite(values: number[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== undefined && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function fmtLegend(v: number | null): string {
+  if (v === null) return "–";
+  return v.toFixed(Math.abs(v) >= 1 ? 2 : 4);
+}
+
 function tokenColors() {
   const style = getComputedStyle(document.documentElement);
   return {
@@ -91,6 +106,18 @@ export function CandleChart({
   const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const fittedRef = useRef(false);
+
+  // Indicator math shared by the series-data effect and the legend overlay.
+  const computed = useMemo(() => {
+    const closes = candles.map((c) => c.close);
+    return {
+      ma: MA_PERIODS.map((n) => sma(closes, n)),
+      ema: EMA_PERIODS.map((n) => ema(closes, n)),
+      boll: bollinger(closes, 20, 2),
+      rsi: rsi(closes, 14),
+      macd: macd(closes, 12, 26, 9),
+    };
+  }, [candles]);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -250,7 +277,6 @@ export function CandleChart({
       })),
     );
     // Indicator series: drop the NaN warmup slots the pure math leaves in.
-    const closes = candles.map((c) => c.close);
     const lineData = (values: number[]) =>
       candles.flatMap((c, i) => {
         const v = values[i];
@@ -258,22 +284,20 @@ export function CandleChart({
           ? [{ time: c.time as UTCTimestamp, value: v }]
           : [];
       });
-    MA_PERIODS.forEach((n, i) => maRef.current[i]?.setData(lineData(sma(closes, n))));
-    EMA_PERIODS.forEach((n, i) => emaRef.current[i]?.setData(lineData(ema(closes, n))));
+    MA_PERIODS.forEach((_, i) => maRef.current[i]?.setData(lineData(computed.ma[i] ?? [])));
+    EMA_PERIODS.forEach((_, i) => emaRef.current[i]?.setData(lineData(computed.ema[i] ?? [])));
     if (bollRef.current.length === 3) {
-      const bands = bollinger(closes, 20, 2);
-      bollRef.current[0]?.setData(lineData(bands.upper));
-      bollRef.current[1]?.setData(lineData(bands.middle));
-      bollRef.current[2]?.setData(lineData(bands.lower));
+      bollRef.current[0]?.setData(lineData(computed.boll.upper));
+      bollRef.current[1]?.setData(lineData(computed.boll.middle));
+      bollRef.current[2]?.setData(lineData(computed.boll.lower));
     }
-    if (rsiRef.current) rsiRef.current.setData(lineData(rsi(closes, 14)));
+    if (rsiRef.current) rsiRef.current.setData(lineData(computed.rsi));
     if (macdLineRef.current && macdSignalRef.current && macdHistRef.current) {
-      const m = macd(closes, 12, 26, 9);
-      macdLineRef.current.setData(lineData(m.macd));
-      macdSignalRef.current.setData(lineData(m.signal));
+      macdLineRef.current.setData(lineData(computed.macd.macd));
+      macdSignalRef.current.setData(lineData(computed.macd.signal));
       macdHistRef.current.setData(
         candles.flatMap((c, i) => {
-          const v = m.hist[i];
+          const v = computed.macd.hist[i];
           return v !== undefined && Number.isFinite(v)
             ? [
                 {
@@ -290,12 +314,68 @@ export function CandleChart({
       chart.timeScale().fitContent();
       fittedRef.current = true;
     }
-  }, [candles, indicators]);
+  }, [candles, indicators, computed]);
+
+  // Legend rows for the enabled groups; derived from the same computed
+  // arrays the series render, so both stay in sync across polls.
+  const legend: { label: string; color: string; value: string }[] = [];
+  if (indicators.ma) {
+    MA_PERIODS.forEach((n, i) => {
+      legend.push({
+        label: `MA(${n})`,
+        color: MA_COLORS[i] ?? "",
+        value: fmtLegend(lastFinite(computed.ma[i] ?? [])),
+      });
+    });
+  }
+  if (indicators.ema) {
+    EMA_PERIODS.forEach((n, i) => {
+      legend.push({
+        label: `EMA(${n})`,
+        color: EMA_COLORS[i] ?? "",
+        value: fmtLegend(lastFinite(computed.ema[i] ?? [])),
+      });
+    });
+  }
+  if (indicators.boll) {
+    legend.push(
+      { label: "BOLL up", color: BOLL_COLORS[0] ?? "", value: fmtLegend(lastFinite(computed.boll.upper)) },
+      { label: "BOLL mid", color: BOLL_COLORS[1] ?? "", value: fmtLegend(lastFinite(computed.boll.middle)) },
+      { label: "BOLL low", color: BOLL_COLORS[2] ?? "", value: fmtLegend(lastFinite(computed.boll.lower)) },
+    );
+  }
+  if (indicators.rsi) {
+    const v = lastFinite(computed.rsi);
+    legend.push({
+      label: "RSI(14)",
+      color: RSI_COLOR,
+      value: v === null ? "–" : v.toFixed(1),
+    });
+  }
+  if (indicators.macd) {
+    legend.push({
+      label: "MACD",
+      color: MACD_LINE_COLOR,
+      value: `${fmtLegend(lastFinite(computed.macd.macd))} / ${fmtLegend(lastFinite(computed.macd.signal))}`,
+    });
+  }
 
   return (
-    <div
-      ref={boxRef}
-      className={`chart-body${indicators.rsi || indicators.macd ? " chart-body-tall" : ""}`}
-    />
+    <div className="chart-wrap">
+      <div
+        ref={boxRef}
+        className={`chart-body${indicators.rsi || indicators.macd ? " chart-body-tall" : ""}`}
+      />
+      {legend.length > 0 && (
+        <div className="chart-legend">
+          {legend.map((row) => (
+            <span key={row.label}>
+              <i style={{ background: row.color }} />
+              {row.label} {row.value}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

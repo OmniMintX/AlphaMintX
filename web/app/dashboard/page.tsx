@@ -104,7 +104,10 @@ export default function DashboardPage() {
           <>
             <div className="table-wrap">
               {items.length === 0 ? (
-                <div className="empty">{t("dash.empty")}</div>
+                <div className="empty">
+                  {t("dash.empty")}
+                  <div className="empty-hint">{t("dash.empty.hint")}</div>
+                </div>
               ) : (
                 <table className="tbl">
                   <thead>

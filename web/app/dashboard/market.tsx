@@ -512,7 +512,9 @@ function TaReadout({
   const { t, locale } = useI18n();
   const ta = useMemo(() => computeTa(candles), [candles]);
   const [asking, setAsking] = useState(false);
-  const [analysis, setAnalysis] = useState<{ text: string; model: string } | null>(null);
+  const [analysis, setAnalysis] = useState<{ text: string; model: string; at: number } | null>(
+    null,
+  );
   const [askError, setAskError] = useState<string | null>(null);
   // Elapsed-seconds ticker while the model writes (a full analysis runs
   // ~30-40s) — visible progress instead of a frozen-looking button.
@@ -534,7 +536,8 @@ function TaReadout({
     setAskError(null);
     try {
       const summary = buildTaSummary(symbol, market, interval, changePct, candles, ta, verdict);
-      setAnalysis(await requestMarketAnalysis(symbol, market, interval, locale, summary));
+      const result = await requestMarketAnalysis(symbol, market, interval, locale, summary);
+      setAnalysis({ ...result, at: Date.now() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const code = err instanceof ApiError ? (err.body?.code ?? "") : "";
@@ -593,11 +596,21 @@ function TaReadout({
             : { margin: 0, padding: 0, border: 0, background: "transparent" }
         }
       >
-        {analysis && !asking ? analysis.text : null}
+        {analysis && !asking
+          ? analysis.text
+              .split(/\n{2,}/)
+              .map((chunk) => chunk.trim())
+              .filter((chunk) => chunk !== "")
+              .map((chunk, i) => <p key={i}>{chunk}</p>)
+          : null}
       </div>
       {analysis && !asking && (
         <div className="ta-model">
-          {t("market.chart.model")}: {analysis.model}
+          {t("market.chart.model")}: {analysis.model} ·{" "}
+          {new Date(analysis.at).toLocaleTimeString(locale === "vi" ? "vi-VN" : "en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
         </div>
       )}
     </div>
@@ -678,6 +691,12 @@ function ChartPanel({
   const { t } = useI18n();
   const [interval, setInterval] = useState<(typeof INTERVALS)[number]>("1h");
   const [indicators, setIndicators] = useState<IndicatorFlags>(() => ({ ...sessionIndicators }));
+  // Move focus into the panel on mount (opened from a card click/keypress)
+  // so keyboard users land on the close button instead of losing focus.
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+  }, []);
   const toggleIndicator = (key: (typeof INDICATOR_KEYS)[number]) =>
     setIndicators((prev) => {
       const next = { ...prev, [key]: !prev[key] };
@@ -733,7 +752,13 @@ function ChartPanel({
             </button>
           ))}
         </div>
-        <button type="button" className="chart-close" onClick={onClose} aria-label="Close chart">
+        <button
+          type="button"
+          className="chart-close"
+          ref={closeRef}
+          onClick={onClose}
+          aria-label="Close chart"
+        >
           ×
         </button>
       </div>
