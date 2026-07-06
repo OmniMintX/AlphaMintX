@@ -6,7 +6,7 @@
 // fetch failure renders a quiet placeholder — the desk never blocks the
 // control-plane view.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   DESK_SYMBOLS,
@@ -469,6 +469,15 @@ function TaReadout({
   const [asking, setAsking] = useState(false);
   const [analysis, setAnalysis] = useState<{ text: string; model: string } | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
+  // Elapsed-seconds ticker while the model writes (a full analysis runs
+  // ~30-40s) — visible progress instead of a frozen-looking button.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!asking) return;
+    setElapsed(0);
+    const id = window.setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [asking]);
   if (!ta) return null;
   const { rows, verdict } = taSignals(ta);
   const verdictTone: TaTone =
@@ -513,17 +522,28 @@ function TaReadout({
       <div className="ta-disclaimer">{t("market.ta.disclaimer")}</div>
       <div className="ta-actions">
         <button type="button" className="btn" onClick={ask} disabled={asking}>
-          ◈ {asking ? t("market.chart.asking") : t("market.chart.ask")}
+          ◈ {asking ? `${t("market.chart.asking")} ${elapsed}s` : t("market.chart.ask")}
         </button>
         {askError && <span className="ta-error">{askError}</span>}
       </div>
-      {analysis && (
-        <>
-          <div className="ta-analysis">{analysis.text}</div>
-          <div className="ta-model">
-            {t("market.chart.model")}: {analysis.model}
-          </div>
-        </>
+      {asking ? (
+        <div className="ta-analysis ta-skeleton" aria-busy="true">
+          <span className="ta-skeleton-line" style={{ width: "88%" }} />
+          <span className="ta-skeleton-line" style={{ width: "97%" }} />
+          <span className="ta-skeleton-line" style={{ width: "72%" }} />
+          <span className="ta-skeleton-line" style={{ width: "93%" }} />
+          <span className="ta-skeleton-line" style={{ width: "55%" }} />
+          <div className="ta-skeleton-hint">{t("market.chart.asking.hint")}</div>
+        </div>
+      ) : (
+        analysis && (
+          <>
+            <div className="ta-analysis">{analysis.text}</div>
+            <div className="ta-model">
+              {t("market.chart.model")}: {analysis.model}
+            </div>
+          </>
+        )
       )}
     </div>
   );

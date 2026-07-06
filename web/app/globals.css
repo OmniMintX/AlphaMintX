@@ -622,6 +622,19 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   white-space: pre-wrap;
 }
 .ta-model { font-size: 10.5px; color: var(--text-3); font-family: var(--mono); margin-top: 4px; }
+.ta-skeleton { display: flex; flex-direction: column; gap: 8px; }
+.ta-skeleton-line {
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--bg-subtle) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: ta-shimmer 1.4s ease-in-out infinite;
+}
+.ta-skeleton-hint { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+@keyframes ta-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 
 /* ---------- Misc ---------- */
 

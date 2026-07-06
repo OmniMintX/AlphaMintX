@@ -117,6 +117,10 @@ export const messages = {
   },
   "market.chart.ask": { en: "Ask agent", vi: "Hỏi agent" },
   "market.chart.asking": { en: "Asking agent…", vi: "Đang hỏi agent…" },
+  "market.chart.asking.hint": {
+    en: "The model is writing a full analysis — usually 30–40 s.",
+    vi: "Model đang viết bài phân tích đầy đủ — thường mất 30–40 giây.",
+  },
   "market.chart.llm.notconfigured": {
     en: "Configure an LLM provider in Settings first.",
     vi: "Hãy cấu hình nhà cung cấp LLM trong Cài đặt trước.",
