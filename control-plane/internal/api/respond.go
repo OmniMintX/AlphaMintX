@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
@@ -133,6 +136,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorBody{Code: code, Message: message})
+}
+
+// writeRateLimited answers 429 with the standard Retry-After header: the
+// limiter's refill wait rounded UP to whole seconds, minimum 1.
+func writeRateLimited(w http.ResponseWriter, retryAfter time.Duration, message string) {
+	secs := int(math.Ceil(retryAfter.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeError(w, http.StatusTooManyRequests, codeRateLimited, message)
 }
 
 // writeInternal answers 500 without leaking internals; the cause is logged.

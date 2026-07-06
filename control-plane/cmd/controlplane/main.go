@@ -521,7 +521,18 @@ func serve(dbPath string) error {
 	if addr == "" {
 		addr = ":8080"
 	}
-	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	// Timeouts follow the deadman precedent (cmd/deadman/main.go), except
+	// WriteTimeout: POST /ops/backups/run copies + double-digests the DB
+	// synchronously inside the request, so 60s leaves headroom over the
+	// backup engine's 5s connection-hold warning threshold.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("control-plane API listening on %s", addr)

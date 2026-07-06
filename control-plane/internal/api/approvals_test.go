@@ -265,5 +265,8 @@ func TestApprovalRateLimit(t *testing.T) {
 		if rec.Code != want {
 			t.Fatalf("request %d: status = %d, want %d", i, rec.Code, want)
 		}
+		if want == http.StatusTooManyRequests {
+			wantRetryAfter(t, rec)
+		}
 	}
 }

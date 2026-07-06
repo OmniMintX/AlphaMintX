@@ -254,7 +254,9 @@ func TestPaperGateRead(t *testing.T) {
 			t.Fatalf("GET #%d: status = %d (body %q)", i+3, rec.Code, rec.Body.String())
 		}
 	}
-	wantError(t, e.do(t, "GET", gatePath, readTok, nil), 429, codeRateLimited)
+	rec = e.do(t, "GET", gatePath, readTok, nil)
+	wantError(t, rec, 429, codeRateLimited)
+	wantRetryAfter(t, rec)
 }
 
 // TestLiveModePaperFloor pins LC-14a (test 10): with PaperSubmitter false

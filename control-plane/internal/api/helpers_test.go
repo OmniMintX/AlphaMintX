@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -162,6 +163,17 @@ func decodeJSON(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	t.Helper()
 	if err := json.Unmarshal(rec.Body.Bytes(), v); err != nil {
 		t.Fatalf("decode response %q: %v", rec.Body.String(), err)
+	}
+}
+
+// wantRetryAfter asserts the standard 429 Retry-After header is present
+// and parses to a whole number of seconds >= 1.
+func wantRetryAfter(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	v := rec.Header().Get("Retry-After")
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs < 1 {
+		t.Fatalf("Retry-After = %q, want an integer >= 1", v)
 	}
 }
 

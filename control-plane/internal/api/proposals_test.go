@@ -301,6 +301,7 @@ func TestPostProposalRateLimitedPerStrategy(t *testing.T) {
 	rec := e.do(t, http.MethodPost, "/api/v1/strategies/"+strat1+"/proposals", agent1Tok,
 		store.ProposalSubmission{TickNumber: 30, Proposal: testProposal(t, uid(131), strat1, uid(431))})
 	wantError(t, rec, http.StatusTooManyRequests, codeRateLimited)
+	wantRetryAfter(t, rec)
 	if _, err := e.store.GetVerdictByProposalID(uid(131)); err == nil {
 		t.Errorf("rate-limited submission earned a verdict; want none persisted")
 	}

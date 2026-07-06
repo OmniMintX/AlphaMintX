@@ -383,8 +383,8 @@ func (s *Server) paperGateReport(strategyID string, now time.Time) (papergate.Re
 // guard charges it on POSTs only, so this GET charges it here.
 func (s *Server) handleGetPaperGate(w http.ResponseWriter, r *http.Request) {
 	pr := principalFrom(r)
-	if !s.rl.allow(pr.rateKey) {
-		writeError(w, http.StatusTooManyRequests, codeRateLimited, "rate limit exceeded (60 req/min per token)")
+	if ok, retryAfter := s.rl.allow(pr.rateKey); !ok {
+		writeRateLimited(w, retryAfter, "rate limit exceeded (60 req/min per token)")
 		return
 	}
 	strategyID := r.PathValue("id")

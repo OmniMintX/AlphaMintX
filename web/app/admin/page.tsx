@@ -177,6 +177,11 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
     }
   };
 
+  // A11y: the kill/clear rows are conditionally mounted, so this stable ref
+  // callback fires exactly once when a disclosure opens (never on poll
+  // re-renders) and moves keyboard focus into the revealed form.
+  const focusOnOpen = useCallback((el: HTMLInputElement | null) => el?.focus(), []);
+
   return (
     <div className="card">
       <h3 className="card-title">{t("admin.tenants")}</h3>
@@ -334,6 +339,7 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
                           <div className="row">
                             <label className="checkbox-row">
                               <input
+                                ref={focusOnOpen}
                                 type="checkbox"
                                 checked={killFlatten}
                                 onChange={(e) => setKillFlatten(e.target.checked)}
@@ -367,6 +373,7 @@ function TenantsCard({ tenants }: { tenants: PollState<TenantsResponse> }) {
                             <label className="field" htmlFor={`clr-reason-${tn.tenant_id}`}>
                               <span className="field-label">{t("admin.kill.reason.label")}</span>
                               <input
+                                ref={focusOnOpen}
                                 id={`clr-reason-${tn.tenant_id}`}
                                 className="input"
                                 style={{ minWidth: "16rem" }}
@@ -866,6 +873,11 @@ function SafetyCard() {
     }
   };
 
+  // A11y: the danger zone is conditionally mounted, so this stable ref
+  // callback fires exactly once when the disclosure opens and moves keyboard
+  // focus onto the kill-ack input.
+  const focusOnOpen = useCallback((el: HTMLInputElement | null) => el?.focus(), []);
+
   return (
     <div className="card danger-card">
       <h3 className="card-title">{t("admin.safety.title")}</h3>
@@ -890,6 +902,7 @@ function SafetyCard() {
             <label className="field" htmlFor="pk-ack">
               <span className="field-label">{t("admin.safety.ack.label")}</span>
               <input
+                ref={focusOnOpen}
                 id="pk-ack"
                 className="input ack-input"
                 style={{ minWidth: "16rem" }}

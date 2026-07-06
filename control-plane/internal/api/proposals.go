@@ -117,9 +117,8 @@ func (s *Server) handlePostProposal(w http.ResponseWriter, r *http.Request) {
 
 	// Per-strategy proposal rate limit (default 30/min): fresh evaluations
 	// and conflicts charge; excess is 429 with NO persisted verdict.
-	if !s.prl.allow(strategyID) {
-		writeError(w, http.StatusTooManyRequests, codeRateLimited,
-			"proposal rate limit exceeded (30/min per strategy)")
+	if ok, retryAfter := s.prl.allow(strategyID); !ok {
+		writeRateLimited(w, retryAfter, "proposal rate limit exceeded (30/min per strategy)")
 		return
 	}
 

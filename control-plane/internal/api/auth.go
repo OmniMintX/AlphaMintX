@@ -241,8 +241,8 @@ func (s *Server) guard(perm RoutePermission, next http.HandlerFunc) http.Handler
 			return
 		}
 		if r.Method != http.MethodGet {
-			if !s.rl.allow(pr.rateKey) {
-				writeError(w, http.StatusTooManyRequests, codeRateLimited, "rate limit exceeded (60 req/min per token)")
+			if ok, retryAfter := s.rl.allow(pr.rateKey); !ok {
+				writeRateLimited(w, retryAfter, "rate limit exceeded (60 req/min per token)")
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -286,7 +286,10 @@ func newRateLimiter(now func() time.Time, burst, perSec float64) *rateLimiter {
 	return &rateLimiter{now: now, burst: burst, perSec: perSec, buckets: make(map[string]*bucket)}
 }
 
-func (rl *rateLimiter) allow(key string) bool {
+// allow charges one token from key's bucket. On rejection it also returns
+// the time until the bucket refills to one token (the Retry-After hint);
+// on success the wait is 0.
+func (rl *rateLimiter) allow(key string) (bool, time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := rl.now()
@@ -298,8 +301,8 @@ func (rl *rateLimiter) allow(key string) bool {
 	b.tokens = min(rl.burst, b.tokens+now.Sub(b.last).Seconds()*rl.perSec)
 	b.last = now
 	if b.tokens < 1 {
-		return false
+		return false, time.Duration((1 - b.tokens) / rl.perSec * float64(time.Second))
 	}
 	b.tokens--
-	return true
+	return true, 0
 }
