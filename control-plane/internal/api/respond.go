@@ -73,6 +73,11 @@ const (
 	// deployment.
 	codeRestoreGate           = "RESTORE_GATE"
 	codeRestoreGateNotEngaged = "RESTORE_GATE_NOT_ENGAGED"
+	// Strategy provisioning codes (strategy-provisioning.md SP-4/SP-4b):
+	// both 409s follow the TENANT_EXISTS precedent — deterministic
+	// conflicts for partner scripts, never silent duplicates.
+	codeStrategyNameTaken    = "STRATEGY_NAME_TAKEN"
+	codeStrategyLimitReached = "STRATEGY_LIMIT_REACHED"
 	// Lifecycle and kill-clear codes (lifecycle-api.md §Error codes).
 	codeInvalidLifecycleState    = "INVALID_LIFECYCLE_STATE"
 	codeUseKillEndpoint          = "USE_KILL_ENDPOINT"

@@ -204,7 +204,23 @@ Scope:
   Live drill on soak: stamped artifact verified, restored copy booted
   GATED (engaged webhook delivered), proposal 503, kill 200 under gate,
   ack → cleared webhook, restart stays cleared. systemd restart drill
-  deferred to the beta VM — no systemd in the dev container.)
+  deferred to the beta VM — no systemd in the dev container.
+  2026-07-06 follow-up drill: periodic backup against a broken dir →
+  `backup_failed` alert appended and pushed by the notifier end-to-end.)
+  (2026-07-06: strategy provisioning landed per
+  `docs/specs/strategy-provisioning.md` — `POST /api/v1/strategies`
+  (tenant owner/admin own tenant, env-admin any existing tenant; the
+  POST /api/v1/tokens tier), draft/paper-only at birth (live tiers
+  stay behind the lifecycle paper gate), server-generated ids,
+  per-tenant trimmed-name 409 `STRATEGY_NAME_TAKEN` (deterministic
+  retry contract, name-taken wins at the cap boundary), SP-4b
+  per-tenant cap (`CONTROLPLANE_MAX_STRATEGIES_PER_TENANT`, default
+  100, fail-closed parse) guarding the safety-tick scans, additive
+  audit-only `strategies.created_by`, not restore-gated (creation is
+  not trading intent), RUNBOOK §7 onboarding now zero-DB-edit.
+  Live drill on soak: tenant → paper strategy via the owner token →
+  agent-token mint → heartbeat with the fresh DB token (no restart)
+  → read-back; duplicate 409 and live_l3 400 verified live.)
 - Full audit trail; watchdog (heartbeat loss ⇒ cancel strategy ENTRY orders
   only; protective stops preserved — `docs/specs/risk-limits.md` §Watchdog);
   kill-switch drills at all 3 tiers.

@@ -98,6 +98,11 @@ func Permissions() []RoutePermission {
 		{Method: "POST", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/tokens", Roles: admins, Classes: []string{classEnvAdmin}},
 		{Method: "POST", Path: "/api/v1/tokens/{token_id}/revoke", Roles: admins, Classes: []string{classEnvAdmin}},
+		// Strategy provisioning (strategy-provisioning.md SP-1): the
+		// exact tier of POST /api/v1/tokens — tenant owner/admin create
+		// in their own tenant, env-admin in any existing tenant. Always
+		// registered.
+		{Method: "POST", Path: "/api/v1/strategies", Roles: admins, Classes: []string{classEnvAdmin}},
 		// Billing (billing-and-metering.md §Permission matrix additions):
 		// the three POSTs are deployer acts (env-admin ONLY); invoice and
 		// reconciliation reads are financial records — admin/owner own

@@ -330,3 +330,28 @@ func TestParseAlertWebhook(t *testing.T) {
 		t.Errorf("heartbeat_hours 0 = %+v err=%v, want disabled heartbeat", cfg, err)
 	}
 }
+
+// TestParseMaxStrategiesPerTenant pins the SP-4b fail-closed cap parse:
+// unset yields the default 100; 0, negatives and junk refuse to start
+// (strategy-provisioning.md SP-4b).
+func TestParseMaxStrategiesPerTenant(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{"", 100, false}, {"1", 1, false}, {"7", 7, false}, {"250", 250, false},
+		{"0", 0, true}, {"-3", 0, true}, {"junk", 0, true}, {"1.5", 0, true},
+	} {
+		got, err := parseMaxStrategiesPerTenant(tc.raw)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parse(%q): err = nil, want refusal", tc.raw)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("parse(%q) = %d, %v, want %d, nil", tc.raw, got, err, tc.want)
+		}
+	}
+}

@@ -272,7 +272,7 @@ func TestAppendLifecycleTransitionAdvancesSnapshot(t *testing.T) {
 // tables (invariant 7) must have no exported UPDATE/DELETE mutators, ever.
 func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 	allowed := map[string]bool{
-		"Close": true, "CreateStrategy": true,
+		"Close": true, "CreateStrategy": true, "CreateStrategyProvisioned": true,
 		"InsertProposal": true, "InsertVerdict": true, "InsertTrace": true,
 		"CreatePendingApproval": true, "ResolveApproval": true, "ExpirePendingApprovals": true,
 		"InsertOrder": true, "InsertFill": true, "UpsertPosition": true,

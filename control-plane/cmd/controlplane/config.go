@@ -308,6 +308,24 @@ func parseBackupConfig(dir, retainRaw, intervalRaw string) (*backupConfig, error
 	return c, nil
 }
 
+// parseMaxStrategiesPerTenant validates
+// CONTROLPLANE_MAX_STRATEGIES_PER_TENANT (integer >= 1, fail-closed —
+// 0/negative/junk refuses to start); "" yields the SP-4b default 100
+// (strategy-provisioning.md SP-4b).
+func parseMaxStrategiesPerTenant(raw string) (int, error) {
+	if raw == "" {
+		return 100, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("CONTROLPLANE_MAX_STRATEGIES_PER_TENANT %q: %w", raw, err)
+	}
+	if n < 1 {
+		return 0, fmt.Errorf("CONTROLPLANE_MAX_STRATEGIES_PER_TENANT %d: must be >= 1 (strategy-provisioning.md SP-4b)", n)
+	}
+	return n, nil
+}
+
 // alertWebhookJSON is the CONTROLPLANE_ALERT_WEBHOOK JSON shape
 // (alert-notifier.md AN-10); pointers distinguish absent from zero, so
 // the "MUST be absent" rules are checkable.

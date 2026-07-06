@@ -51,6 +51,7 @@ Control-plane (unit `alphamintx-controlplane.service`, env file
 | `CONTROLPLANE_BACKUP_RETAIN` | no | no | Keep newest N artifacts (OB-9); unset/0 = keep everything. |
 | `CONTROLPLANE_BACKUP_INTERVAL_HOURS` | no | no | Periodic backup loop (OB-10); unset/0 = manual only. |
 | `CONTROLPLANE_ALERT_WEBHOOK` | no | yes (the JSON may embed a secret URL and bearer) | Alert-notifier config JSON (alert-notifier.md AN-10); unset = notifier disabled — see §9. |
+| `CONTROLPLANE_MAX_STRATEGIES_PER_TENANT` | no | no | Per-tenant cap on `POST /api/v1/strategies` (strategy-provisioning.md SP-4b); unset = 100; must be ≥ 1. |
 
 Agent-plane scheduler (unit `alphamintx-scheduler@<strategy-id>.service`,
 env file `/etc/alphamintx/scheduler-<strategy-id>.env`, one instance per
@@ -419,15 +420,29 @@ your secret manager.
    2. Find the old token's id: `GET $CP/api/v1/tokens` (metadata only;
       the row labeled `initial-owner`).
    3. Revoke it: `POST $CP/api/v1/tokens/<token_id>/revoke` (idempotent).
-3. Mint the strategy's agent token (admin/owner own tenant, or
+3. Create the strategy (admin/owner own tenant, or env-admin with
+   `"tenant_id"` in the body — strategy-provisioning.md, zero manual DB
+   edits):
+   `curl -sS -X POST "$CP/api/v1/strategies" -H "authorization: Bearer $TENANT_OWNER_TOKEN" -H "content-type: application/json" -d '{"name": "<display name>", "lifecycle_state": "paper"}'`
+   — `lifecycle_state` is `draft` (default) or `paper` ONLY; live tiers
+   go through the lifecycle endpoint and its paper gate. The 200 carries
+   the server-generated `strategy_id` — record it, every later step keys
+   on it. A duplicate name in the tenant is `409 STRATEGY_NAME_TAKEN`
+   (safe to treat as "already created" after a timed-out retry); the
+   per-tenant cap answers `409 STRATEGY_LIMIT_REACHED`
+   (`CONTROLPLANE_MAX_STRATEGIES_PER_TENANT`, default 100).
+4. Mint the strategy's agent token (admin/owner own tenant, or
    env-admin with `"tenant_id"` in the body):
    `curl -sS -X POST "$CP/api/v1/tokens" -H "authorization: Bearer $TENANT_OWNER_TOKEN" -H "content-type: application/json" -d '{"principal": "agent", "strategy_id": "<strategy-id>", "label": "<label>"}'`
    — agent tokens carry a `strategy_id` and no role; the strategy must
    exist in the tenant (else `404 UNKNOWN_STRATEGY`).
-4. Deploy the scheduler for that strategy (§1.1/§1.2) with
+5. Deploy the scheduler for that strategy with
    `ALPHAMINTX_STRATEGY_TOKEN=<the minted plaintext>` from the secret
-   store — never committed, never logged.
-5. Rotation/revocation rules: rotation is always mint-new-then-revoke-old
+   store — never committed, never logged. On a systemd VM (§10):
+   write `/etc/alphamintx/scheduler-<strategy_id>.env`, then
+   `systemctl enable --now alphamintx-scheduler@<strategy_id>`;
+   otherwise §1.1/§1.2.
+6. Rotation/revocation rules: rotation is always mint-new-then-revoke-old
    (no in-place rotation). The mint ceiling binds user roles to at or
    below the creator's own; env-admin mints `owner` only as recovery when
    zero unrevoked owner tokens remain. The revoke ceiling mirrors it;
@@ -502,9 +517,8 @@ is the source table's rowid and REPEATS across restores (§3 note).
 3. Full test-fire. There is NO synthetic test endpoint — a real kill
    row is the test; use a throwaway strategy so nothing real is killed:
    1. Create a throwaway tenant (§7 step 1; keep the returned
-      `$TENANT_OWNER_TOKEN`) with a throwaway strategy in it (the
-      strategy must exist in the tenant — the same provisioning §7
-      step 3 presumes).
+      `$TENANT_OWNER_TOKEN`) and a throwaway strategy in it (§7
+      step 3 — `POST /api/v1/strategies`).
    2. Issue a strategy-tier kill (§4.1: trader/admin/owner own tenant,
       or env-admin — the throwaway owner token qualifies):
       `curl -sS -X POST "$CP/api/v1/strategies/<strategy-id>/kill" -H "authorization: Bearer $TENANT_OWNER_TOKEN" -H "content-type: application/json" -d '{"flatten": false}'`

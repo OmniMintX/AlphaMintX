@@ -203,6 +203,7 @@ DB principals:
 | `POST /api/v1/tenants/{tenant_id}/kill/clear` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/platform/kill/clear` (env-admin ONLY) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST/GET /api/v1/tokens`, `POST .../revoke` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
+| `POST /api/v1/strategies` (provisioning — strategy-provisioning.md SP-1) | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/tenants` | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST /api/v1/ops/backups/run` (env-admin ONLY — ops-backup.md OB-6) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `GET /api/v1/ops/backups` (env-admin ONLY — ops-backup.md OB-7) | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -216,7 +217,8 @@ most-exposed credential gets the least surface); operator ⇒
 `POST .../approvals` only, any tenant; agent ⇒ its two ingestion routes
 only; env-admin ⇒ `POST .../limits`, `POST .../kill`,
 `POST .../lifecycle`, all three `.../kill/clear` routes (the platform
-clear is env-admin ONLY), all `/api/v1/tokens` routes, and
+clear is env-admin ONLY), all `/api/v1/tokens` routes,
+`POST /api/v1/strategies` (any existing tenant named in the body), and
 `POST /api/v1/tenants` — any tenant, and NO strategy-data reads (the read
 class already exists); its platform reads are the billing feeds and the
 global alert feed `GET /api/v1/alerts` (operator-surface.md OS-19).

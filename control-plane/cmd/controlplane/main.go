@@ -123,14 +123,19 @@ func serve(dbPath string) error {
 	if operatorPrincipal == "" {
 		operatorPrincipal = "operator"
 	}
+	maxStrategies, err := parseMaxStrategiesPerTenant(os.Getenv("CONTROLPLANE_MAX_STRATEGIES_PER_TENANT"))
+	if err != nil {
+		return err
+	}
 	cfg := api.Config{
-		Store:             st,
-		Marks:             marks,
-		ReadToken:         os.Getenv("CONTROLPLANE_READ_TOKEN"),
-		OperatorToken:     os.Getenv("CONTROLPLANE_OPERATOR_TOKEN"),
-		OperatorPrincipal: operatorPrincipal,
-		AgentTokens:       agentTokens,
-		AdminToken:        os.Getenv("CONTROLPLANE_ADMIN_TOKEN"),
+		Store:                  st,
+		Marks:                  marks,
+		ReadToken:              os.Getenv("CONTROLPLANE_READ_TOKEN"),
+		OperatorToken:          os.Getenv("CONTROLPLANE_OPERATOR_TOKEN"),
+		OperatorPrincipal:      operatorPrincipal,
+		AgentTokens:            agentTokens,
+		AdminToken:             os.Getenv("CONTROLPLANE_ADMIN_TOKEN"),
+		MaxStrategiesPerTenant: maxStrategies,
 	}
 
 	// The backup engine (ops-backup.md OB-8): dir enables the whole

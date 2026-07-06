@@ -146,6 +146,9 @@ type Config struct {
 	// management, token management, limits changes, tenant kill — any
 	// tenant, no reads.
 	AdminToken string
+	// MaxStrategiesPerTenant bounds POST /api/v1/strategies per tenant
+	// (strategy-provisioning.md SP-4b); 0 means the default 100.
+	MaxStrategiesPerTenant int
 
 	// DailyLossBreached reports whether the strategy's daily-loss limit is
 	// breached at now (derived at read time, Row rules); nil means the check
@@ -184,6 +187,9 @@ func New(cfg Config) *Server {
 	if cfg.Logf == nil {
 		cfg.Logf = log.Printf
 	}
+	if cfg.MaxStrategiesPerTenant < 1 {
+		cfg.MaxStrategiesPerTenant = 100
+	}
 	s := &Server{
 		cfg:        cfg,
 		mux:        http.NewServeMux(),
@@ -214,6 +220,7 @@ func New(cfg Config) *Server {
 		"GET /api/v1/strategies/{id}/alerts":             s.handleGetStrategyAlerts,
 		"GET /api/v1/alerts":                             s.handleGetGlobalAlerts,
 		"POST /api/v1/strategies/{id}/kill/clear":        s.handleStrategyKillClear,
+		"POST /api/v1/strategies":                        s.handleCreateStrategy,
 		"POST /api/v1/tenants":                           s.handleCreateTenant,
 		"POST /api/v1/tenants/{tenant_id}/kill":          s.handleTenantKill,
 		"POST /api/v1/tenants/{tenant_id}/kill/clear":    s.handleTenantKillClear,
