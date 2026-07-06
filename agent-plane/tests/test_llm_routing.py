@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import re
+import threading
 from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
@@ -443,6 +444,34 @@ def test_budget_non_integer_counter_fails_closed(tmp_path: Path) -> None:
     assert budget.tokens_used() == 1000
     with pytest.raises(BudgetExhaustedError, match="corrupt"):
         budget.check()
+
+
+def test_budget_concurrent_record_loses_no_tokens(tmp_path: Path) -> None:
+    """A multi-strategy Scheduler ticks strategies on concurrent worker
+    threads; two budgets sharing one state file must never drop each other's
+    tokens (record()'s RMW rewrites the WHOLE file and is lock-serialized)."""
+    path = tmp_path / "budget.json"
+    budgets = [
+        DailyTokenBudget(
+            strategy_id=f"strategy-{i}",
+            daily_token_budget=1_000_000,
+            state_path=path,
+            utc_date="2026-07-04",
+        )
+        for i in range(4)
+    ]
+
+    def hammer(budget: DailyTokenBudget) -> None:
+        for _ in range(100):
+            budget.record(3)
+
+    threads = [threading.Thread(target=hammer, args=(b,)) for b in budgets]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for b in budgets:
+        assert b.tokens_used() == 300
 
 
 def test_price_table_cost_is_decimal_exact() -> None:

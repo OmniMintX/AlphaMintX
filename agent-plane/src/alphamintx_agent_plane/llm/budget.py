@@ -10,8 +10,11 @@ of the run's ``started_at`` (captured at construction).
 Corruption FAILS CLOSED: an unreadable/garbled state file or a non-integer
 counter is treated as an exhausted day (never a silent reset re-arming the full
 advisory headroom); the authoritative control-plane 402 remains the backstop.
-``record`` is a non-locked read-modify-write (single-process assumption) and
-per-day keys are never pruned.
+``record``'s read-modify-write is serialized by a process-wide per-path lock
+(a multi-strategy ``Scheduler`` ticks strategies on concurrent worker threads,
+and the write rewrites the WHOLE file — an unlocked interleave would silently
+drop another strategy's tokens). Cross-PROCESS writers remain out of scope
+(single-writer-per-file deployment assumption); per-day keys are never pruned.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +30,17 @@ from typing import Any
 from alphamintx_agent_plane.llm.errors import BudgetExhaustedError
 
 logger = logging.getLogger(__name__)
+
+# Process-wide RMW locks, one per resolved state path: instances sharing a
+# file (one budget per strategy, common file) serialize their updates.
+_state_locks: dict[str, threading.Lock] = {}
+_state_locks_guard = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = os.path.abspath(path)
+    with _state_locks_guard:
+        return _state_locks.setdefault(key, threading.Lock())
 
 
 def utc_today() -> str:
@@ -122,24 +137,26 @@ class DailyTokenBudget:
 
     def record(self, tokens: int) -> None:
         """Add spent (input + output) tokens to the run's UTC day; atomic
-        write. A corrupt file or counter restarts the day AT the full budget
-        (exhausted, fail closed), never at zero."""
+        write, RMW serialized per state path. A corrupt file or counter
+        restarts the day AT the full budget (exhausted, fail closed), never
+        at zero."""
         if tokens < 0:
             raise ValueError("tokens must be >= 0")
-        data, corrupt = self._load()
-        if corrupt:
-            data = {}
-        per_day = data.get(self._strategy_id)
-        if per_day is not None and not isinstance(per_day, dict):
-            corrupt = True
-        if not isinstance(per_day, dict):
-            per_day = {}
-            data[self._strategy_id] = per_day
-        used = per_day.get(self._utc_date, 0)
-        if corrupt or isinstance(used, bool) or not isinstance(used, int) or used < 0:
-            used = self._daily_token_budget
-        per_day[self._utc_date] = used + tokens
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._state_path.with_name(self._state_path.name + ".tmp")
-        tmp_path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_path, self._state_path)
+        with _lock_for(self._state_path):
+            data, corrupt = self._load()
+            if corrupt:
+                data = {}
+            per_day = data.get(self._strategy_id)
+            if per_day is not None and not isinstance(per_day, dict):
+                corrupt = True
+            if not isinstance(per_day, dict):
+                per_day = {}
+                data[self._strategy_id] = per_day
+            used = per_day.get(self._utc_date, 0)
+            if corrupt or isinstance(used, bool) or not isinstance(used, int) or used < 0:
+                used = self._daily_token_budget
+            per_day[self._utc_date] = used + tokens
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._state_path.with_name(self._state_path.name + ".tmp")
+            tmp_path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+            os.replace(tmp_path, self._state_path)
