@@ -18,6 +18,13 @@ export const messagesOps = {
   "ui.pager.page": { en: "Page {page} of {pages}", vi: "Trang {page} / {pages}" },
   "ui.pager.total": { en: "{total} total", vi: "tổng {total}" },
   "ui.pager.next": { en: "Next →", vi: "Sau →" },
+  "state.draft": { en: "Draft", vi: "Nháp" },
+  "state.paper": { en: "Paper", vi: "Paper" },
+  "state.live_l1": { en: "Live L1", vi: "Live L1" },
+  "state.live_l2": { en: "Live L2", vi: "Live L2" },
+  "state.live_l3": { en: "Live L3", vi: "Live L3" },
+  "state.paused": { en: "Paused", vi: "Tạm dừng" },
+  "state.killed": { en: "Killed", vi: "Đã kill" },
 
   // ---- strategy list + detail ----
   "strat.title": { en: "Strategies", vi: "Chiến lược" },

@@ -5,7 +5,7 @@
 
 import { hasNextPage, hasPrevPage, totalPages } from "../../src/lib/api/pagination";
 import type { LifecycleState } from "../../src/lib/api/schema";
-import { useI18n } from "../../src/lib/i18n";
+import { useI18n, type MessageKey } from "../../src/lib/i18n";
 
 // Legacy inline-style tokens kept for compatibility; new code uses classes.
 export const section = { marginTop: "1.5rem" } as const;
@@ -24,22 +24,23 @@ const STATE_TONES: Record<LifecycleState, string> = {
   killed: "badge-red",
 };
 
-const STATE_LABELS: Record<LifecycleState, string> = {
-  draft: "Draft",
-  paper: "Paper",
-  live_l1: "Live L1",
-  live_l2: "Live L2",
-  live_l3: "Live L3",
-  paused: "Paused",
-  killed: "Killed",
+const STATE_LABEL_KEYS: Record<LifecycleState, MessageKey> = {
+  draft: "state.draft",
+  paper: "state.paper",
+  live_l1: "state.live_l1",
+  live_l2: "state.live_l2",
+  live_l3: "state.live_l3",
+  paused: "state.paused",
+  killed: "state.killed",
 };
 
 export function StateBadge({ state }: { state: LifecycleState }) {
+  const { t } = useI18n();
   const live = state.startsWith("live_");
   return (
     <span className={`badge ${STATE_TONES[state]}`}>
       <span className={`dot${live ? " dot-live" : ""}`} />
-      {STATE_LABELS[state]}
+      {t(STATE_LABEL_KEYS[state])}
     </span>
   );
 }

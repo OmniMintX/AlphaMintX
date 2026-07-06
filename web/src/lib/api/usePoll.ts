@@ -44,11 +44,26 @@ export function usePoll<T>(load: () => Promise<T>, intervalMs = POLL_INTERVAL_MS
           setErrorStatus(err instanceof ApiError ? err.status : null);
         });
     };
+    // Hidden tabs skip polled runs (rate-budget friendly, LC-24); returning
+    // to visible fires an immediate catch-up run, then the interval resumes.
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      run();
+    };
+    const onVisibility = () => {
+      if (!document.hidden) run();
+    };
     run();
-    const id = setInterval(run, intervalMs);
+    const id = setInterval(tick, intervalMs);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, [load, intervalMs, nonce]);
 

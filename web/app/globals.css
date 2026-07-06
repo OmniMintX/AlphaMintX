@@ -302,7 +302,8 @@ html[data-theme="light"] ::selection { background: rgba(77, 88, 196, 0.22); }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }

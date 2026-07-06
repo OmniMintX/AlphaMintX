@@ -186,8 +186,8 @@ function CreateStrategyPanel({ user, onCreated }: { user: SessionUser; onCreated
               value={lifecycle}
               onChange={(e) => setLifecycle(e.target.value as "draft" | "paper")}
             >
-              <option value="draft">draft</option>
-              <option value="paper">paper</option>
+              <option value="draft">{t("state.draft")}</option>
+              <option value="paper">{t("state.paper")}</option>
             </select>
           </label>
           {isPlatformAdmin && (
