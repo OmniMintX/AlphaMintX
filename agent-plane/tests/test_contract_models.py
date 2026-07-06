@@ -55,9 +55,31 @@ def test_hold_fixture_round_trips(proposal_schema: dict[str, Any]) -> None:
     Draft202012Validator(proposal_schema).validate(dumped)
 
 
+def test_decimal_edges_fixture_round_trips(proposal_schema: dict[str, Any]) -> None:
+    raw = load_json(FIXTURES_DIR / "proposal_decimal_edges.json")
+    proposal = TradeProposal.model_validate(raw)
+    dumped = proposal.to_json_dict()
+    assert dumped == raw
+    # Boundary string forms survive exactly: 34-char maximum, minimal positive
+    # value, integers with no fractional part, and "0".
+    assert dumped["size_quote"] == "10000.0000000000000000000000000001"
+    assert len(dumped["size_quote"]) == 34
+    assert dumped["entry"]["limit_price"] == "64000"
+    assert dumped["stop_loss"] == "0.00000001"
+    assert dumped["take_profit"] == "9999999999999999999999999999999999"
+    assert dumped["model_costs"][0]["cost_usd"] == "0"
+    Draft202012Validator(proposal_schema).validate(dumped)
+
+
 def test_invalid_no_sl_fixture_fails_on_stop_loss() -> None:
     raw = load_json(FIXTURES_DIR / "proposal_invalid_no_sl.json")
     with pytest.raises(ValidationError, match="stop_loss"):
+        TradeProposal.model_validate(raw)
+
+
+def test_invalid_numeric_size_fixture_fails_on_json_number() -> None:
+    raw = load_json(FIXTURES_DIR / "proposal_invalid_numeric_size.json")
+    with pytest.raises(ValidationError, match="never JSON numbers"):
         TradeProposal.model_validate(raw)
 
 
@@ -105,6 +127,18 @@ def test_verdict_reject_fixture_round_trips(verdict_schema: dict[str, Any]) -> N
     assert dumped == raw
     # Signed decimal variant must round-trip exactly.
     assert dumped["limits_snapshot"]["daily_realized_pnl_quote"] == "-512.40"
+    Draft202012Validator(verdict_schema).validate(dumped)
+
+
+def test_verdict_clip_fixture_round_trips(verdict_schema: dict[str, Any]) -> None:
+    raw = load_json(FIXTURES_DIR / "verdict_clip.json")
+    verdict = RiskVerdict.model_validate(raw)
+    assert verdict.decision is Decision.CLIP
+    assert verdict.reasons[0].code == "NOTIONAL_CAP_CLIPPED"
+    dumped = verdict.to_json_dict()
+    assert dumped == raw
+    # clipped_size_quote is present iff decision=clip; string form preserved.
+    assert dumped["clipped_size_quote"] == "1200.00"
     Draft202012Validator(verdict_schema).validate(dumped)
 
 

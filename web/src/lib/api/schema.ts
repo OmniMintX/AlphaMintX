@@ -787,6 +787,27 @@ export const omsReconStatusSchema = z.strictObject({
   venue_epoch: z.number().int().min(0).optional(),
 });
 
+// ---- Alert-dispatch health (alert-notifier.md AN-17) ------------------------------
+// Configured deployments only: without a notifier the route is
+// unregistered, so a GET is a plain 404 (the OMS-recon precedent).
+
+// source is an OPEN set (the alert-kind precedent, SS-25): a plain string,
+// never an enum — new dispatch sources may appear beyond
+// kill_breaker_events / kill_clear_events / safety_alerts / notifier.
+export const notifierSourceStatusSchema = z.strictObject({
+  source: z.string().min(1),
+  consecutive_failed_ticks: z.number().int().nonnegative(),
+  degraded: z.boolean(),
+  last_degraded_at: utcTimestamp.nullable(),
+});
+
+// GET /ops/notifier-status: degraded is true when any row is; sources is
+// [] never null.
+export const notifierStatusSchema = z.strictObject({
+  degraded: z.boolean(),
+  sources: z.array(notifierSourceStatusSchema),
+});
+
 // ---- Errors --------------------------------------------------------------------
 
 // Error codes named by the spec; servers may add more, so the schema accepts
@@ -885,3 +906,5 @@ export type OmsReconRunStatus = z.infer<typeof omsReconRunStatusSchema>;
 export type OmsReconRun = z.infer<typeof omsReconRunSchema>;
 export type OmsReconWatermark = z.infer<typeof omsReconWatermarkSchema>;
 export type OmsReconStatus = z.infer<typeof omsReconStatusSchema>;
+export type NotifierSourceStatus = z.infer<typeof notifierSourceStatusSchema>;
+export type NotifierStatus = z.infer<typeof notifierStatusSchema>;

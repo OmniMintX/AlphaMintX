@@ -44,7 +44,8 @@ func (f *fakeReconStatus) TriggerRun(context.Context, bool) error { return f.run
 // rbacEnv is the FULLY-WIRED server of the RBAC matrix test: every optional
 // dependency set (gatedEnv wires limits + runtime state; the fake recon
 // provider registers the live-OMS routes; the fake backup engine registers
-// the ops-backup routes), so every route in the permission table is
+// the ops-backup routes; the fake notifier provider registers the
+// notifier-status route), so every route in the permission table is
 // registered, plus tenant-1 with one strategy and a DB token per role and a
 // DB agent token.
 type rbacPrincipals struct {
@@ -56,6 +57,7 @@ func rbacEnv(t *testing.T) (*testEnv, rbacPrincipals) {
 	e := gatedEnv(t, func(cfg *Config) {
 		cfg.ReconStatus = &fakeReconStatus{}
 		cfg.Backup = &fakeBackupEngine{}
+		cfg.Notifier = &fakeNotifierStatus{}
 	})
 	createTenant(t, e.store, "tenant-1")
 	createStrategy(t, e.store, strat1, "paper")

@@ -1,12 +1,15 @@
 // Golden-fixture contract tests: same fixtures, same expectations as the Go and
-// Python planes (valid fixtures parse; proposal_invalid_no_sl.json fails on the
-// stop_loss conditional and nothing else).
+// Python planes (valid fixtures parse; each proposal_invalid_* fixture fails on
+// its single rule under test and nothing else).
 
 import { describe, expect, it } from "vitest";
 
 import proposalOpenLong from "../../../../contracts/fixtures/proposal_open_long.json";
 import proposalHold from "../../../../contracts/fixtures/proposal_hold.json";
+import proposalDecimalEdges from "../../../../contracts/fixtures/proposal_decimal_edges.json";
 import proposalInvalidNoSl from "../../../../contracts/fixtures/proposal_invalid_no_sl.json";
+import proposalInvalidNumericSize from "../../../../contracts/fixtures/proposal_invalid_numeric_size.json";
+import verdictClip from "../../../../contracts/fixtures/verdict_clip.json";
 import verdictRejectDailyLoss from "../../../../contracts/fixtures/verdict_reject_daily_loss.json";
 import { riskVerdictSchema, tradeProposalSchema } from "./schema";
 
@@ -30,6 +33,16 @@ describe("TradeProposal golden fixtures", () => {
     expect(proposal.model_costs).toEqual([]);
   });
 
+  it("parses proposal_decimal_edges.json preserving boundary string forms", () => {
+    const proposal = tradeProposalSchema.parse(proposalDecimalEdges);
+    expect(proposal.size_quote).toBe("10000.0000000000000000000000000001");
+    expect(proposal.size_quote).toHaveLength(34);
+    expect(proposal.entry.limit_price).toBe("64000");
+    expect(proposal.stop_loss).toBe("0.00000001");
+    expect(proposal.take_profit).toBe("9999999999999999999999999999999999");
+    expect(proposal.model_costs[0]?.cost_usd).toBe("0");
+  });
+
   it("rejects proposal_invalid_no_sl.json with exactly one stop_loss issue", () => {
     const result = tradeProposalSchema.safeParse(proposalInvalidNoSl);
     expect(result.success).toBe(false);
@@ -37,6 +50,15 @@ describe("TradeProposal golden fixtures", () => {
     expect(result.error.issues).toHaveLength(1);
     expect(result.error.issues[0]?.path).toEqual(["stop_loss"]);
     expect(result.error.issues[0]?.message).toContain("stop_loss");
+  });
+
+  it("rejects proposal_invalid_numeric_size.json with exactly one size_quote issue", () => {
+    const result = tradeProposalSchema.safeParse(proposalInvalidNumericSize);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toHaveLength(1);
+    expect(result.error.issues[0]?.path).toEqual(["size_quote"]);
+    expect(result.error.issues[0]?.message).toContain("string");
   });
 
   it('rejects open_long with size_quote "0"', () => {
@@ -106,6 +128,14 @@ describe("RiskVerdict golden fixtures", () => {
     expect(verdict.reasons[0]?.code).toBe("DAILY_LOSS_LIMIT_BREACHED");
     expect(verdict.limits_snapshot.daily_realized_pnl_quote).toBe("-512.40");
     expect(verdict.limits_snapshot.require_stop_loss).toBe(true);
+  });
+
+  it("parses verdict_clip.json", () => {
+    const verdict = riskVerdictSchema.parse(verdictClip);
+    expect(verdict.decision).toBe("clip");
+    expect(verdict.clipped_size_quote).toBe("1200.00");
+    expect(verdict.reasons[0]?.code).toBe("NOTIONAL_CAP_CLIPPED");
+    expect(verdict.limits_snapshot.daily_realized_pnl_quote).toBe("84.10");
   });
 
   it("requires a non-empty reasons array for reject", () => {

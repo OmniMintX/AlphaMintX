@@ -25,8 +25,10 @@ type RoutePermission struct {
 	// Requires names optional wiring the route depends on: "" always
 	// registered, requiresIngestion (limits + runtime state),
 	// requiresLimits (a limits provider), requiresLiveOMS (a
-	// ReconStatusProvider — live deployments only), or requiresBackup (a
-	// BackupEngine — CONTROLPLANE_BACKUP_DIR configured).
+	// ReconStatusProvider — live deployments only), requiresBackup (a
+	// BackupEngine — CONTROLPLANE_BACKUP_DIR configured), or
+	// requiresNotifier (a NotifierStatusProvider —
+	// CONTROLPLANE_ALERT_WEBHOOK configured).
 	Requires string
 }
 
@@ -35,6 +37,7 @@ const (
 	requiresLimits    = "limits"
 	requiresLiveOMS   = "live-oms"
 	requiresBackup    = "backup"
+	requiresNotifier  = "notifier"
 )
 
 // allows reports whether the principal's role (user class) or class (env
@@ -144,6 +147,11 @@ func Permissions() []RoutePermission {
 		// (CONTROLPLANE_BACKUP_DIR); unconfigured deployments 404.
 		{Method: "POST", Path: "/api/v1/ops/backups/run", Classes: []string{classEnvAdmin}, Requires: requiresBackup},
 		{Method: "GET", Path: "/api/v1/ops/backups", Classes: []string{classEnvAdmin}, Requires: requiresBackup},
+		// Notifier status (alert-notifier.md AN-17 state): a deployer
+		// surface like the backup list — env-admin class ONLY, no DB role
+		// — and it exists only when the alert notifier is configured
+		// (CONTROLPLANE_ALERT_WEBHOOK); unconfigured deployments 404.
+		{Method: "GET", Path: "/api/v1/ops/notifier-status", Classes: []string{classEnvAdmin}, Requires: requiresNotifier},
 		// Restore gate (deploy-and-survive.md DS-5/DS-6): the ack is a
 		// deployer act (env-admin ONLY); status is platform operational
 		// data (the GET /api/v1/alerts OS-19 precedent — the ops panel's

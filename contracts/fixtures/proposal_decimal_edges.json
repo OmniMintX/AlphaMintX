@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "proposal_id": "b0c1d2e3-f4a5-4b6c-8d7e-9f0a1b2c3d4e",
+  "strategy_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+  "agent_trace_id": "d2e3f4a5-b6c7-4d8e-9f0a-1b2c3d4e5f6a",
+  "created_at": "2026-07-05T09:30:00Z",
+  "symbol": "BTC/USDT",
+  "action": "open_long",
+  "size_quote": "10000.0000000000000000000000000001",
+  "entry": {
+    "type": "limit",
+    "limit_price": "64000"
+  },
+  "stop_loss": "0.00000001",
+  "take_profit": "9999999999999999999999999999999999",
+  "time_in_force": "gtc",
+  "confidence": 0.55,
+  "reasoning": "Decimal boundary fixture (SS-26): size_quote is the maximum-length 34-char decimal; limit_price is an integer with no fractional part; stop_loss is the minimal positive value (below entry, valid for a long); take_profit is a 34-digit integer (above entry); one model_costs entry carries cost_usd \"0\". All values are decimal strings and must round-trip exactly in all three planes.",
+  "analyst_summaries": {
+    "market": {
+      "signal": "bullish",
+      "confidence": 0.6,
+      "summary": "Constructive momentum; fixture exercises decimal string boundaries, not a real setup."
+    },
+    "news": {
+      "signal": "neutral",
+      "confidence": 0.5,
+      "summary": "No significant headlines."
+    },
+    "fundamental": {
+      "signal": "neutral",
+      "confidence": 0.5,
+      "summary": "No material changes since previous run."
+    }
+  },
+  "debate_summary": "Judge accepted a long; parameters chosen to pin decimal edge handling across Go, Python, and web validators.",
+  "model_costs": [
+    {
+      "node": "trader",
+      "model": "stub-model",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": "0"
+    }
+  ]
+}

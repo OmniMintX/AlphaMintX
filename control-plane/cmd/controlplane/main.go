@@ -365,14 +365,11 @@ func serve(dbPath string) error {
 		cfg.EntryCanceler = bridge
 	}
 
-	handler := api.New(cfg)
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	// Seed-at-enable runs SYNCHRONOUSLY here (alert-notifier.md AN-8):
 	// after store.Open, before the OMS/monitor goroutines and before
-	// ListenAndServe — no source write can land below the seed point.
+	// ListenAndServe — no source write can land below the seed point. The
+	// engine is also the api NotifierStatusProvider, so it is built before
+	// the handler; Run starts below, once the shutdown context exists.
 	var alerts *notifier.Engine
 	if alertCfg != nil {
 		alerts, err = notifier.New(notifier.Config{
@@ -398,6 +395,15 @@ func serve(dbPath string) error {
 			mode, int(alertCfg.poll/time.Second), alertCfg.maxPerTick,
 			int(alertCfg.heartbeat/time.Hour), backlog[store.AlertSourceKillBreaker],
 			backlog[store.AlertSourceKillClear], backlog[store.AlertSourceSafetyAlert])
+		cfg.Notifier = alerts
+	}
+
+	handler := api.New(cfg)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if alerts != nil {
 		go alerts.Run(ctx)
 	}
 

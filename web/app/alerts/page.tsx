@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState } from "react";
 
-import { fetchGlobalAlerts } from "../../src/lib/api/client";
+import { fetchGlobalAlerts, fetchNotifierStatus } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner, Pager } from "../strategies/ui";
@@ -41,6 +41,58 @@ function prettyDetails(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+// Alert-dispatch health (AN-17): platform_admin only, and only when the
+// notifier is configured. A 403 (not this role) or 404 (route unregistered)
+// hides the section entirely — the billing-ops / OMS-recon precedent; the
+// first in-flight poll renders nothing rather than a skeleton.
+function DispatchHealthSection() {
+  const { t } = useI18n();
+  const { data, error, errorStatus } = usePoll(fetchNotifierStatus);
+  if (errorStatus === 403 || errorStatus === 404) return null;
+  if (!data) return error ? <ErrorBanner message={error} /> : null;
+  return (
+    <section className="section">
+      <h2 className="section-title">{t("alerts.dispatch.title")}</h2>
+      {data.degraded ? (
+        <div className="banner banner-warn" role="alert">
+          <span aria-hidden>&#9888;</span>
+          <span>{t("alerts.dispatch.degraded")}</span>
+        </div>
+      ) : (
+        <p className="faint small">{t("alerts.dispatch.ok")}</p>
+      )}
+      {data.sources.length > 0 && (
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th scope="col">{t("alerts.dispatch.tbl.source")}</th>
+                <th scope="col">{t("alerts.dispatch.tbl.failed")}</th>
+                <th scope="col">{t("alerts.dispatch.tbl.last")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.sources.map((src) => (
+                <tr key={src.source}>
+                  <td className="mono-cell">{src.source}</td>
+                  <td className="num">{src.consecutive_failed_ticks}</td>
+                  <td className="mono-cell">
+                    {src.last_degraded_at ? (
+                      fmtTime(src.last_degraded_at)
+                    ) : (
+                      <span className="faint small">&mdash;</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export default function AlertsPage() {
@@ -83,6 +135,7 @@ export default function AlertsPage() {
         <h1 className="page-title">{t("alerts.title")}</h1>
         <p className="page-sub">{t("alerts.sub")}</p>
       </header>
+      <DispatchHealthSection />
       {error && <ErrorBanner message={denied ? t("alerts.denied") : error} />}
       {!data && !error && (
         <div className="grid" role="status" aria-busy="true">

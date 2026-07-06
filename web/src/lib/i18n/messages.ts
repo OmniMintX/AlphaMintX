@@ -288,4 +288,19 @@ export const messages = {
     en: "Safety alerts are restricted to platform administrators.",
     vi: "Cảnh báo an toàn chỉ dành cho quản trị viên nền tảng.",
   },
+  "alerts.dispatch.title": { en: "Alert dispatch", vi: "Gửi cảnh báo" },
+  "alerts.dispatch.ok": {
+    en: "Alert dispatch healthy — all sources delivering.",
+    vi: "Gửi cảnh báo ổn định — tất cả nguồn đang gửi bình thường.",
+  },
+  "alerts.dispatch.degraded": {
+    en: "Alert dispatch degraded — one or more sources keep failing to deliver.",
+    vi: "Gửi cảnh báo bị suy giảm — một hoặc nhiều nguồn liên tục gửi thất bại.",
+  },
+  "alerts.dispatch.tbl.source": { en: "Source", vi: "Nguồn" },
+  "alerts.dispatch.tbl.failed": {
+    en: "Consecutive failed ticks",
+    vi: "Tick thất bại liên tiếp",
+  },
+  "alerts.dispatch.tbl.last": { en: "Last degraded at", vi: "Suy giảm gần nhất lúc" },
 } as const satisfies Record<string, Msg>;

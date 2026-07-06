@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
@@ -82,7 +83,8 @@ type Config struct {
 }
 
 // Engine is the dispatcher. One goroutine (Run) executes passes, so
-// passes never overlap (AN-6a); all mutable state below is owned by it.
+// passes never overlap (AN-6a); all mutable state below is owned by it,
+// except fail/lastDegraded, which Status also reads under mu.
 type Engine struct {
 	st         Store
 	url        string
@@ -97,10 +99,15 @@ type Engine struct {
 	now        func() time.Time
 	client     *http.Client
 
-	nextHB       time.Time
+	nextHB time.Time
+
+	// mu guards fail and lastDegraded (the AN-17 state): written on the
+	// Run goroutine's ticks, snapshotted by Status from API goroutines.
+	mu           sync.Mutex
 	fail         map[string]int       // consecutive failed ticks per source
 	lastDegraded map[string]time.Time // last DEGRADED line per source
-	poison       map[string]*poisonState
+
+	poison map[string]*poisonState
 }
 
 // poisonState counts consecutive 4xx delivery attempts of ONE row; it is
@@ -353,6 +360,8 @@ func (e *Engine) heartbeatPass(ctx context.Context) {
 
 // tickSucceeded clears a source's consecutive-failure state (AN-17).
 func (e *Engine) tickSucceeded(src string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	delete(e.fail, src)
 	delete(e.lastDegraded, src)
 }
@@ -361,6 +370,8 @@ func (e *Engine) tickSucceeded(src string) {
 // class only — escalating to ALERT DISPATCH DEGRADED after degradeAfter
 // consecutive failed ticks, then at most once per degradeEvery (AN-17).
 func (e *Engine) tickFailed(src, class string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.fail[src]++
 	n := e.fail[src]
 	if n < degradeAfter {
@@ -372,6 +383,54 @@ func (e *Engine) tickFailed(src, class string) {
 		e.logf("ALERT DISPATCH DEGRADED source=%s class=%s consecutive_ticks=%d", src, class, n)
 		e.lastDegraded[src] = now
 	}
+}
+
+// SourceStatus is one row of the Status snapshot: a source's AN-17
+// consecutive-failure state as of the call.
+type SourceStatus struct {
+	Source                 string
+	ConsecutiveFailedTicks int
+	// Degraded mirrors the AN-17 escalation: ConsecutiveFailedTicks has
+	// reached degradeAfter.
+	Degraded bool
+	// LastDegradedAt is when the last DEGRADED line was logged for the
+	// source; the zero time when the source is not degraded.
+	LastDegradedAt time.Time
+}
+
+// Status is the alert-dispatch health snapshot for the ops API: one row
+// per dispatch source in the fixed AN-6a order, plus the AN-14a
+// "notifier" heartbeat source when heartbeats are enabled. Degraded is
+// true when any row is.
+type Status struct {
+	Degraded bool
+	Sources  []SourceStatus
+}
+
+// Status snapshots the per-source failure state. Safe to call from any
+// goroutine: mu guards fail/lastDegraded against the Run goroutine's tick
+// updates (hb is immutable after New).
+func (e *Engine) Status() Status {
+	tracked := sources
+	if e.hb > 0 {
+		tracked = append(append([]string(nil), sources...), "notifier")
+	}
+	st := Status{Sources: make([]SourceStatus, 0, len(tracked))}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, src := range tracked {
+		row := SourceStatus{
+			Source:                 src,
+			ConsecutiveFailedTicks: e.fail[src],
+			Degraded:               e.fail[src] >= degradeAfter,
+			LastDegradedAt:         e.lastDegraded[src],
+		}
+		if row.Degraded {
+			st.Degraded = true
+		}
+		st.Sources = append(st.Sources, row)
+	}
+	return st
 }
 
 // formatTime renders RFC 3339 UTC with Z suffix (store column convention).

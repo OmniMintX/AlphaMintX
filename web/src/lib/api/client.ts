@@ -27,6 +27,7 @@ import {
   logoutResponseSchema,
   marketAnalysisResponseSchema,
   mintedTokenSchema,
+  notifierStatusSchema,
   omsReconRunSchema,
   omsReconStatusSchema,
   paperGateReportSchema,
@@ -79,6 +80,7 @@ import {
   type MarketAnalysisResponse,
   type MintedToken,
   type MintTokenRequest,
+  type NotifierStatus,
   type OmsReconRun,
   type OmsReconStatus,
   type PaperGateReport,
@@ -541,6 +543,15 @@ export function fetchRestoreStatus(): Promise<RestoreStatus> {
 // RESTORE_GATE_NOT_ENGAGED and surfaces verbatim as ApiError.
 export function ackRestore(): Promise<RestoreAckResponse> {
   return proxyPost("/api/cp/ops/restore/ack", {}, restoreAckResponseSchema);
+}
+
+// AN-17 alert-dispatch health (platform_admin only): per-source
+// consecutive-failed-tick counters. The route is registered only when the
+// notifier is configured — an unconfigured server answers a plain 404 (the
+// OMS-recon precedent); a non-admin session 403s. Both surface verbatim as
+// ApiError — the UI hides the section on either.
+export function fetchNotifierStatus(): Promise<NotifierStatus> {
+  return apiGet("/ops/notifier-status", notifierStatusSchema);
 }
 
 // ---- OMS reconciliation (live-oms-and-reconciler.md §API surface) -------------------

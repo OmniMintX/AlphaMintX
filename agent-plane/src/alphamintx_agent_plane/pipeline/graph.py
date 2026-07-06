@@ -15,6 +15,7 @@ a deterministic forced-hold proposal — never a crash, never a skipped record.
 from __future__ import annotations
 
 import json
+import math
 import operator
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -244,6 +245,10 @@ def _proposal_from_trader_output(
     reprompt in ``_parse_or_reprompt``."""
     payload = json.loads(text)
     confidence = float(payload["confidence"])
+    # json.loads accepts NaN/Infinity, and NaN would bypass the < threshold
+    # check below; reject here so the reprompt (not a silent clamp) recovers.
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        raise ValueError(f"confidence must be a finite number in [0, 1], got {confidence}")
     action = Action(payload["action"])
     reasoning = str(payload["reasoning"])
     if confidence < LOW_CONFIDENCE_THRESHOLD and action is not Action.HOLD:

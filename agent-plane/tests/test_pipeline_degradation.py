@@ -7,11 +7,13 @@ output resolve to a deterministic, schema-valid forced-hold proposal.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
 import httpx
+import pytest
 from jsonschema import Draft202012Validator
 
 from alphamintx_agent_plane.contract.models import Action, TraceModelCost
@@ -34,7 +36,12 @@ from alphamintx_agent_plane.llm.stub import (
     LLMResponse,
     bullish_scenario,
 )
-from alphamintx_agent_plane.pipeline.graph import PipelineInput, PipelineState, run_pipeline
+from alphamintx_agent_plane.pipeline.graph import (
+    LOW_CONFIDENCE_THRESHOLD,
+    PipelineInput,
+    PipelineState,
+    run_pipeline,
+)
 
 STRATEGY_ID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
 
@@ -202,6 +209,75 @@ def test_malformed_output_recovers_after_single_reprompt() -> None:
     assert llm.calls[ROLE_TRADER] == 2
     trader_entries = [cost for cost in proposal.model_costs if cost.node == ROLE_TRADER]
     assert len(trader_entries) == 2
+
+
+def _trader_output(confidence: float) -> str:
+    """Trader JSON matching the bullish stub's shape with an injected confidence
+    (``json.dumps`` renders nan/inf as ``NaN``/``Infinity``, which ``json.loads``
+    accepts — exactly what a misbehaving LLM could emit)."""
+    return json.dumps({
+        "action": "open_long",
+        "size_quote": "1500.00",
+        "entry_type": "limit",
+        "limit_price": "64250.50",
+        "stop_loss": "62965.49",
+        "take_profit": "66820.52",
+        "time_in_force": "gtc",
+        "confidence": confidence,
+        "reasoning": "Momentum breakout long with a 2% stop below the breakout level.",
+    })
+
+
+@pytest.mark.parametrize(
+    "confidence", [float("nan"), float("inf"), float("-inf"), -0.5, 1.5]
+)
+def test_non_finite_or_out_of_bounds_confidence_reprompts_then_forces_hold(
+    confidence: float, proposal_schema: dict[str, Any]
+) -> None:
+    """NaN bypasses the ``< LOW_CONFIDENCE_THRESHOLD`` forced-hold check (NaN
+    comparisons are always False); the parse site must reject non-finite or
+    out-of-[0, 1] confidence so the single reprompt — never a silent clamp —
+    is the recovery, resolving to a forced hold when it repeats."""
+    bad = _trader_output(confidence)
+    llm = ScriptedLLM({ROLE_TRADER: [bad, bad]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.HOLD
+    assert "MALFORMED_LLM_OUTPUT" in proposal.reasoning
+    assert llm.calls[ROLE_TRADER] == 2
+    Draft202012Validator(proposal_schema).validate(proposal.to_json_dict())
+
+
+def test_nan_confidence_recovers_after_single_reprompt() -> None:
+    llm = ScriptedLLM({ROLE_TRADER: [_trader_output(float("nan"))]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.OPEN_LONG
+    assert llm.calls[ROLE_TRADER] == 2
+
+
+def test_valid_low_confidence_open_long_still_forces_hold() -> None:
+    llm = ScriptedLLM({ROLE_TRADER: [_trader_output(0.1)]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.HOLD
+    assert proposal.confidence == 0.1
+    assert "Forced hold" in proposal.reasoning
+    assert llm.calls[ROLE_TRADER] == 1
+
+
+def test_confidence_exactly_at_threshold_keeps_trader_action() -> None:
+    """The forced-hold check is strict ``<``: exactly 0.3 keeps the action."""
+    llm = ScriptedLLM({ROLE_TRADER: [_trader_output(LOW_CONFIDENCE_THRESHOLD)]})
+    state = _run(llm)
+    proposal = state["proposal"]
+    assert proposal is not None
+    assert proposal.action is Action.OPEN_LONG
+    assert proposal.confidence == LOW_CONFIDENCE_THRESHOLD
+    assert llm.calls[ROLE_TRADER] == 1
 
 
 def test_unavailable_bull_researcher_cuts_debate_short_but_still_trades(

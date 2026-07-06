@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "verdict_id": "c9d0e1f2-a3b4-4c5d-9e6f-8a9b0c1d2e3f",
+  "proposal_id": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b",
+  "decision": "clip",
+  "clipped_size_quote": "1200.00",
+  "reasons": [
+    {
+      "code": "NOTIONAL_CAP_CLIPPED",
+      "message": "Requested size_quote 1500.00 exceeds per_position_notional_cap_quote 1200.00; size clipped to the cap. Clipped size is > 0 and < the requested size per contract rule for clip verdicts."
+    }
+  ],
+  "limits_snapshot": {
+    "symbol_whitelist": ["BTC/USDT", "ETH/USDT"],
+    "max_open_positions": 3,
+    "per_position_notional_cap_quote": "1200.00",
+    "daily_loss_limit_quote": "500.00",
+    "max_drawdown_pct": 10,
+    "max_orders_per_minute": 6,
+    "require_stop_loss": true,
+    "equity_quote": "10250.75",
+    "peak_equity_quote": "10250.75",
+    "daily_realized_pnl_quote": "84.10",
+    "open_positions_count": 1,
+    "pending_entry_orders_count": 0,
+    "mark_price": "64180.10"
+  },
+  "evaluated_at": "2026-07-05T09:30:02Z"
+}

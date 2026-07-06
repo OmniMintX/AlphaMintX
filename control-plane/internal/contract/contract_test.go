@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -37,7 +38,7 @@ func assertSemanticEqual(t *testing.T, original, remarshaled []byte) {
 }
 
 func TestProposalFixturesRoundTrip(t *testing.T) {
-	for _, name := range []string{"proposal_open_long.json", "proposal_hold.json"} {
+	for _, name := range []string{"proposal_open_long.json", "proposal_hold.json", "proposal_decimal_edges.json"} {
 		t.Run(name, func(t *testing.T) {
 			raw := readFixture(t, name)
 			var p Proposal
@@ -78,6 +79,50 @@ func TestVerdictFixtureRoundTrip(t *testing.T) {
 	assertSemanticEqual(t, raw, out)
 }
 
+// The decimal-edges fixture (SS-26) pins the boundary string forms: 34-char
+// maximum, minimal positive value, integers with no fractional part, and "0".
+func TestDecimalEdgesFixtureStringForms(t *testing.T) {
+	raw := readFixture(t, "proposal_decimal_edges.json")
+	var p Proposal
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := p.SizeQuote.String(); len(got) != 34 || got != "10000.0000000000000000000000000001" {
+		t.Errorf("size_quote = %q, want 34-char maximum form preserved", got)
+	}
+	if p.StopLoss == nil || p.StopLoss.String() != "0.00000001" {
+		t.Errorf("stop_loss = %v, want minimal positive form preserved", p.StopLoss)
+	}
+	if p.TakeProfit == nil || p.TakeProfit.String() != "9999999999999999999999999999999999" {
+		t.Errorf("take_profit = %v, want 34-digit integer form preserved", p.TakeProfit)
+	}
+	if len(p.ModelCosts) != 1 || p.ModelCosts[0].CostUSD.String() != "0" {
+		t.Errorf("model_costs = %+v, want single entry with cost_usd \"0\" preserved", p.ModelCosts)
+	}
+}
+
+func TestVerdictClipFixtureRoundTrip(t *testing.T) {
+	raw := readFixture(t, "verdict_clip.json")
+	var v Verdict
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if v.Decision != DecisionClip {
+		t.Errorf("decision = %q, want clip", v.Decision)
+	}
+	if v.ClippedSizeQuote == nil || v.ClippedSizeQuote.String() != "1200.00" {
+		t.Errorf("clipped_size_quote = %v, want string form 1200.00 preserved", v.ClippedSizeQuote)
+	}
+	if len(v.Reasons) != 1 || v.Reasons[0].Code != CodeNotionalCapClipped {
+		t.Errorf("reasons = %+v, want single NOTIONAL_CAP_CLIPPED", v.Reasons)
+	}
+	out, err := json.Marshal(&v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	assertSemanticEqual(t, raw, out)
+}
+
 // The invalid golden fixture violates exactly one rule: the stop_loss
 // conditional for open_long (proposal-contract.md, Golden fixtures).
 func TestInvalidNoStopLossFixture(t *testing.T) {
@@ -92,6 +137,20 @@ func TestInvalidNoStopLossFixture(t *testing.T) {
 	}
 	if vs[0].Code != CodeMissingStopLoss {
 		t.Errorf("violation code = %q, want %q", vs[0].Code, CodeMissingStopLoss)
+	}
+}
+
+// The numeric-size fixture pins ADR-0003: money fields are decimal strings,
+// never JSON numbers; decoding itself must fail on the JSON number.
+func TestInvalidNumericSizeFixture(t *testing.T) {
+	raw := readFixture(t, "proposal_invalid_numeric_size.json")
+	var p Proposal
+	err := json.Unmarshal(raw, &p)
+	if err == nil {
+		t.Fatal("unmarshal accepted size_quote as a JSON number")
+	}
+	if !strings.Contains(err.Error(), "decimal field must be a JSON string") {
+		t.Errorf("error = %q, want decimal-must-be-string parse failure", err)
 	}
 }
 

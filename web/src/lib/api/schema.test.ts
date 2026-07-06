@@ -27,6 +27,8 @@ import {
   limitChangeResponseSchema,
   limitsStatusSchema,
   mintedTokenSchema,
+  notifierSourceStatusSchema,
+  notifierStatusSchema,
   omsReconRunSchema,
   omsReconStatusSchema,
   paperGateReportSchema,
@@ -1156,5 +1158,86 @@ describe("oms recon schemas", () => {
   it("rejects unknown keys (strictObject pinned)", () => {
     expect(omsReconStatusSchema.safeParse({ ...fullReconStatus, extra: 1 }).success).toBe(false);
     expect(omsReconRunSchema.safeParse({ ...fullReconRun, extra: 1 }).success).toBe(false);
+  });
+});
+
+// ---- Alert-dispatch health (alert-notifier.md AN-17) --------------------------------
+
+const healthySource = {
+  source: "kill_breaker_events",
+  consecutive_failed_ticks: 0,
+  degraded: false,
+  last_degraded_at: null,
+};
+
+const degradedSource = {
+  source: "safety_alerts",
+  consecutive_failed_ticks: 12,
+  degraded: true,
+  last_degraded_at: "2026-07-06T02:00:00Z",
+};
+
+describe("notifier status schemas (AN-17)", () => {
+  it("parses the healthy shape — degraded false, zero counters, null last_degraded_at", () => {
+    const status = notifierStatusSchema.parse({
+      degraded: false,
+      sources: [
+        healthySource,
+        { ...healthySource, source: "kill_clear_events" },
+        { ...healthySource, source: "safety_alerts" },
+      ],
+    });
+    expect(status.degraded).toBe(false);
+    expect(status.sources).toHaveLength(3);
+    expect(status.sources[0]?.consecutive_failed_ticks).toBe(0);
+    expect(status.sources[0]?.last_degraded_at).toBeNull();
+  });
+
+  it("parses a degraded row with its counter and RFC 3339 last_degraded_at", () => {
+    const status = notifierStatusSchema.parse({ degraded: true, sources: [degradedSource] });
+    expect(status.degraded).toBe(true);
+    expect(status.sources[0]?.consecutive_failed_ticks).toBe(12);
+    expect(status.sources[0]?.last_degraded_at).toBe("2026-07-06T02:00:00Z");
+  });
+
+  it("parses empty sources ([] never null) and rejects a null one", () => {
+    expect(notifierStatusSchema.parse({ degraded: false, sources: [] }).sources).toEqual([]);
+    expect(notifierStatusSchema.safeParse({ degraded: false, sources: null }).success).toBe(false);
+  });
+
+  it("keeps source an OPEN set — any non-empty string parses", () => {
+    expect(
+      notifierSourceStatusSchema.safeParse({ ...healthySource, source: "notifier" }).success,
+    ).toBe(true);
+    expect(
+      notifierSourceStatusSchema.safeParse({ ...healthySource, source: "future_source" }).success,
+    ).toBe(true);
+    expect(notifierSourceStatusSchema.safeParse({ ...healthySource, source: "" }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects a negative or fractional counter and a malformed timestamp", () => {
+    expect(
+      notifierSourceStatusSchema.safeParse({ ...healthySource, consecutive_failed_ticks: -1 })
+        .success,
+    ).toBe(false);
+    expect(
+      notifierSourceStatusSchema.safeParse({ ...healthySource, consecutive_failed_ticks: 1.5 })
+        .success,
+    ).toBe(false);
+    expect(
+      notifierSourceStatusSchema.safeParse({ ...degradedSource, last_degraded_at: "yesterday" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown keys (strictObject pinned)", () => {
+    expect(
+      notifierStatusSchema.safeParse({ degraded: false, sources: [], extra: 1 }).success,
+    ).toBe(false);
+    expect(
+      notifierSourceStatusSchema.safeParse({ ...healthySource, extra: 1 }).success,
+    ).toBe(false);
   });
 });

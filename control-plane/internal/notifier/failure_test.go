@@ -312,3 +312,94 @@ func TestDegradedEscalation(t *testing.T) {
 		t.Fatalf("counter not cleared by success; logs:\n%s", h.logs.String())
 	}
 }
+
+// TestStatusSnapshot pins the Status read seam over the AN-17 state: a
+// fresh engine reports every source healthy in the fixed AN-6a order;
+// crossing degradeAfter flips the row (and the aggregate) to degraded
+// with LastDegradedAt set; one success clears it all back.
+func TestStatusSnapshot(t *testing.T) {
+	h := newHarness(t)
+	r := newReceiver(t)
+	e, _ := h.seeded(Config{URL: r.srv.URL, Heartbeat: 0})
+
+	st := e.Status()
+	if st.Degraded {
+		t.Error("fresh engine reports degraded")
+	}
+	wantOrder := []string{store.AlertSourceKillBreaker, store.AlertSourceKillClear, store.AlertSourceSafetyAlert}
+	if len(st.Sources) != len(wantOrder) {
+		t.Fatalf("sources = %d rows, want %d (heartbeat disabled)", len(st.Sources), len(wantOrder))
+	}
+	for i, row := range st.Sources {
+		if row.Source != wantOrder[i] || row.ConsecutiveFailedTicks != 0 || row.Degraded || !row.LastDegradedAt.IsZero() {
+			t.Errorf("fresh row %d = %+v, want healthy %s", i, row, wantOrder[i])
+		}
+	}
+
+	h.alert(40, "degrading", "{}")
+	r.setStatus(func(capture) int { return http.StatusBadGateway })
+	for i := 0; i < degradeAfter-1; i++ {
+		e.runPass(context.Background())
+	}
+	st = e.Status()
+	if st.Degraded {
+		t.Error("degraded before the 12th failed tick")
+	}
+	if row := st.Sources[2]; row.ConsecutiveFailedTicks != degradeAfter-1 || row.Degraded {
+		t.Errorf("row after %d failed ticks = %+v", degradeAfter-1, row)
+	}
+
+	e.runPass(context.Background()) // 12th: escalates
+	st = e.Status()
+	if !st.Degraded {
+		t.Error("aggregate not degraded at the 12th failed tick")
+	}
+	if row := st.Sources[2]; row.ConsecutiveFailedTicks != degradeAfter || !row.Degraded || !row.LastDegradedAt.Equal(testNow) {
+		t.Errorf("degraded row = %+v, want count=%d degraded at %s", row, degradeAfter, testNow)
+	}
+	if row := st.Sources[0]; row.Degraded || row.ConsecutiveFailedTicks != 0 {
+		t.Errorf("unrelated source degraded: %+v", row)
+	}
+
+	r.setStatus(nil)
+	e.runPass(context.Background()) // success clears (AN-17)
+	st = e.Status()
+	if st.Degraded {
+		t.Error("degraded after a successful tick")
+	}
+	if row := st.Sources[2]; row.ConsecutiveFailedTicks != 0 || !row.LastDegradedAt.IsZero() {
+		t.Errorf("row not cleared by success: %+v", row)
+	}
+}
+
+// TestStatusHeartbeatRow: heartbeats enabled add the AN-14a "notifier"
+// source as a fourth row; disabled engines never report it.
+func TestStatusHeartbeatRow(t *testing.T) {
+	h := newHarness(t)
+	r := newReceiver(t)
+	e, _ := h.seeded(Config{URL: r.srv.URL, Heartbeat: time.Hour})
+	st := e.Status()
+	if len(st.Sources) != 4 || st.Sources[3].Source != "notifier" {
+		t.Fatalf("sources = %+v, want the 3 dispatch sources plus notifier", st.Sources)
+	}
+}
+
+// TestStatusConcurrentWithRun: Status is safe against the Run goroutine's
+// tick updates — this test exists to fail under -race (CI go-check) if
+// the mu discipline around fail/lastDegraded regresses.
+func TestStatusConcurrentWithRun(t *testing.T) {
+	h := newHarness(t)
+	r := newReceiver(t)
+	r.setStatus(func(capture) int { return http.StatusBadGateway })
+	e, _ := h.seeded(Config{URL: r.srv.URL, Poll: time.Millisecond, Heartbeat: 0})
+	h.alert(40, "racing", "{}")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { e.Run(ctx); close(done) }()
+	deadline := time.Now().Add(50 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		_ = e.Status()
+	}
+	cancel()
+	<-done
+}

@@ -104,6 +104,10 @@ type Config struct {
 	// OB-6/OB-7); nil (no CONTROLPLANE_BACKUP_DIR) leaves them
 	// unregistered (404). Mode-independent: paper deployments wire it too.
 	Backup BackupEngine
+	// Notifier enables GET /api/v1/ops/notifier-status (alert-notifier.md
+	// AN-17 state); nil (no CONTROLPLANE_ALERT_WEBHOOK) leaves it
+	// unregistered (404), the Backup precedent.
+	Notifier NotifierStatusProvider
 	// Vault seals/opens the platform-secret payloads (platform-secrets.md);
 	// nil answers the four secret routes 503 VAULT_UNAVAILABLE. The routes
 	// stay registered either way — the permission matrix is the total
@@ -246,6 +250,7 @@ func New(cfg Config) *Server {
 		"POST /api/v1/oms/recon/run":                     s.handlePostReconRun,
 		"POST /api/v1/ops/backups/run":                   s.handlePostBackupRun,
 		"GET /api/v1/ops/backups":                        s.handleListBackups,
+		"GET /api/v1/ops/notifier-status":                s.handleGetNotifierStatus,
 		"GET /api/v1/ops/restore":                        s.handleGetRestoreStatus,
 		"POST /api/v1/ops/restore/ack":                   s.handlePostRestoreAck,
 		"POST /api/v1/auth/bootstrap":                    s.handleAuthBootstrap,
@@ -277,6 +282,10 @@ func New(cfg Config) *Server {
 			}
 		case requiresBackup:
 			if cfg.Backup == nil {
+				continue
+			}
+		case requiresNotifier:
+			if cfg.Notifier == nil {
 				continue
 			}
 		}
