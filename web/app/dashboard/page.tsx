@@ -12,7 +12,7 @@ import { fetchStrategies } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
 import { useI18n } from "../../src/lib/i18n";
 import { ErrorBanner, Pager, StateBadge } from "../strategies/ui";
-import { MarketGrid, TickerTape } from "./market";
+import { FuturesGrid, MarketGrid, TickerTape } from "./market";
 
 const INVARIANT_KEYS = ["inv.1", "inv.2", "inv.3", "inv.4", "inv.5", "inv.6", "inv.7"] as const;
 
@@ -53,6 +53,11 @@ export default function DashboardPage() {
       <section className="section section-first">
         <h2 className="section-title">{t("market.title")}</h2>
         <MarketGrid />
+      </section>
+
+      <section className="section">
+        <h2 className="section-title">{t("market.futures.title")}</h2>
+        <FuturesGrid />
       </section>
 
       <div className="grid grid-4" style={{ marginTop: 16 }}>

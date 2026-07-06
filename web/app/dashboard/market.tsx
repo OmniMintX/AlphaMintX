@@ -10,10 +10,14 @@ import { useCallback } from "react";
 import {
   DESK_SYMBOLS,
   displayPair,
+  fetchFuturesSnapshot,
   fetchMarketSnapshot,
+  fmtFundingCountdown,
+  fmtFundingRate,
   fmtPct,
   fmtPrice,
   fmtVolume,
+  type FuturesRow,
   type MarketSnapshot,
 } from "../../src/lib/market/binance";
 import { usePoll } from "../../src/lib/api/usePoll";
@@ -109,6 +113,64 @@ export function MarketGrid() {
               </span>
               <span>
                 {t("market.vol")} <b>{fmtVolume(tk.quoteVolume)}</b>
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// USD-M futures cards. The fapi endpoint has no public mirror and can be
+// geo-blocked (HTTP 451) while spot keeps working, so this polls and fails
+// independently: on error it renders a one-line notice, never breaking the
+// spot section; if the feed recovers on a later poll the cards reappear.
+export function FuturesGrid() {
+  const { t } = useI18n();
+  const load = useCallback(() => fetchFuturesSnapshot(DESK_SYMBOLS), []);
+  const { data, error } = usePoll<FuturesRow[]>(load, MARKET_POLL_MS);
+
+  if (error && !data) {
+    return <div className="empty">{t("market.futures.unavailable")}</div>;
+  }
+  if (!data) {
+    return (
+      <div className="grid grid-4">
+        <div className="skeleton" style={{ height: 96 }} />
+        <div className="skeleton" style={{ height: 96 }} />
+        <div className="skeleton" style={{ height: 96 }} />
+        <div className="skeleton" style={{ height: 96 }} />
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-4 market-grid">
+      {data.map((row) => {
+        const tone = dir(row.priceChangePercent);
+        // Positive funding = longs pay shorts (red); negative = green.
+        const fundingTone = Number(row.lastFundingRate) > 0 ? "down" : "up";
+        return (
+          <div className="market-card" key={row.symbol}>
+            <div className="spread">
+              <span className="market-sym">{displayPair(row.symbol)}</span>
+              <span className={`market-chg ${tone}`}>{fmtPct(row.priceChangePercent)}</span>
+            </div>
+            <div className="spread market-mid">
+              <span className={`market-px ${tone}`}>{fmtPrice(row.markPrice)}</span>
+              <span className={`market-chg ${fundingTone}`}>
+                {t("market.futures.funding")} {fmtFundingRate(row.lastFundingRate)}
+              </span>
+            </div>
+            <div className="market-foot">
+              <span>
+                {t("market.futures.next")} <b>{fmtFundingCountdown(row.nextFundingTime)}</b>
+              </span>
+              <span>
+                {t("market.futures.oi")} <b>{fmtVolume(row.openInterest)}</b>
+              </span>
+              <span>
+                {t("market.vol")} <b>{fmtVolume(row.quoteVolume)}</b>
               </span>
             </div>
           </div>

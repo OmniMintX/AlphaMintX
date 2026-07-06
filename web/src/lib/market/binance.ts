@@ -94,3 +94,87 @@ export function fmtVolume(raw: string): string {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toFixed(0);
 }
+
+// USD-M futures public REST. Unlike spot there is no data-only mirror, so
+// browsers in some regions get HTTP 451 (geo-block) — callers must treat the
+// futures feed as independently fallible (the spot desk keeps working).
+const FAPI_BASE = "https://fapi.binance.com/fapi/v1";
+
+export interface FuturesTicker24h {
+  symbol: string;
+  lastPrice: string;
+  priceChangePercent: string;
+  quoteVolume: string;
+}
+
+export interface PremiumIndex {
+  symbol: string;
+  markPrice: string;
+  indexPrice: string;
+  lastFundingRate: string; // decimal string, e.g. "0.00010000"
+  nextFundingTime: number; // ms epoch
+}
+
+export interface OpenInterestInfo {
+  symbol: string;
+  openInterest: string; // base-asset amount
+}
+
+// One desk row per symbol; numeric values stay strings (ADR-0003).
+export interface FuturesRow {
+  symbol: string;
+  markPrice: string;
+  indexPrice: string;
+  priceChangePercent: string;
+  quoteVolume: string;
+  lastFundingRate: string;
+  nextFundingTime: number;
+  openInterest: string;
+}
+
+async function getFapiJSON<T>(path: string): Promise<T> {
+  const res = await fetch(`${FAPI_BASE}${path}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`futures data ${res.status}`);
+  return (await res.json()) as T;
+}
+
+// Per-symbol parallel fetches (the unfiltered /ticker/24hr returns every
+// listed contract — far too big for five desk symbols).
+export async function fetchFuturesSnapshot(
+  symbols: readonly string[] = DESK_SYMBOLS,
+): Promise<FuturesRow[]> {
+  return Promise.all(
+    symbols.map(async (symbol) => {
+      const [ticker, premium, oi] = await Promise.all([
+        getFapiJSON<FuturesTicker24h>(`/ticker/24hr?symbol=${symbol}`),
+        getFapiJSON<PremiumIndex>(`/premiumIndex?symbol=${symbol}`),
+        getFapiJSON<OpenInterestInfo>(`/openInterest?symbol=${symbol}`),
+      ]);
+      return {
+        symbol,
+        markPrice: premium.markPrice,
+        indexPrice: premium.indexPrice,
+        priceChangePercent: ticker.priceChangePercent,
+        quoteVolume: ticker.quoteVolume,
+        lastFundingRate: premium.lastFundingRate,
+        nextFundingTime: premium.nextFundingTime,
+        openInterest: oi.openInterest,
+      };
+    }),
+  );
+}
+
+// "+0.0100%" (always signed, 4 decimals) from Binance's "0.00010000".
+export function fmtFundingRate(raw: string): string {
+  const n = Number(raw) * 100;
+  if (!Number.isFinite(n)) return raw;
+  return `${n >= 0 ? "+" : ""}${n.toFixed(4)}%`;
+}
+
+// "hh:mm" countdown to the next funding timestamp, clamped at 00:00.
+export function fmtFundingCountdown(nextFundingTime: number, now = Date.now()): string {
+  const left = Math.max(0, nextFundingTime - now);
+  const h = Math.floor(left / 3_600_000);
+  const m = Math.floor((left % 3_600_000) / 60_000);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
