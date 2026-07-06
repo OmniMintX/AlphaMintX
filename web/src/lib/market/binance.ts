@@ -178,3 +178,38 @@ export function fmtFundingCountdown(nextFundingTime: number, now = Date.now()): 
   const m = Math.floor((left % 3_600_000) / 60_000);
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
+
+// One candle for the desk chart; time is openTime in seconds (the unit
+// lightweight-charts expects). Number() here is chart geometry (ADR-0003),
+// never accounting.
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+// Klines for either market: a kline row is [openTime(ms), open, high, low,
+// close, volume, ...] with the numeric fields as strings.
+export async function fetchCandles(
+  market: "spot" | "futures",
+  symbol: string,
+  interval: string,
+  limit = 300,
+): Promise<Candle[]> {
+  const path = `/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const raw =
+    market === "spot"
+      ? await getJSON<(string | number)[][]>(path)
+      : await getFapiJSON<(string | number)[][]>(path);
+  return raw.map((k) => ({
+    time: Number(k[0]) / 1000,
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  }));
+}

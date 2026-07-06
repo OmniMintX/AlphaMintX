@@ -522,6 +522,60 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .market-foot b { color: var(--text-2); font-weight: 600; }
 
+/* Tabbed desk: Binance-style tab bar, selectable cards, chart panel. */
+.market-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.market-tab {
+  background: none;
+  border: none;
+  padding: 6px 2px 8px;
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-3);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.market-tab:hover { color: var(--text); }
+.market-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.market-click { cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+.market-click:hover { background: var(--surface-hover); }
+.market-card.selected { border-color: var(--accent); }
+
+.chart-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.chart-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.chart-px { font-family: var(--mono); font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.chart-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.chart-stats b { color: var(--text-2); font-weight: 600; }
+.chart-ivals { margin-left: auto; }
+.chart-close {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.chart-close:hover { color: var(--text); background: var(--surface-hover); }
+.chart-body { height: 380px; width: 100%; }
+
 /* ---------- Misc ---------- */
 
 /* ---------- Preference toggles (locale + theme) ---------- */
