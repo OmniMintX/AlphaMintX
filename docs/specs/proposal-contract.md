@@ -81,8 +81,13 @@ not validate. Both schemas therefore assert shape with explicit `pattern`s:
 
 - Timestamps (`created_at`, `evaluated_at`): RFC 3339 UTC with mandatory `Z`
   suffix — `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$`.
-  Offsets (`+05:00`) and empty strings are schema-invalid. An unparseable
-  `created_at` ⇒ reject `SCHEMA_INVALID`.
+  Offsets (`+05:00`) and empty strings are schema-invalid. The pattern asserts
+  shape only; the value MUST also be a valid calendar instant (months 1-12,
+  Gregorian leap-day bound, hours 0-23, minutes/seconds 0-59 — no leap-second
+  `60`). Every plane enforces this: the control-plane via `time.Parse`, and the
+  agent-plane/web mirrors via a calendar check after the pattern, so a
+  regex-shaped but impossible date (`2026-02-30T…Z`) never passes one plane and
+  is lost at another. An unparseable `created_at` ⇒ reject `SCHEMA_INVALID`.
 - UUIDs (`proposal_id`, `strategy_id`, `agent_trace_id`, `verdict_id`):
   lowercase-hex pattern `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`.
 

@@ -30,10 +30,33 @@ export const uuid = z
 export const decimal = z.string().max(34).regex(decimalRegex);
 export const signedDecimal = z.string().max(35).regex(signedDecimalRegex);
 export const symbol = z.string().regex(/^[A-Z0-9]{2,15}\/[A-Z0-9]{2,10}$/);
+
+const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+// The regex only guarantees the YYYY-MM-DDThh:mm:ss shape; it accepts month 13,
+// Feb 30, hour 24, second 60, etc. The control-plane ingestion gate (Go
+// time.Parse) rejects those, so accepting them here would let the web plane
+// pass a timestamp the control-plane loses at ingestion (Phase 18 drift class).
+// Mirror Go exactly: months 1-12, Gregorian leap-day bound, hh 0-23, mm/ss 0-59.
+function isValidUtcCalendar(value: string): boolean {
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const hour = Number(value.slice(11, 13));
+  const minute = Number(value.slice(14, 16));
+  const second = Number(value.slice(17, 19));
+  if (month < 1 || month > 12) return false;
+  let maxDay = daysInMonth[month - 1] as number;
+  if (month === 2 && isLeapYear(Number(value.slice(0, 4)))) maxDay = 29;
+  if (day < 1 || day > maxDay) return false;
+  return hour <= 23 && minute <= 59 && second <= 59;
+}
 export const utcTimestamp = z
   .string()
   .max(35)
-  .regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/);
+  .regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/)
+  .refine(isValidUtcCalendar, { message: "invalid calendar date/time in UTC timestamp" });
 
 export const analystSummarySchema = z.strictObject({
   signal: z.enum(["bullish", "bearish", "neutral"]),

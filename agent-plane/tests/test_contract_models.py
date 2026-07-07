@@ -118,6 +118,49 @@ def test_hold_nonzero_size_quote_rejected() -> None:
         TradeProposal.model_validate(raw)
 
 
+@pytest.mark.parametrize(
+    "bad_ts",
+    [
+        "2026-02-30T00:00:00Z",  # Feb 30 never exists
+        "2026-13-01T00:00:00Z",  # month 13
+        "2026-00-01T00:00:00Z",  # month 00
+        "2026-01-00T00:00:00Z",  # day 00
+        "2026-07-32T00:00:00Z",  # day 32
+        "2026-11-31T00:00:00Z",  # Nov has 30 days
+        "2100-02-29T00:00:00Z",  # 2100 is not a leap year
+        "2026-07-07T24:00:00Z",  # hour 24
+        "2026-07-07T00:60:00Z",  # minute 60
+        "2026-07-07T00:00:61Z",  # second 61
+        "2026-07-07T23:59:60Z",  # leap second (Go time.Parse rejects)
+        "2026-07-07T99:99:99Z",
+    ],
+)
+def test_calendar_invalid_timestamps_rejected(bad_ts: str) -> None:
+    """Regex-shaped but calendar-invalid timestamps must be rejected so the
+    agent plane never emits a created_at the control-plane loses at ingestion
+    (cross-plane drift; Go time.Parse is the ingestion authority)."""
+    raw = load_json(FIXTURES_DIR / "proposal_open_long.json")
+    raw["created_at"] = bad_ts
+    with pytest.raises(ValidationError, match="UTC timestamp"):
+        TradeProposal.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "good_ts",
+    [
+        "2024-02-29T00:00:00Z",  # 2024 is a leap year
+        "2400-02-29T00:00:00Z",  # divisible by 400 -> leap year
+        "2026-12-31T23:59:59Z",
+        "2026-07-07T00:00:00.123456789Z",
+    ],
+)
+def test_calendar_valid_timestamps_accepted(good_ts: str) -> None:
+    raw = load_json(FIXTURES_DIR / "proposal_open_long.json")
+    raw["created_at"] = good_ts
+    proposal = TradeProposal.model_validate(raw)
+    assert proposal.created_at == good_ts
+
+
 def test_verdict_reject_fixture_round_trips(verdict_schema: dict[str, Any]) -> None:
     raw = load_json(FIXTURES_DIR / "verdict_reject_daily_loss.json")
     verdict = RiskVerdict.model_validate(raw)

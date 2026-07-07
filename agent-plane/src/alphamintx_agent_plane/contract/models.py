@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -49,6 +50,42 @@ def decimal_to_str(value: Decimal) -> str:
     return format(value, "f")
 
 
+def _is_leap_year(year: int) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+_DAYS_IN_MONTH = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+
+def _validate_utc_calendar(value: str) -> str:
+    """Reject regex-shaped timestamps whose calendar fields are out of range.
+
+    The ``StringConstraints`` regex only guarantees the ``YYYY-MM-DDThh:mm:ss``
+    *shape*; it accepts month 00/13, day 30-in-Feb, hour 24, second 60, etc. The
+    control-plane ingestion gate (Go ``time.Parse(RFC3339Nano)``) rejects those,
+    so a locally-valid-but-calendar-invalid timestamp would be lost at ingestion
+    (the Phase 18 emit/reject drift class). This mirrors Go exactly: months 1-12,
+    days bounded by the Gregorian leap rule, hours 0-23, minutes/seconds 0-59
+    (no leap-second 60), and year 0000 accepted.
+    """
+    year = int(value[0:4])
+    month = int(value[5:7])
+    day = int(value[8:10])
+    hour = int(value[11:13])
+    minute = int(value[14:16])
+    second = int(value[17:19])
+    if not 1 <= month <= 12:
+        raise ValueError(f"invalid month in UTC timestamp: {value!r}")
+    max_day = _DAYS_IN_MONTH[month - 1]
+    if month == 2 and _is_leap_year(year):
+        max_day = 29
+    if not 1 <= day <= max_day:
+        raise ValueError(f"invalid day in UTC timestamp: {value!r}")
+    if hour > 23 or minute > 59 or second > 59:
+        raise ValueError(f"invalid time-of-day in UTC timestamp: {value!r}")
+    return value
+
+
 def _parse_decimal(value: object, pattern: re.Pattern[str], max_length: int) -> Decimal:
     if isinstance(value, Decimal):
         text = decimal_to_str(value)
@@ -82,7 +119,11 @@ SignedDecimalStr = Annotated[
     PlainSerializer(decimal_to_str, return_type=str),
 ]
 UuidStr = Annotated[str, StringConstraints(pattern=_UUID_PATTERN)]
-UtcTimestamp = Annotated[str, StringConstraints(pattern=_UTC_TIMESTAMP_PATTERN, max_length=35)]
+UtcTimestamp = Annotated[
+    str,
+    StringConstraints(pattern=_UTC_TIMESTAMP_PATTERN, max_length=35),
+    AfterValidator(_validate_utc_calendar),
+]
 SymbolStr = Annotated[str, StringConstraints(pattern=_SYMBOL_PATTERN)]
 ReasonCode = Annotated[str, StringConstraints(pattern=_REASON_CODE_PATTERN, max_length=64)]
 

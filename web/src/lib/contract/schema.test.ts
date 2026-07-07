@@ -11,7 +11,7 @@ import proposalInvalidNoSl from "../../../../contracts/fixtures/proposal_invalid
 import proposalInvalidNumericSize from "../../../../contracts/fixtures/proposal_invalid_numeric_size.json";
 import verdictClip from "../../../../contracts/fixtures/verdict_clip.json";
 import verdictRejectDailyLoss from "../../../../contracts/fixtures/verdict_reject_daily_loss.json";
-import { riskVerdictSchema, tradeProposalSchema } from "./schema";
+import { riskVerdictSchema, tradeProposalSchema, utcTimestamp } from "./schema";
 
 describe("TradeProposal golden fixtures", () => {
   it("parses proposal_open_long.json", () => {
@@ -118,6 +118,43 @@ describe("TradeProposal golden fixtures", () => {
     mutated["leverage"] = "10";
     expect(tradeProposalSchema.safeParse(mutated).success).toBe(false);
   });
+});
+
+describe("utcTimestamp calendar validation", () => {
+  // Regex-shaped but calendar-invalid: the Go ingestion gate (time.Parse)
+  // rejects these, so the web plane must too or it accepts a timestamp the
+  // control-plane loses at ingestion (cross-plane drift).
+  const invalid = [
+    "2026-02-30T00:00:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-00-01T00:00:00Z",
+    "2026-01-00T00:00:00Z",
+    "2026-07-32T00:00:00Z",
+    "2026-11-31T00:00:00Z",
+    "2100-02-29T00:00:00Z",
+    "2026-07-07T24:00:00Z",
+    "2026-07-07T00:60:00Z",
+    "2026-07-07T00:00:61Z",
+    "2026-07-07T23:59:60Z",
+    "2026-07-07T99:99:99Z",
+  ];
+  for (const ts of invalid) {
+    it(`rejects calendar-invalid ${ts}`, () => {
+      expect(utcTimestamp.safeParse(ts).success).toBe(false);
+    });
+  }
+
+  const valid = [
+    "2024-02-29T00:00:00Z",
+    "2400-02-29T00:00:00Z",
+    "2026-12-31T23:59:59Z",
+    "2026-07-07T00:00:00.123456789Z",
+  ];
+  for (const ts of valid) {
+    it(`accepts calendar-valid ${ts}`, () => {
+      expect(utcTimestamp.safeParse(ts).success).toBe(true);
+    });
+  }
 });
 
 describe("RiskVerdict golden fixtures", () => {
