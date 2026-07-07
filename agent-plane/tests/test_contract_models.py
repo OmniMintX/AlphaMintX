@@ -236,3 +236,36 @@ def test_trace_model_cost_to_model_cost_strips_trace_only_fields() -> None:
 def test_trace_model_cost_rejects_non_uuid_request_id() -> None:
     with pytest.raises(ValidationError, match="request_id"):
         TraceModelCost.model_validate({**_COST_FIELDS, "request_id": "not-a-uuid"})
+
+
+@pytest.mark.parametrize("bad_tokens", ["100.0", "1e2", "9223372036854775808"])
+def test_token_counts_reject_floats_and_over_int64(bad_tokens: str) -> None:
+    """Go's encoding/json decodes token counts into a 64-bit int, rejecting
+    integral floats (100.0, 1e2) and ints above int64 range; accepting them
+    locally would be emit-then-reject cross-plane drift."""
+    raw = json.dumps({**_COST_FIELDS, "input_tokens": "BAD"}).replace('"BAD"', bad_tokens)
+    with pytest.raises(ValidationError, match="input_tokens"):
+        ModelCost.model_validate_json(raw)
+    with pytest.raises(ValidationError, match="input_tokens"):
+        TraceModelCost.model_validate_json(raw)
+
+
+def test_token_counts_accept_json_ints_within_int64() -> None:
+    assert ModelCost.model_validate_json(json.dumps(_COST_FIELDS)).input_tokens == 100
+    raw = json.dumps({**_COST_FIELDS, "input_tokens": 9223372036854775807})
+    assert ModelCost.model_validate_json(raw).input_tokens == 9223372036854775807
+
+
+def test_confidence_rejects_numeric_string() -> None:
+    """Go rejects a JSON string into float64, so "0.5" must fail locally too."""
+    raw = load_json(FIXTURES_DIR / "proposal_open_long.json")
+    raw["confidence"] = "0.5"
+    with pytest.raises(ValidationError, match="confidence"):
+        TradeProposal.model_validate_json(json.dumps(raw))
+
+
+def test_confidence_accepts_json_int() -> None:
+    """A JSON int is a valid float64 to Go's decoder, so 1 stays accepted."""
+    raw = load_json(FIXTURES_DIR / "proposal_open_long.json")
+    raw["confidence"] = 1
+    assert TradeProposal.model_validate_json(json.dumps(raw)).confidence == 1.0

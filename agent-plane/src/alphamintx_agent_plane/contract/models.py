@@ -126,6 +126,13 @@ UtcTimestamp = Annotated[
 ]
 SymbolStr = Annotated[str, StringConstraints(pattern=_SYMBOL_PATTERN)]
 ReasonCode = Annotated[str, StringConstraints(pattern=_REASON_CODE_PATTERN, max_length=64)]
+# JSON-number mirrors of Go's decode semantics (the emit-then-reject drift
+# class): Go's int is 64-bit, so ``encoding/json`` rejects integral floats
+# (100.0, 1e2) and ints above int64 range for count fields, and rejects JSON
+# strings into float64 while accepting JSON ints. Strict mode plus the int64
+# upper bound mirrors that exactly (pydantic strict float still takes ints).
+NonNegInt64 = Annotated[int, Field(strict=True, ge=0, le=9223372036854775807)]
+UnitFloat = Annotated[float, Field(strict=True, ge=0, le=1)]
 
 
 class Action(StrEnum):
@@ -183,7 +190,7 @@ class Entry(ContractModel):
 
 class AnalystSummary(ContractModel):
     signal: Signal
-    confidence: float = Field(ge=0, le=1)
+    confidence: UnitFloat
     summary: str = Field(max_length=2000)
 
 
@@ -196,8 +203,8 @@ class AnalystSummaries(ContractModel):
 class ModelCost(ContractModel):
     node: str = Field(max_length=64)
     model: str = Field(max_length=64)
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
+    input_tokens: NonNegInt64
+    output_tokens: NonNegInt64
     cost_usd: DecimalStr
 
 
@@ -209,8 +216,8 @@ class TraceModelCost(ContractModel):
 
     node: str = Field(max_length=64)
     model: str = Field(max_length=64)
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
+    input_tokens: NonNegInt64
+    output_tokens: NonNegInt64
     cost_usd: DecimalStr
     request_id: UuidStr | None = None
     estimated: bool = False
@@ -250,7 +257,7 @@ class TradeProposal(ContractModel):
     stop_loss: DecimalStr | None = None
     take_profit: DecimalStr | None = None
     time_in_force: TimeInForce
-    confidence: float = Field(ge=0, le=1)
+    confidence: UnitFloat
     reasoning: str = Field(max_length=8000)
     analyst_summaries: AnalystSummaries
     debate_summary: str = Field(max_length=4000)
@@ -314,19 +321,19 @@ class LimitsSnapshot(ContractModel):
     """Configured limits plus the runtime inputs the Risk Gate actually evaluated."""
 
     symbol_whitelist: list[SymbolStr]
-    max_open_positions: int = Field(ge=0)
+    max_open_positions: NonNegInt64
     per_position_notional_cap_quote: DecimalStr
     daily_loss_limit_quote: DecimalStr
-    max_drawdown_pct: float = Field(ge=0)
-    max_orders_per_minute: int = Field(ge=0)
+    max_drawdown_pct: float = Field(strict=True, ge=0)
+    max_orders_per_minute: NonNegInt64
     require_stop_loss: bool
     l2_max_size_quote: DecimalStr | None = None
     l2_allowed_symbols: list[SymbolStr] | None = None
     equity_quote: DecimalStr
     peak_equity_quote: DecimalStr
     daily_realized_pnl_quote: SignedDecimalStr
-    open_positions_count: int = Field(ge=0)
-    pending_entry_orders_count: int = Field(ge=0)
+    open_positions_count: NonNegInt64
+    pending_entry_orders_count: NonNegInt64
     mark_price: DecimalStr
 
 

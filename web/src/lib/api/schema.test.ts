@@ -143,6 +143,28 @@ describe("trace envelope", () => {
     expect(agentTraceSchema.safeParse({ ...trace, proposal_id: null }).success).toBe(true);
   });
 
+  it("accepts trace model_costs with the billing join fields (request_id, estimated)", () => {
+    const withBilling = {
+      ...trace,
+      model_costs: [
+        {
+          ...trace.model_costs[0]!,
+          request_id: "e5f6a7b8-c9d0-4e1f-8a2b-4c5d6e7f8a9b",
+          estimated: true,
+        },
+      ],
+    };
+    expect(agentTraceSchema.safeParse(withBilling).success).toBe(true);
+  });
+
+  it("rejects an unknown field inside a trace model_cost entry", () => {
+    const bad = {
+      ...trace,
+      model_costs: [{ ...trace.model_costs[0]!, unknown_extra: 1 }],
+    };
+    expect(agentTraceSchema.safeParse(bad).success).toBe(false);
+  });
+
   it("rejects a debate round missing bear_score", () => {
     const { bear_score: _bearScore, ...partial } = trace.debate_rounds[0]!;
     expect(agentTraceSchema.safeParse({ ...trace, debate_rounds: [partial] }).success).toBe(false);

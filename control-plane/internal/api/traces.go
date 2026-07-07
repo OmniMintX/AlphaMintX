@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"unicode/utf8"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
@@ -69,7 +70,8 @@ func (s *Server) handlePostTrace(w http.ResponseWriter, r *http.Request) {
 }
 
 // validateTrace enforces contracts/agent_trace.schema.json (plus its
-// beyond-schema transcript bound); "" means valid.
+// beyond-schema transcript bound); "" means valid. Length caps count code
+// points (JSON Schema maxLength semantics), not bytes.
 func validateTrace(env *store.TraceEnvelope) string {
 	if env.SchemaVersion != contract.SchemaVersion {
 		return fmt.Sprintf("unsupported schema_version %q (supported: %q)", env.SchemaVersion, contract.SchemaVersion)
@@ -93,13 +95,13 @@ func validateTrace(env *store.TraceEnvelope) string {
 		switch {
 		case d.RoundIndex < 0:
 			return fmt.Sprintf("debate_rounds[%d].round_index must be >= 0", i)
-		case len(d.BullArgument) > 4000 || len(d.BearArgument) > 4000:
+		case utf8.RuneCountInString(d.BullArgument) > 4000 || utf8.RuneCountInString(d.BearArgument) > 4000:
 			return fmt.Sprintf("debate_rounds[%d] argument exceeds 4000 chars", i)
 		case d.BullScore < 0 || d.BullScore > 1 || d.BearScore < 0 || d.BearScore > 1:
 			return fmt.Sprintf("debate_rounds[%d] score out of [0,1]", i)
 		}
 	}
-	if len(env.DebateSummary) > 4000 {
+	if utf8.RuneCountInString(env.DebateSummary) > 4000 {
 		return "debate_summary exceeds 4000 chars"
 	}
 	if env.Transcripts != nil {
@@ -118,7 +120,7 @@ func validateTrace(env *store.TraceEnvelope) string {
 		return "model_costs exceeds 32 items"
 	}
 	for i, c := range env.ModelCosts {
-		if len(c.Node) > 64 || len(c.Model) > 64 {
+		if utf8.RuneCountInString(c.Node) > 64 || utf8.RuneCountInString(c.Model) > 64 {
 			return fmt.Sprintf("model_costs[%d] node/model exceeds 64 chars", i)
 		}
 		if c.InputTokens < 0 || c.OutputTokens < 0 {
@@ -135,7 +137,7 @@ func validateTrace(env *store.TraceEnvelope) string {
 		return "estimated_cost_nodes exceeds 32 items"
 	}
 	for i, n := range env.EstimatedCostNodes {
-		if len(n) > 64 {
+		if utf8.RuneCountInString(n) > 64 {
 			return fmt.Sprintf("estimated_cost_nodes[%d] exceeds 64 chars", i)
 		}
 	}
@@ -164,7 +166,7 @@ func validateTraceSummaries(s *contract.AnalystSummaries) string {
 		if e.s.Confidence < 0 || e.s.Confidence > 1 {
 			return fmt.Sprintf("analyst_summaries.%s.confidence out of [0,1]", e.name)
 		}
-		if len(e.s.Summary) > 2000 {
+		if utf8.RuneCountInString(e.s.Summary) > 2000 {
 			return fmt.Sprintf("analyst_summaries.%s.summary exceeds 2000 chars", e.name)
 		}
 	}

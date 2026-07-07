@@ -94,6 +94,27 @@ not validate. Both schemas therefore assert shape with explicit `pattern`s:
 Contract-test harnesses MUST NOT rely on `format` assertion being enabled; the
 patterns are the contract.
 
+## Text lengths and integer fields (cross-plane semantics)
+
+- **`maxLength` counts Unicode code points** (JSON Schema §6.3.1), never UTF-8
+  bytes or UTF-16 code units. Every plane MUST measure human-text caps
+  (`reasoning`, `debate_summary`, `summary`, `node`, `model`, `message`) that
+  way: Go via `utf8.RuneCountInString` (never `len()`), Python `len(str)`
+  (already code points), TS via code-point iteration (never `.length` /
+  `z.string().max()`, which count UTF-16 units and double-count astral
+  characters). Byte-counting would reject dense-UTF-8 text one plane accepted
+  (the emit-then-reject drift class).
+- **`type: integer` fields** (`input_tokens`, `output_tokens`, `tick_number`)
+  are strict: JSON numbers with a fractional or exponent lexeme (`100.0`,
+  `1e2`) and values outside int64 MUST be rejected, mirroring Go
+  `encoding/json` into `int`. Python mirrors use pydantic strict ints;
+  producers MUST serialize plain integer lexemes. (TS consumers cannot see the
+  lexeme after `JSON.parse` canonicalization; that is acceptable because the
+  web plane only reads control-plane re-marshaled payloads.)
+- **Unknown fields are rejected at ingestion**, not silently dropped: the
+  control-plane decodes with `DisallowUnknownFields`, matching
+  `additionalProperties: false` and the agent-plane/web strict mirrors.
+
 ## Versioning rules
 
 - `schema_version` is `"MAJOR.MINOR"`. v1 documents carry `"1.x"`; the current

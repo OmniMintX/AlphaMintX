@@ -58,15 +58,30 @@ export const utcTimestamp = z
   .regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/)
   .refine(isValidUtcCalendar, { message: "invalid calendar date/time in UTC timestamp" });
 
+// JSON Schema maxLength counts Unicode code points, but z.string().max()
+// counts UTF-16 code units, double-counting astral characters (emoji etc.).
+// Human-text caps must count code points or the web plane rejects text the Go
+// and Python planes accept. for..of iterates by code point without allocating.
+function codePoints(s: string): number {
+  let n = 0;
+  for (const _ of s) n++;
+  return n;
+}
+export function maxCodePoints(n: number) {
+  return z.string().refine((s) => codePoints(s) <= n, {
+    message: `must have <=${n} code points`,
+  });
+}
+
 export const analystSummarySchema = z.strictObject({
   signal: z.enum(["bullish", "bearish", "neutral"]),
   confidence: z.number().min(0).max(1),
-  summary: z.string().max(2000),
+  summary: maxCodePoints(2000),
 });
 
 export const modelCostSchema = z.strictObject({
-  node: z.string().max(64),
-  model: z.string().max(64),
+  node: maxCodePoints(64),
+  model: maxCodePoints(64),
   input_tokens: z.number().int().min(0),
   output_tokens: z.number().int().min(0),
   cost_usd: decimal,
@@ -109,13 +124,13 @@ export const tradeProposalSchema = z
     take_profit: decimal.optional(),
     time_in_force: z.enum(["gtc", "ioc"]),
     confidence: z.number().min(0).max(1),
-    reasoning: z.string().max(8000),
+    reasoning: maxCodePoints(8000),
     analyst_summaries: z.strictObject({
       market: analystSummarySchema,
       news: analystSummarySchema,
       fundamental: analystSummarySchema,
     }),
-    debate_summary: z.string().max(4000),
+    debate_summary: maxCodePoints(4000),
     model_costs: z.array(modelCostSchema).max(32),
   })
   .superRefine((p, ctx) => {
@@ -205,8 +220,9 @@ export const tradeProposalSchema = z
   });
 
 const verdictReason = z.strictObject({
+  // code stays on .max(): the ASCII-only regex makes code units == code points.
   code: z.string().max(64).regex(/^[A-Z][A-Z0-9_]*$/),
-  message: z.string().max(500),
+  message: maxCodePoints(500),
 });
 
 const limitsSnapshot = z.strictObject({

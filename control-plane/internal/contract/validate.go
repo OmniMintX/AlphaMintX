@@ -1,6 +1,10 @@
 package contract
 
-import "github.com/shopspring/decimal"
+import (
+	"unicode/utf8"
+
+	"github.com/shopspring/decimal"
+)
 
 // Validate enforces the beyond-JSON-Schema rules of
 // docs/specs/proposal-contract.md that are decidable from the proposal alone.
@@ -41,10 +45,11 @@ func (p *Proposal) Validate() []Violation {
 	if p.Confidence < 0 || p.Confidence > 1 {
 		vs = append(vs, violation(CodeSchemaInvalid, "confidence %v out of [0,1]", p.Confidence))
 	}
-	if len(p.Reasoning) > 8000 {
+	// Length caps count code points (JSON Schema maxLength semantics), not bytes.
+	if utf8.RuneCountInString(p.Reasoning) > 8000 {
 		vs = append(vs, violation(CodeSchemaInvalid, "reasoning exceeds 8000 chars"))
 	}
-	if len(p.DebateSummary) > 4000 {
+	if utf8.RuneCountInString(p.DebateSummary) > 4000 {
 		vs = append(vs, violation(CodeSchemaInvalid, "debate_summary exceeds 4000 chars"))
 	}
 	vs = append(vs, validateSummaries(&p.AnalystSummaries)...)
@@ -67,7 +72,7 @@ func validateSummaries(s *AnalystSummaries) []Violation {
 		if e.s.Confidence < 0 || e.s.Confidence > 1 {
 			vs = append(vs, violation(CodeSchemaInvalid, "analyst_summaries.%s.confidence out of [0,1]", e.name))
 		}
-		if len(e.s.Summary) > 2000 {
+		if utf8.RuneCountInString(e.s.Summary) > 2000 {
 			vs = append(vs, violation(CodeSchemaInvalid, "analyst_summaries.%s.summary exceeds 2000 chars", e.name))
 		}
 	}
@@ -80,7 +85,7 @@ func validateModelCosts(costs []ModelCost) []Violation {
 		vs = append(vs, violation(CodeSchemaInvalid, "model_costs exceeds 32 items"))
 	}
 	for i, c := range costs {
-		if len(c.Node) > 64 || len(c.Model) > 64 {
+		if utf8.RuneCountInString(c.Node) > 64 || utf8.RuneCountInString(c.Model) > 64 {
 			vs = append(vs, violation(CodeSchemaInvalid, "model_costs[%d] node/model exceeds 64 chars", i))
 		}
 		if c.InputTokens < 0 || c.OutputTokens < 0 {

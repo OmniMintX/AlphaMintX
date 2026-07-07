@@ -120,6 +120,48 @@ describe("TradeProposal golden fixtures", () => {
   });
 });
 
+describe("code-point length caps", () => {
+  // JSON Schema maxLength counts Unicode code points; naive UTF-16 counting
+  // double-counts astral characters ("😀" is 1 code point, 2 UTF-16 units),
+  // rejecting schema-valid text the Go and Python planes accept.
+  const withReasoning = (reasoning: string) => {
+    const mutated = structuredClone(proposalOpenLong) as Record<string, unknown>;
+    mutated["reasoning"] = reasoning;
+    return mutated;
+  };
+
+  const withNode = (node: string) => {
+    const mutated = structuredClone(proposalOpenLong) as Record<string, unknown>;
+    const costs = mutated["model_costs"] as Array<Record<string, unknown>>;
+    costs[0] = { ...costs[0], node };
+    return mutated;
+  };
+
+  it('accepts reasoning of exactly 8000 "ệ" code points', () => {
+    expect(tradeProposalSchema.safeParse(withReasoning("ệ".repeat(8000))).success).toBe(true);
+  });
+
+  it('rejects reasoning of 8001 "ệ" code points', () => {
+    expect(tradeProposalSchema.safeParse(withReasoning("ệ".repeat(8001))).success).toBe(false);
+  });
+
+  it('accepts reasoning of 7000 "😀" (7000 code points, 14000 UTF-16 units)', () => {
+    expect(tradeProposalSchema.safeParse(withReasoning("😀".repeat(7000))).success).toBe(true);
+  });
+
+  it('rejects reasoning of 8001 "😀" code points', () => {
+    expect(tradeProposalSchema.safeParse(withReasoning("😀".repeat(8001))).success).toBe(false);
+  });
+
+  it('accepts model cost node of exactly 64 "😀" code points', () => {
+    expect(tradeProposalSchema.safeParse(withNode("😀".repeat(64))).success).toBe(true);
+  });
+
+  it('rejects model cost node of 65 "😀" code points', () => {
+    expect(tradeProposalSchema.safeParse(withNode("😀".repeat(65))).success).toBe(false);
+  });
+});
+
 describe("utcTimestamp calendar validation", () => {
   // Regex-shaped but calendar-invalid: the Go ingestion gate (time.Parse)
   // rejects these, so the web plane must too or it accepts a timestamp the

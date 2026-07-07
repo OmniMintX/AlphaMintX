@@ -123,6 +123,38 @@ func TestTraceValidation(t *testing.T) {
 	})
 }
 
+// Length caps count Unicode code points (agent_trace.schema.json maxLength
+// semantics), not bytes: multi-byte text at the cap must ingest.
+func TestTraceLengthCapsCountRunes(t *testing.T) {
+	e := newEnv(t, nil)
+	createStrategy(t, e.store, strat1, "paper")
+
+	cases := []struct {
+		name  string
+		limit int
+		set   func(env *store.TraceEnvelope, s string)
+	}{
+		{"bull argument", 4000, func(env *store.TraceEnvelope, s string) { env.DebateRounds[0].BullArgument = s }},
+		{"debate summary", 4000, func(env *store.TraceEnvelope, s string) { env.DebateSummary = s }},
+		{"analyst summary", 2000, func(env *store.TraceEnvelope, s string) { env.AnalystSummaries.Market.Summary = s }},
+		{"model cost node", 64, func(env *store.TraceEnvelope, s string) { env.ModelCosts[0].Node = s }},
+		{"estimated cost node", 64, func(env *store.TraceEnvelope, s string) { env.EstimatedCostNodes = []string{s} }},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proposalID, _, runID := insertChain(t, e.store, 100+10*i, strat1, i)
+			env := testTraceEnvelope(t, strat1, runID, &proposalID)
+			tc.set(env, strings.Repeat("ệ", tc.limit))
+			rec := e.do(t, "POST", tracePath(strat1), agent1Tok, env)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 for %d multi-byte runes (body %q)", rec.Code, tc.limit, rec.Body.String())
+			}
+			tc.set(env, strings.Repeat("ệ", tc.limit+1))
+			wantError(t, e.do(t, "POST", tracePath(strat1), agent1Tok, env), 400, codeSchemaInvalid)
+		})
+	}
+}
+
 func TestTraceBodyTooLarge(t *testing.T) {
 	e := newEnv(t, nil)
 	createStrategy(t, e.store, strat1, "paper")

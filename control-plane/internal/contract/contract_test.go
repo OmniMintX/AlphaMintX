@@ -154,6 +154,41 @@ func TestInvalidNumericSizeFixture(t *testing.T) {
 	}
 }
 
+// Length caps count Unicode code points (JSON Schema maxLength semantics),
+// not bytes: text at the cap must validate even when every rune is multi-byte.
+func TestValidateLengthCapsCountRunes(t *testing.T) {
+	cases := []struct {
+		name  string
+		limit int
+		char  string
+		set   func(p *Proposal, s string)
+	}{
+		{"reasoning", 8000, "ệ", func(p *Proposal, s string) { p.Reasoning = s }},
+		{"reasoning astral", 8000, "😀", func(p *Proposal, s string) { p.Reasoning = s }},
+		{"debate summary", 4000, "ệ", func(p *Proposal, s string) { p.DebateSummary = s }},
+		{"analyst summary", 2000, "ệ", func(p *Proposal, s string) { p.AnalystSummaries.Market.Summary = s }},
+		{"model cost node", 64, "ệ", func(p *Proposal, s string) { p.ModelCosts[0].Node = s }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := readFixture(t, "proposal_open_long.json")
+			var p Proposal
+			if err := json.Unmarshal(raw, &p); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			tc.set(&p, strings.Repeat(tc.char, tc.limit))
+			if vs := p.Validate(); len(vs) != 0 {
+				t.Errorf("%d runes at the cap must validate, got violations: %+v", tc.limit, vs)
+			}
+			tc.set(&p, strings.Repeat(tc.char, tc.limit+1))
+			vs := p.Validate()
+			if len(vs) != 1 || vs[0].Code != CodeSchemaInvalid {
+				t.Errorf("%d runes want single SCHEMA_INVALID violation, got %+v", tc.limit+1, vs)
+			}
+		})
+	}
+}
+
 func TestDecimalStringForm(t *testing.T) {
 	for _, bad := range []string{"", ".5", "05", "1e5", "+1", "-3", "1.", "00.5"} {
 		if _, err := ParseDecimal(bad); err == nil {

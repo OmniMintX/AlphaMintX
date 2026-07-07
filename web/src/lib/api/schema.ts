@@ -8,7 +8,7 @@ import { z } from "zod";
 import {
   analystSummarySchema,
   decimal,
-  modelCostSchema,
+  maxCodePoints,
   riskVerdictSchema,
   symbol,
   tradeProposalSchema,
@@ -88,6 +88,20 @@ export const budgetStateSchema = z.strictObject({
   cost_usd_used: decimal,
 });
 
+// agent_trace.schema.json $defs/trace_model_cost: the proposal model_cost
+// fields PLUS the OPTIONAL per-attempt billing join key and estimated flag
+// (billing-and-metering.md). The proposal-side modelCostSchema (strictObject)
+// would REJECT a live mintrouter trace that carries them.
+export const traceModelCostSchema = z.strictObject({
+  node: maxCodePoints(64),
+  model: maxCodePoints(64),
+  input_tokens: z.number().int().min(0),
+  output_tokens: z.number().int().min(0),
+  cost_usd: decimal,
+  request_id: uuid.optional(),
+  estimated: z.boolean().optional(),
+});
+
 export const agentTraceSchema = z.strictObject({
   strategy_id: uuid,
   run_id: uuid,
@@ -100,10 +114,12 @@ export const agentTraceSchema = z.strictObject({
     fundamental: analystSummarySchema,
   }),
   debate_rounds: z.array(debateRoundSchema),
-  debate_summary: z.string().max(4000),
+  // Counts code points (JSON Schema maxLength), not UTF-16 units: the Go
+  // ingestion gate accepts 4000 code points, which can be 8000 UTF-16 units.
+  debate_summary: maxCodePoints(4000),
   transcripts: z.unknown().optional(),
   proposal_id: uuid.nullable(),
-  model_costs: z.array(modelCostSchema).max(32),
+  model_costs: z.array(traceModelCostSchema).max(32),
   estimated_cost_nodes: z.array(z.string()).optional(),
   budget_state: budgetStateSchema,
 });
@@ -836,6 +852,7 @@ export type StrategiesPage = z.infer<typeof strategiesPageSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type RunsPage = z.infer<typeof runsPageSchema>;
 export type DebateRound = z.infer<typeof debateRoundSchema>;
+export type TraceModelCost = z.infer<typeof traceModelCostSchema>;
 export type AgentTrace = z.infer<typeof agentTraceSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type Fill = z.infer<typeof fillSchema>;
