@@ -3,11 +3,13 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/vault"
 )
 
@@ -252,6 +254,54 @@ func TestAgentLLMConfig(t *testing.T) {
 	wantError(t, e.do(t, "GET", "/api/v1/agent/llm-config", readTok, nil), 403, codeForbidden)
 }
 
+// TestAgentLLMConfigRoleModels pins the Phase-29 resolution order for the
+// llm-config role_models map: the trader_model/default_model defaults,
+// then the platform secret's role_models, then the requesting token's
+// strategy overrides. A token whose strategy has no row (or no overrides)
+// gets the platform-level view.
+func TestAgentLLMConfigRoleModels(t *testing.T) {
+	e, _ := vaultEnv(t)
+	rec := e.do(t, "POST", "/api/v1/platform/secrets/llm", adminTok, map[string]any{
+		"base_url": "https://llm.example/v1", "api_key": testLLMKey,
+		"trader_model": "gpt-4o", "default_model": "gpt-4o-mini",
+		"role_models": map[string]string{"news_analyst": "gpt-4.1-nano", "debate_judge": "o3-mini"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set llm = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	createTenant(t, e.store, "tenant-1")
+	err := e.store.CreateStrategy(store.Strategy{
+		StrategyID: strat1, TenantID: "tenant-1", Name: "with-overrides",
+		LifecycleState: "paper", CreatedAt: formatTime(testNow), UpdatedAt: formatTime(testNow),
+		RoleModels: map[string]string{"debate_judge": "o3", "bull_researcher": "gpt-4.1"},
+	})
+	if err != nil {
+		t.Fatalf("CreateStrategy: %v", err)
+	}
+
+	var got llmPayload
+	decodeJSON(t, e.do(t, "GET", "/api/v1/agent/llm-config", agent1Tok, nil), &got)
+	want := map[string]string{
+		"market_analyst":      "gpt-4o-mini",  // default_model
+		"news_analyst":        "gpt-4.1-nano", // platform override
+		"fundamental_analyst": "gpt-4o-mini",
+		"bull_researcher":     "gpt-4.1", // strategy override
+		"bear_researcher":     "gpt-4o-mini",
+		"debate_judge":        "o3",     // strategy wins over platform
+		"trader":              "gpt-4o", // trader_model
+	}
+	if !maps.Equal(got.RoleModels, want) {
+		t.Fatalf("role_models = %v, want %v", got.RoleModels, want)
+	}
+
+	// agent2Tok is scoped to strat2, which has no row: platform view only.
+	decodeJSON(t, e.do(t, "GET", "/api/v1/agent/llm-config", agent2Tok, nil), &got)
+	want["debate_judge"], want["bull_researcher"] = "o3-mini", "gpt-4o-mini"
+	if !maps.Equal(got.RoleModels, want) {
+		t.Fatalf("no-row role_models = %v, want %v", got.RoleModels, want)
+	}
+}
+
 // TestSecretsVaultUnavailable: with Config.Vault nil every secret route
 // answers 503 VAULT_UNAVAILABLE (the routes stay registered — the matrix
 // is the total route set).
@@ -305,6 +355,15 @@ func TestSecretsValidation(t *testing.T) {
 			map[string]any{"base_url": "https://llm.example", "api_key": "k", "trader_model": long}},
 		{"llm long default_model", "/api/v1/platform/secrets/llm",
 			map[string]any{"base_url": "https://llm.example", "api_key": "k", "default_model": long}},
+		{"llm unknown role_models key", "/api/v1/platform/secrets/llm",
+			map[string]any{"base_url": "https://llm.example", "api_key": "k",
+				"role_models": map[string]string{"quant": "m"}}},
+		{"llm empty role_models value", "/api/v1/platform/secrets/llm",
+			map[string]any{"base_url": "https://llm.example", "api_key": "k",
+				"role_models": map[string]string{"trader": ""}}},
+		{"llm long role_models value", "/api/v1/platform/secrets/llm",
+			map[string]any{"base_url": "https://llm.example", "api_key": "k",
+				"role_models": map[string]string{"trader": long}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

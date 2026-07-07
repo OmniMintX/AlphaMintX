@@ -13,11 +13,14 @@ import (
 
 // createStrategyRequest is the POST /api/v1/strategies body
 // (strategy-provisioning.md SP-2). No id field: strategy_id is
-// server-generated (SP-4).
+// server-generated (SP-4). role_models is an optional per-pipeline-role
+// model override map (keys pinned to the seven pipeline roles, values
+// 1..128 chars; a subset of roles is valid).
 type createStrategyRequest struct {
-	TenantID       string `json:"tenant_id"`
-	Name           string `json:"name"`
-	LifecycleState string `json:"lifecycle_state"`
+	TenantID       string            `json:"tenant_id"`
+	Name           string            `json:"name"`
+	LifecycleState string            `json:"lifecycle_state"`
+	RoleModels     map[string]string `json:"role_models,omitempty"`
 }
 
 // validateStrategyName enforces the SP-2 content rules on the TRIMMED
@@ -82,6 +85,10 @@ func (s *Server) handleCreateStrategy(w http.ResponseWriter, r *http.Request) {
 			"lifecycle_state must be draft or paper (live tiers require the lifecycle endpoint and its paper gate)")
 		return
 	}
+	if msg := validateRoleModels(req.RoleModels); msg != "" {
+		writeError(w, http.StatusBadRequest, codeSchemaInvalid, msg)
+		return
+	}
 	now := formatTime(s.cfg.Now())
 	st := store.Strategy{
 		StrategyID:     uuid.NewString(),
@@ -90,6 +97,7 @@ func (s *Server) handleCreateStrategy(w http.ResponseWriter, r *http.Request) {
 		LifecycleState: state,
 		CreatedAt:      now,
 		UpdatedAt:      now,
+		RoleModels:     req.RoleModels,
 	}
 	err := s.cfg.Store.CreateStrategyProvisioned(st, s.actorID(pr), s.cfg.MaxStrategiesPerTenant)
 	switch {

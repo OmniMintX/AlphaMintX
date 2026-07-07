@@ -36,6 +36,7 @@ from alphamintx_agent_plane.llm.errors import (
 )
 from alphamintx_agent_plane.llm.factory import (
     ENV_STUB_MODEL_NAME,
+    ENV_STUB_ROLE_MODELS,
     ENV_STUB_SCENARIO,
     ENV_STUB_TRADER_JSON,
     create_llm_client,
@@ -44,6 +45,7 @@ from alphamintx_agent_plane.llm.mintrouter import MintRouterLLM, validate_role_m
 from alphamintx_agent_plane.llm.pricing import STALENESS_DAYS, PriceTable
 from alphamintx_agent_plane.llm.stub import (
     PIPELINE_ROLES,
+    ROLE_DEBATE_JUDGE,
     ROLE_MARKET_ANALYST,
     ROLE_TRADER,
     StubLLM,
@@ -687,6 +689,55 @@ def test_factory_stub_trader_json_overrides_only_trader_response() -> None:
 def test_factory_stub_invalid_trader_json_raises(raw: str) -> None:
     with pytest.raises(LLMConfigError, match=ENV_STUB_TRADER_JSON):
         create_llm_client(environ={ENV_STUB_TRADER_JSON: raw})
+
+
+def test_factory_stub_role_models_env_lands_in_per_role_response_models() -> None:
+    client = create_llm_client(
+        environ={
+            ENV_STUB_ROLE_MODELS: '{"trader": "arena-alpha", "market_analyst": "arena-beta"}'
+        }
+    )
+    assert isinstance(client, StubLLM)
+    trader = client.complete(role=ROLE_TRADER, symbol="BTC/USDT", prompt="p")
+    analyst = client.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p")
+    judge = client.complete(role=ROLE_DEBATE_JUDGE, symbol="BTC/USDT", prompt="p")
+    assert trader.model == "arena-alpha"
+    assert analyst.model == "arena-beta"
+    assert judge.model == "stub-model"
+
+
+def test_factory_stub_role_models_fall_back_to_model_name_env() -> None:
+    client = create_llm_client(
+        environ={
+            ENV_STUB_MODEL_NAME: "arena-default",
+            ENV_STUB_ROLE_MODELS: '{"trader": "arena-alpha"}',
+        }
+    )
+    assert client.complete(role=ROLE_TRADER, symbol="BTC/USDT", prompt="p").model == (
+        "arena-alpha"
+    )
+    assert client.complete(role=ROLE_MARKET_ANALYST, symbol="BTC/USDT", prompt="p").model == (
+        "arena-default"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{not json",
+        "[1, 2]",
+        '"text"',
+        "42",
+        "null",
+        "",
+        '{"trader": 42}',
+        '{"trader": ""}',
+        '{"unknown_role": "arena-alpha"}',
+    ],
+)
+def test_factory_stub_invalid_role_models_raises(raw: str) -> None:
+    with pytest.raises(LLMConfigError, match=ENV_STUB_ROLE_MODELS):
+        create_llm_client(environ={ENV_STUB_ROLE_MODELS: raw})
 
 
 def test_factory_explicit_stub_factory_unchanged_without_stub_env() -> None:

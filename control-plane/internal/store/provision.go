@@ -82,11 +82,15 @@ func (s *Store) CreateStrategyProvisioned(st Strategy, createdBy string, maxPerT
 	if count >= maxPerTenant {
 		return fmt.Errorf("tenant %s at %d strategies: %w", st.TenantID, count, ErrStrategyLimitReached)
 	}
+	roleModels, err := marshalRoleModels(st.RoleModels)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`INSERT INTO strategies
-		(strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		(strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, created_by, role_models)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.StrategyID, st.TenantID, st.Name, st.LifecycleState,
-		st.CreatedAt, st.UpdatedAt, createdBy); err != nil {
+		st.CreatedAt, st.UpdatedAt, createdBy, roleModels); err != nil {
 		return err
 	}
 	if st.LifecycleState == "paper" {
@@ -112,6 +116,24 @@ func migrateStrategyProvisioning(db *sql.DB) error {
 	}
 	if have == 0 {
 		if _, err := db.Exec(`ALTER TABLE strategies ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateStrategyRoleModels is the additive Phase-29 migration: strategies
+// pre-exists, so role_models is added iff absent (NOT NULL DEFAULT ” —
+// legacy rows read ”, i.e. no per-role overrides). The column stores the
+// role→model override map as raw JSON text.
+func migrateStrategyRoleModels(db *sql.DB) error {
+	var have int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('strategies')
+		WHERE name = 'role_models'`).Scan(&have); err != nil {
+		return err
+	}
+	if have == 0 {
+		if _, err := db.Exec(`ALTER TABLE strategies ADD COLUMN role_models TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}

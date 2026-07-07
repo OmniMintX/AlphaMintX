@@ -2,15 +2,16 @@
 
 // Arena leaderboard table: decimal-string sign coloring, the null model /
 // profit-factor display rules (∞ only when realized PnL is positive), the
-// strategy detail link, and checkbox selection wiring. Rendered bare —
-// useI18n's default context is the "en" catalog, no provider needed.
+// strategy detail + reasoning links, checkbox selection wiring, and the
+// equity-delta trade-marker derivation. Rendered bare — useI18n's default
+// context is the "en" catalog, no provider needed.
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LeaderboardItem } from "../../src/lib/api/schema";
-import { LeaderboardTable, decimalSign, profitFactorLabel } from "./ui";
+import { LeaderboardTable, decimalSign, deriveEquityMarkers, profitFactorLabel } from "./ui";
 
 afterEach(cleanup);
 
@@ -61,6 +62,26 @@ describe("decimalSign / profitFactorLabel", () => {
   });
 });
 
+describe("deriveEquityMarkers", () => {
+  it("marks each non-seed point by its equity delta sign", () => {
+    const markers = deriveEquityMarkers([
+      { time: 100, value: 10000 },
+      { time: 200, value: 10010 },
+      { time: 300, value: 9990 },
+      { time: 400, value: 9990 },
+    ]);
+    expect(markers).toHaveLength(3);
+    expect(markers[0]).toMatchObject({ time: 200, position: "belowBar", shape: "arrowUp" });
+    expect(markers[1]).toMatchObject({ time: 300, position: "aboveBar", shape: "arrowDown" });
+    expect(markers[2]).toMatchObject({ time: 400, position: "inBar", shape: "circle" });
+  });
+
+  it("returns no markers for an empty or seed-only curve", () => {
+    expect(deriveEquityMarkers([])).toEqual([]);
+    expect(deriveEquityMarkers([{ time: 100, value: 10000 }])).toEqual([]);
+  });
+});
+
 describe("LeaderboardTable", () => {
   it("renders rows with sign-toned returns, model badge / — , and detail links", () => {
     render(<LeaderboardTable items={[winner, loser]} selected={new Set()} onToggle={() => {}} />);
@@ -74,6 +95,18 @@ describe("LeaderboardTable", () => {
     // Null profit factor: ∞ for the profitable row, — for the losing one.
     expect(screen.getByText("\u221E")).toBeInTheDocument();
     expect(screen.getByText("2026-07-04 12:00")).toBeInTheDocument();
+  });
+
+  it("links each row to the reasoning explorer preselecting the strategy", () => {
+    render(<LeaderboardTable items={[winner, loser]} selected={new Set()} onToggle={() => {}} />);
+    expect(screen.getByRole("link", { name: "Reasoning for BTC momentum" })).toHaveAttribute(
+      "href",
+      `/reasoning?strategy=${winner.strategy_id}`,
+    );
+    expect(screen.getByRole("link", { name: "Reasoning for ETH revert" })).toHaveAttribute(
+      "href",
+      `/reasoning?strategy=${loser.strategy_id}`,
+    );
   });
 
   it("checks selected rows and reports toggles by strategy id", async () => {

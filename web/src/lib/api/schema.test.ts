@@ -17,6 +17,7 @@ import {
   backupRunResultSchema,
   backupsResponseSchema,
   buildLimitChanges,
+  buildRoleModels,
   createTenantResponseSchema,
   discrepancySchema,
   invoiceDetailSchema,
@@ -34,6 +35,7 @@ import {
   omsReconRunSchema,
   omsReconStatusSchema,
   paperGateReportSchema,
+  PIPELINE_ROLES,
   platformKillEventSchema,
   platformSecretSchema,
   platformSecretsResponseSchema,
@@ -48,6 +50,7 @@ import {
   secretWriteResponseSchema,
   strategiesPageSchema,
   strategyPerformanceSchema,
+  strategySchema,
   TENANT_ID_PATTERN,
   tenantKillEventSchema,
   tenantSchema,
@@ -116,6 +119,18 @@ describe("pagination envelope {items,total,page,limit}", () => {
   it("parses a strategies page", () => {
     const page = strategiesPageSchema.parse({ items: [strategy], total: 1, page: 1, limit: 20 });
     expect(page.items[0]?.lifecycle_state).toBe("live_l1");
+  });
+
+  it("accepts a strategy with role_models and rejects an empty model name", () => {
+    const parsed = strategySchema.parse({
+      ...strategy,
+      role_models: { trader: "gpt-4o", market_analyst: "gpt-4o-mini" },
+    });
+    expect(parsed.role_models?.trader).toBe("gpt-4o");
+    expect(strategySchema.parse(strategy).role_models).toBeUndefined();
+    expect(
+      strategySchema.safeParse({ ...strategy, role_models: { trader: "" } }).success,
+    ).toBe(false);
   });
 
   it("parses a runs page", () => {
@@ -766,6 +781,39 @@ describe("buildLimitChanges", () => {
   });
 });
 
+describe("buildRoleModels", () => {
+  it("keeps only trimmed non-empty entries for known pipeline roles", () => {
+    expect(
+      buildRoleModels({
+        trader: " gpt-4o ",
+        market_analyst: "gpt-4o-mini",
+        news_analyst: "",
+        debate_judge: "   ",
+        not_a_role: "gpt-4o",
+      }),
+    ).toEqual({ trader: "gpt-4o", market_analyst: "gpt-4o-mini" });
+  });
+
+  it("returns undefined when every input is empty (field omitted from the POST)", () => {
+    expect(buildRoleModels({})).toBeUndefined();
+    expect(buildRoleModels({ trader: "", bull_researcher: "  " })).toBeUndefined();
+  });
+
+  it("covers all seven pipeline roles", () => {
+    const all = Object.fromEntries(PIPELINE_ROLES.map((role) => [role, "m"]));
+    expect(Object.keys(buildRoleModels(all) ?? {})).toHaveLength(7);
+    expect(PIPELINE_ROLES).toEqual([
+      "market_analyst",
+      "news_analyst",
+      "fundamental_analyst",
+      "bull_researcher",
+      "bear_researcher",
+      "debate_judge",
+      "trader",
+    ]);
+  });
+});
+
 // ---- Platform secrets & admin directory (Settings / Admin) ------------------------
 
 const binanceSecretItem = {
@@ -799,6 +847,23 @@ describe("platformSecretSchema (discriminated union on kind)", () => {
       expect(parsed.meta.base_url).toBe("https://api.openai.com/v1");
       expect(parsed.meta.timeout_seconds).toBe(30);
     }
+  });
+
+  it("accepts llm meta with role_models and rejects an empty model name", () => {
+    const withRoles = {
+      ...llmSecretItem,
+      meta: { ...llmSecretItem.meta, role_models: { trader: "gpt-4o", news_analyst: "gpt-4o-mini" } },
+    };
+    const parsed = platformSecretSchema.parse(withRoles);
+    if (parsed.kind === "llm") {
+      expect(parsed.meta.role_models?.news_analyst).toBe("gpt-4o-mini");
+    }
+    expect(
+      platformSecretSchema.safeParse({
+        ...llmSecretItem,
+        meta: { ...llmSecretItem.meta, role_models: { trader: "" } },
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects a kind/meta mismatch (each variant is strict)", () => {

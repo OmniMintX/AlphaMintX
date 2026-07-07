@@ -162,19 +162,30 @@ Otherwise, when `ALPHAMINTX_CONTROLPLANE_BASE_URL` and
 synchronous `GET /api/v1/agent/llm-config` (bearer-authenticated, 10 s timeout)
 and uses the returned `{base_url, api_key, timeout_seconds}`; a `404
 NOT_CONFIGURED`, any other non-2xx, a timeout, or a transport error is a
-startup `LLMConfigError` that never echoes the token or the response body. When
+startup `LLMConfigError` that never echoes the token or the response body. The
+response MAY carry an optional `role_models` JSON object (role→model, resolved
+by the control-plane from platform defaults + platform/strategy overrides);
+when present it WINS, merged over the `trader_model`/`default_model`-derived
+map so a partial map from an older control-plane still yields a complete
+7-role map. A non-object `role_models`, a key outside the pipeline roles, or a
+non-string/empty model value is a startup `LLMConfigError` (never echoing the
+body); when absent, `trader_model`/`default_model` resolve as before. When
 neither the full env pair nor a reachable control-plane config exists, live
 mode MUST fail fast naming both options. Stub mode requires none of these and
 never fetches.
 
-Stub-mode overrides (`llm/factory.py`). Three OPTIONAL env vars shape the
+Stub-mode overrides (`llm/factory.py`). Four OPTIONAL env vars shape the
 stub: `ALPHAMINTX_STUB_SCENARIO` (`bullish` | `low_confidence`; any other
 value is a startup `LLMConfigError`), `ALPHAMINTX_STUB_MODEL_NAME` (the
-model name the stub reports; set-but-empty is a startup error), and
+model name the stub reports; set-but-empty is a startup error),
 `ALPHAMINTX_STUB_TRADER_JSON` (a JSON OBJECT shallow-merged into the
-trader response; non-JSON or a non-object value is a startup error — all
-three validations fail fast at client construction). When ANY of the
-three is set, the scenario is built from env (symbol keyed by
-`ALPHAMINTX_SYMBOL` when set) and takes precedence over an explicit
+trader response; non-JSON or a non-object value is a startup error), and
+`ALPHAMINTX_STUB_ROLE_MODELS` (a JSON OBJECT mapping pipeline role→model
+name the stub reports for that role, falling back to
+`ALPHAMINTX_STUB_MODEL_NAME` for unmapped roles; non-JSON, a non-object
+value, a key outside the pipeline roles, or a non-string/empty model name
+is a startup error — all validations fail fast at client construction).
+When ANY of the four is set, the scenario is built from env (symbol keyed
+by `ALPHAMINTX_SYMBOL` when set) and takes precedence over an explicit
 `stub_factory` argument; with none set, `stub_factory()` is called
 unchanged — CI and e2e behavior is identical to before.

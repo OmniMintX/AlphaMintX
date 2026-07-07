@@ -14,10 +14,21 @@ import {
   ColorType,
   LineSeries,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
+
+// One trade marker on a curve point (v5 createSeriesMarkers shape subset).
+export interface EquityMarker {
+  time: number;
+  position: "aboveBar" | "belowBar" | "inBar";
+  shape: "circle" | "square" | "arrowUp" | "arrowDown";
+  color: string;
+}
 
 // One overlaid curve: time is Unix seconds, value is Number(equity) — the
 // only place a decimal string is floated, for rendering only (ADR-0003).
@@ -26,6 +37,7 @@ export interface EquitySeries {
   label: string;
   color: string;
   points: { time: number; value: number }[];
+  markers?: EquityMarker[];
 }
 
 function tokenColors() {
@@ -41,6 +53,7 @@ export function EquityChart({ series }: { series: EquitySeries[] }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const linesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+  const markersRef = useRef<Map<string, ISeriesMarkersPluginApi<Time>>>(new Map());
   const fittedRef = useRef(false);
 
   useEffect(() => {
@@ -85,6 +98,7 @@ export function EquityChart({ series }: { series: EquitySeries[] }) {
       observer.disconnect();
       chartRef.current = null;
       linesRef.current = new Map();
+      markersRef.current = new Map();
       fittedRef.current = false;
       chart.remove();
     };
@@ -96,9 +110,12 @@ export function EquityChart({ series }: { series: EquitySeries[] }) {
     const chart = chartRef.current;
     if (!chart) return;
     const lines = linesRef.current;
+    const markers = markersRef.current;
     const keep = new Set(series.map((s) => s.id));
     for (const [id, line] of lines) {
       if (!keep.has(id)) {
+        markers.get(id)?.detach();
+        markers.delete(id);
         chart.removeSeries(line);
         lines.delete(id);
       }
@@ -118,6 +135,19 @@ export function EquityChart({ series }: { series: EquitySeries[] }) {
         line.applyOptions({ color: s.color });
       }
       line.setData(s.points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+      // Trade markers refresh in place with the data (v5 markers plugin).
+      const wanted = (s.markers ?? []).map((m) => ({
+        time: m.time as UTCTimestamp,
+        position: m.position,
+        shape: m.shape,
+        color: m.color,
+      }));
+      const plugin = markers.get(s.id);
+      if (plugin) {
+        plugin.setMarkers(wanted);
+      } else if (wanted.length > 0) {
+        markers.set(s.id, createSeriesMarkers(line, wanted));
+      }
     }
     if (!fittedRef.current && series.some((s) => s.points.length > 0)) {
       chart.timeScale().fitContent();

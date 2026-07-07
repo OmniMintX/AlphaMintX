@@ -376,12 +376,15 @@ export function setBinanceSecret(
 }
 
 // Stores the platform LLM provider credential (same write-only semantics).
+// roleModels carries the optional per-pipeline-role overrides; undefined is
+// dropped by JSON.stringify — the field is omitted when none are set.
 export function setLlmSecret(
   baseUrl: string,
   apiKey: string,
   timeoutSeconds: number,
   traderModel: string,
   defaultModel: string,
+  roleModels?: Record<string, string>,
 ): Promise<SecretWriteResponse> {
   return proxyPost(
     "/api/cp/platform/secrets/llm",
@@ -391,6 +394,7 @@ export function setLlmSecret(
       timeout_seconds: timeoutSeconds,
       trader_model: traderModel,
       default_model: defaultModel,
+      role_models: roleModels,
     },
     secretWriteResponseSchema,
   );

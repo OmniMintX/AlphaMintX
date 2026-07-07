@@ -32,7 +32,7 @@ func (s *Store) ListStrategies(page, limit int) ([]Strategy, int, error) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM strategies`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at
+	rows, err := s.db.Query(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, role_models
 		FROM strategies ORDER BY created_at, strategy_id LIMIT ? OFFSET ?`, limit, (page-1)*limit)
 	if err != nil {
 		return nil, 0, err
@@ -41,8 +41,12 @@ func (s *Store) ListStrategies(page, limit int) ([]Strategy, int, error) {
 	var out []Strategy
 	for rows.Next() {
 		var st Strategy
+		var roleModels string
 		if err := rows.Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState,
-			&st.CreatedAt, &st.UpdatedAt); err != nil {
+			&st.CreatedAt, &st.UpdatedAt, &roleModels); err != nil {
+			return nil, 0, err
+		}
+		if st.RoleModels, err = unmarshalRoleModels(roleModels); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, st)
@@ -53,12 +57,17 @@ func (s *Store) ListStrategies(page, limit int) ([]Strategy, int, error) {
 // GetStrategy returns one strategy or ErrNotFound.
 func (s *Store) GetStrategy(strategyID string) (Strategy, error) {
 	var st Strategy
-	err := s.db.QueryRow(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at
+	var roleModels string
+	err := s.db.QueryRow(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, role_models
 		FROM strategies WHERE strategy_id = ?`, strategyID).
-		Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState, &st.CreatedAt, &st.UpdatedAt)
+		Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState, &st.CreatedAt, &st.UpdatedAt, &roleModels)
 	if err == sql.ErrNoRows {
 		return Strategy{}, fmt.Errorf("strategy %s: %w", strategyID, ErrNotFound)
 	}
+	if err != nil {
+		return Strategy{}, err
+	}
+	st.RoleModels, err = unmarshalRoleModels(roleModels)
 	return st, err
 }
 
@@ -68,12 +77,17 @@ func (s *Store) GetStrategy(strategyID string) (Strategy, error) {
 // strategy is indistinguishable from absence (ErrNotFound).
 func (s *Store) GetStrategyInTenant(strategyID, tenantID string) (Strategy, error) {
 	var st Strategy
-	err := s.db.QueryRow(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at
+	var roleModels string
+	err := s.db.QueryRow(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, role_models
 		FROM strategies WHERE strategy_id = ? AND tenant_id = ?`, strategyID, tenantID).
-		Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState, &st.CreatedAt, &st.UpdatedAt)
+		Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState, &st.CreatedAt, &st.UpdatedAt, &roleModels)
 	if err == sql.ErrNoRows {
 		return Strategy{}, fmt.Errorf("strategy %s: %w", strategyID, ErrNotFound)
 	}
+	if err != nil {
+		return Strategy{}, err
+	}
+	st.RoleModels, err = unmarshalRoleModels(roleModels)
 	return st, err
 }
 
@@ -85,7 +99,7 @@ func (s *Store) ListStrategiesByTenant(tenantID string, page, limit int) ([]Stra
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM strategies WHERE tenant_id = ?`, tenantID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at
+	rows, err := s.db.Query(`SELECT strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, role_models
 		FROM strategies WHERE tenant_id = ? ORDER BY created_at, strategy_id LIMIT ? OFFSET ?`,
 		tenantID, limit, (page-1)*limit)
 	if err != nil {
@@ -95,8 +109,12 @@ func (s *Store) ListStrategiesByTenant(tenantID string, page, limit int) ([]Stra
 	var out []Strategy
 	for rows.Next() {
 		var st Strategy
+		var roleModels string
 		if err := rows.Scan(&st.StrategyID, &st.TenantID, &st.Name, &st.LifecycleState,
-			&st.CreatedAt, &st.UpdatedAt); err != nil {
+			&st.CreatedAt, &st.UpdatedAt, &roleModels); err != nil {
+			return nil, 0, err
+		}
+		if st.RoleModels, err = unmarshalRoleModels(roleModels); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, st)

@@ -8,9 +8,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { createStrategy, fetchMe, fetchStrategies } from "../../src/lib/api/client";
-import type { SessionUser } from "../../src/lib/api/schema";
+import {
+  PIPELINE_ROLES,
+  buildRoleModels,
+  type SessionUser,
+} from "../../src/lib/api/schema";
 import { usePoll } from "../../src/lib/api/usePoll";
-import { useI18n } from "../../src/lib/i18n";
+import { useI18n, type MessageKey } from "../../src/lib/i18n";
 import { ErrorBanner, Pager, StateBadge } from "./ui";
 
 function errText(err: unknown): string {
@@ -120,6 +124,7 @@ function CreateStrategyPanel({ user, onCreated }: { user: SessionUser; onCreated
   const [name, setName] = useState("");
   const [lifecycle, setLifecycle] = useState<"draft" | "paper">("draft");
   const [tenantId, setTenantId] = useState("");
+  const [roleModels, setRoleModels] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
@@ -143,11 +148,13 @@ function CreateStrategyPanel({ user, onCreated }: { user: SessionUser; onCreated
         tenant_id: targetTenant,
         name: name.trim(),
         lifecycle_state: lifecycle,
+        role_models: buildRoleModels(roleModels),
       });
       setCreatedId(res.strategy_id);
       setName("");
       setTenantId("");
       setLifecycle("draft");
+      setRoleModels({});
       setOpen(false);
       onCreated();
     } catch (err) {
@@ -166,54 +173,78 @@ function CreateStrategyPanel({ user, onCreated }: { user: SessionUser; onCreated
         </button>
       </div>
       {open && (
-        <div className="row" style={{ marginTop: 10 }}>
-          <label className="field" htmlFor="cs-name">
-            <span className="field-label">{t("tbl.name")}</span>
-            <input
-              id="cs-name"
-              className="input"
-              style={{ minWidth: "16rem" }}
-              placeholder={t("strat.create.name.ph")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </label>
-          <label className="field" htmlFor="cs-state">
-            <span className="field-label">{t("strat.create.state")}</span>
-            <select
-              id="cs-state"
-              className="select"
-              value={lifecycle}
-              onChange={(e) => setLifecycle(e.target.value as "draft" | "paper")}
-            >
-              <option value="draft">{t("state.draft")}</option>
-              <option value="paper">{t("state.paper")}</option>
-            </select>
-          </label>
-          {isPlatformAdmin && (
-            <label className="field" htmlFor="cs-tenant">
-              <span className="field-label">{t("tbl.tenant")}</span>
+        <>
+          <div className="row" style={{ marginTop: 10 }}>
+            <label className="field" htmlFor="cs-name">
+              <span className="field-label">{t("tbl.name")}</span>
               <input
-                id="cs-tenant"
-                className="input mono"
-                style={{ minWidth: "12rem" }}
-                placeholder={t("strat.create.tenant.ph")}
-                autoComplete="off"
-                spellCheck={false}
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
+                id="cs-name"
+                className="input"
+                style={{ minWidth: "16rem" }}
+                placeholder={t("strat.create.name.ph")}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
               />
             </label>
-          )}
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending || !valid}
-            onClick={() => void submit()}
-          >
-            {t("strat.create.submit")}
-          </button>
-        </div>
+            <label className="field" htmlFor="cs-state">
+              <span className="field-label">{t("strat.create.state")}</span>
+              <select
+                id="cs-state"
+                className="select"
+                value={lifecycle}
+                onChange={(e) => setLifecycle(e.target.value as "draft" | "paper")}
+              >
+                <option value="draft">{t("state.draft")}</option>
+                <option value="paper">{t("state.paper")}</option>
+              </select>
+            </label>
+            {isPlatformAdmin && (
+              <label className="field" htmlFor="cs-tenant">
+                <span className="field-label">{t("tbl.tenant")}</span>
+                <input
+                  id="cs-tenant"
+                  className="input mono"
+                  style={{ minWidth: "12rem" }}
+                  placeholder={t("strat.create.tenant.ph")}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value)}
+                />
+              </label>
+            )}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={pending || !valid}
+              onClick={() => void submit()}
+            >
+              {t("strat.create.submit")}
+            </button>
+          </div>
+          <details style={{ marginTop: 10 }}>
+            <summary className="faint small" style={{ cursor: "pointer" }}>
+              {t("strat.create.rolemodels")}
+            </summary>
+            <p className="faint small">{t("strat.create.rolemodels.hint")}</p>
+            <div className="grid grid-4" style={{ marginTop: 6 }}>
+              {PIPELINE_ROLES.map((role) => (
+                <label className="field" htmlFor={`cs-role-${role}`} key={role}>
+                  <span className="field-label">{t(`role.${role}` as MessageKey)}</span>
+                  <input
+                    id={`cs-role-${role}`}
+                    className="input"
+                    placeholder={t("strat.create.rolemodels.ph")}
+                    value={roleModels[role] ?? ""}
+                    onChange={(e) =>
+                      setRoleModels((prev) => ({ ...prev, [role]: e.target.value }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
+        </>
       )}
       {createdId && (
         <div className="result-line" role="status">

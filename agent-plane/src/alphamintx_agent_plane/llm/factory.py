@@ -52,6 +52,7 @@ ENV_TIMEOUT_SECONDS = "MINTROUTER_TIMEOUT_SECONDS"
 ENV_STUB_SCENARIO = "ALPHAMINTX_STUB_SCENARIO"
 ENV_STUB_MODEL_NAME = "ALPHAMINTX_STUB_MODEL_NAME"
 ENV_STUB_TRADER_JSON = "ALPHAMINTX_STUB_TRADER_JSON"
+ENV_STUB_ROLE_MODELS = "ALPHAMINTX_STUB_ROLE_MODELS"
 
 MODE_STUB = "stub"
 MODE_LIVE = "live"
@@ -140,7 +141,13 @@ def _fetch_llm_config(
 
 
 def _role_models_from_config(data: dict[str, Any]) -> dict[str, str] | None:
-    """Build the role→model map from optional trader_model/default_model fields."""
+    """Build the role→model map from the config's optional model fields.
+
+    A fully resolved ``role_models`` object (Phase 29 control-plane) wins; it is
+    merged OVER the trader_model/default_model-derived map so a partial map from
+    an older control-plane still yields a complete 7-role map. With no model
+    fields at all, None is returned (the caller falls back to DEFAULT_ROLE_MODELS).
+    """
     trader_model = data.get("trader_model")
     default_model = data.get("default_model")
     for name, value in (("trader_model", trader_model), ("default_model", default_model)):
@@ -148,13 +155,35 @@ def _role_models_from_config(data: dict[str, Any]) -> dict[str, str] | None:
             raise LLMConfigError(
                 f"live mode: control-plane LLM config has a non-string or empty {name}"
             )
-    if trader_model is None and default_model is None:
-        return None
-    trader = trader_model or DEFAULT_ROLE_MODELS[ROLE_TRADER]
-    default = default_model or next(
-        model for role, model in DEFAULT_ROLE_MODELS.items() if role != ROLE_TRADER
-    )
-    return {role: (trader if role == ROLE_TRADER else default) for role in PIPELINE_ROLES}
+    derived: dict[str, str] | None = None
+    if trader_model is not None or default_model is not None:
+        trader = trader_model or DEFAULT_ROLE_MODELS[ROLE_TRADER]
+        default = default_model or next(
+            model for role, model in DEFAULT_ROLE_MODELS.items() if role != ROLE_TRADER
+        )
+        derived = {
+            role: (trader if role == ROLE_TRADER else default) for role in PIPELINE_ROLES
+        }
+    raw_role_models = data.get("role_models")
+    if raw_role_models is None:
+        return derived
+    if not isinstance(raw_role_models, dict):
+        raise LLMConfigError(
+            "live mode: control-plane LLM config role_models is not a JSON object"
+        )
+    for key, value in raw_role_models.items():
+        if not isinstance(key, str) or key not in PIPELINE_ROLES:
+            raise LLMConfigError(
+                "live mode: control-plane LLM config role_models contains a key "
+                "outside the pipeline roles"
+            )
+        if not isinstance(value, str) or not value:
+            raise LLMConfigError(
+                "live mode: control-plane LLM config role_models has a non-string "
+                f"or empty model for role {key!r}"
+            )
+    base = derived if derived is not None else dict(DEFAULT_ROLE_MODELS)
+    return {**base, **raw_role_models}
 
 
 def _error_code(response: httpx.Response) -> str:
@@ -201,10 +230,46 @@ def _stub_from_env(env: Mapping[str, str]) -> StubLLM:
                 f"got {type(parsed).__name__} ({snippet!r})"
             )
         trader_overrides = parsed
+    role_models: Mapping[str, str] | None = None
+    raw_role_models = env.get(ENV_STUB_ROLE_MODELS)
+    if raw_role_models is not None:
+        snippet = (
+            raw_role_models if len(raw_role_models) <= 64 else raw_role_models[:61] + "..."
+        )
+        try:
+            parsed_models: Any = json.loads(raw_role_models)
+        except ValueError as exc:
+            raise LLMConfigError(
+                f"invalid {ENV_STUB_ROLE_MODELS}: not valid JSON ({snippet!r})"
+            ) from exc
+        if not isinstance(parsed_models, dict):
+            raise LLMConfigError(
+                f"invalid {ENV_STUB_ROLE_MODELS}: must be a JSON object, "
+                f"got {type(parsed_models).__name__} ({snippet!r})"
+            )
+        for key, value in parsed_models.items():
+            if key not in PIPELINE_ROLES:
+                raise LLMConfigError(
+                    f"invalid {ENV_STUB_ROLE_MODELS}: key {key!r} is not a pipeline "
+                    f"role ({snippet!r})"
+                )
+            if not isinstance(value, str) or not value:
+                raise LLMConfigError(
+                    f"invalid {ENV_STUB_ROLE_MODELS}: model for role {key!r} must be "
+                    f"a non-empty string ({snippet!r})"
+                )
+        role_models = parsed_models
     symbol = env.get(ENV_SYMBOL)
     if symbol:
-        return scenario_fn(symbol, model_name=model_name, trader_overrides=trader_overrides)
-    return scenario_fn(model_name=model_name, trader_overrides=trader_overrides)
+        return scenario_fn(
+            symbol,
+            model_name=model_name,
+            trader_overrides=trader_overrides,
+            role_models=role_models,
+        )
+    return scenario_fn(
+        model_name=model_name, trader_overrides=trader_overrides, role_models=role_models
+    )
 
 
 def create_llm_client(
@@ -218,11 +283,11 @@ def create_llm_client(
 ) -> LLMClient:
     """Build the LLM client selected by ``ALPHAMINTX_LLM_MODE`` (fail-fast on defects).
 
-    Stub mode: when any of ``ALPHAMINTX_STUB_SCENARIO``, ``ALPHAMINTX_STUB_MODEL_NAME``
-    or ``ALPHAMINTX_STUB_TRADER_JSON`` is set, the scenario is built from env
-    (keyed by ``ALPHAMINTX_SYMBOL`` when set) and takes precedence over
-    ``stub_factory``; with none of them set, ``stub_factory()`` is called
-    unchanged (back-compat).
+    Stub mode: when any of ``ALPHAMINTX_STUB_SCENARIO``, ``ALPHAMINTX_STUB_MODEL_NAME``,
+    ``ALPHAMINTX_STUB_TRADER_JSON`` or ``ALPHAMINTX_STUB_ROLE_MODELS`` is set, the
+    scenario is built from env (keyed by ``ALPHAMINTX_SYMBOL`` when set) and takes
+    precedence over ``stub_factory``; with none of them set, ``stub_factory()`` is
+    called unchanged (back-compat).
 
     ``transport`` stubs the mintrouter client itself; ``config_transport`` stubs
     the control-plane LLM-config fetch (tests only).
@@ -230,7 +295,12 @@ def create_llm_client(
     env = os.environ if environ is None else environ
     mode = env.get(ENV_LLM_MODE, MODE_STUB)
     if mode == MODE_STUB:
-        stub_env_vars = (ENV_STUB_SCENARIO, ENV_STUB_MODEL_NAME, ENV_STUB_TRADER_JSON)
+        stub_env_vars = (
+            ENV_STUB_SCENARIO,
+            ENV_STUB_MODEL_NAME,
+            ENV_STUB_TRADER_JSON,
+            ENV_STUB_ROLE_MODELS,
+        )
         if any(name in env for name in stub_env_vars):
             return _stub_from_env(env)
         return stub_factory()

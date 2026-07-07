@@ -54,6 +54,33 @@ export const messagesOps = {
   "strat.create.submit": { en: "Create", vi: "Tạo" },
   "strat.create.done": { en: "Strategy created —", vi: "Đã tạo chiến lược —" },
   "strat.create.dismiss": { en: "dismiss", vi: "đóng" },
+  "strat.create.rolemodels": {
+    en: "Per-role models (optional)",
+    vi: "Model theo từng vai (tùy chọn)",
+  },
+  "strat.create.rolemodels.hint": {
+    en: "Override the platform model per pipeline role; blank roles use the platform defaults.",
+    vi: "Ghi đè model nền tảng cho từng vai trong pipeline; vai bỏ trống dùng mặc định nền tảng.",
+  },
+  "strat.create.rolemodels.ph": { en: "platform default", vi: "mặc định nền tảng" },
+
+  // ---- pipeline role labels (settings + strategies) ----
+  "role.market_analyst": { en: "Market analyst", vi: "Analyst thị trường" },
+  "role.news_analyst": { en: "News analyst", vi: "Analyst tin tức" },
+  "role.fundamental_analyst": { en: "Fundamental analyst", vi: "Analyst cơ bản" },
+  "role.bull_researcher": { en: "Bull researcher", vi: "Nhà nghiên cứu Bull" },
+  "role.bear_researcher": { en: "Bear researcher", vi: "Nhà nghiên cứu Bear" },
+  "role.debate_judge": { en: "Debate judge", vi: "Trọng tài tranh luận" },
+  "role.trader": { en: "Trader", vi: "Trader" },
+
+  // ---- strategy detail performance panel (strategies/[id]/page.tsx) ----
+  "strat.perf.title": { en: "Performance", vi: "Hiệu suất" },
+  "strat.perf.empty": {
+    en: "No paper window / no fills yet.",
+    vi: "Chưa có cửa sổ paper / chưa có khớp lệnh nào.",
+  },
+  "strat.perf.rolemodels": { en: "Role models", vi: "Model theo vai" },
+  "strat.perf.tbl.role": { en: "Role", vi: "Vai" },
 
   // ---- ops panel (strategies/[id]/ops.tsx) ----
   "strat.ops.title": { en: "Operations", vi: "Vận hành" },
@@ -322,6 +349,12 @@ export const messagesOps = {
   "arena.tbl.pf": { en: "Profit factor", vi: "Hệ số lợi nhuận" },
   "arena.tbl.lastfill": { en: "Last fill", vi: "Khớp gần nhất" },
   "arena.select.label": { en: "Chart {name}", vi: "Vẽ {name}" },
+  "arena.tbl.links": { en: "Links", vi: "Liên kết" },
+  "arena.link.reasoning": { en: "reasoning", vi: "suy luận" },
+  "arena.link.reasoning.label": {
+    en: "Reasoning for {name}",
+    vi: "Suy luận của {name}",
+  },
   "arena.chart.title": { en: "Equity curves", vi: "Đường equity" },
   "arena.chart.empty": {
     en: "No fills in the paper window yet",

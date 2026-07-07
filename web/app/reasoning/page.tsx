@@ -3,9 +3,12 @@
 // Live reasoning explorer: pick a strategy and one of its persisted runs, then
 // render the trace through the run-detail section components (read-only — the
 // L1 approval panel stays on the run page). All three GETs are reader-tier.
+// ?strategy={id} preselects a strategy (the arena leaderboard links here);
+// useSearchParams requires the Suspense boundary for static prerendering.
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useState } from "react";
 
 import { fetchRunDetail, fetchRuns, fetchStrategies } from "../../src/lib/api/client";
 import { usePoll } from "../../src/lib/api/usePoll";
@@ -20,11 +23,22 @@ import {
 import { ErrorBanner } from "../strategies/ui";
 
 export default function ReasoningPage() {
+  return (
+    <Suspense>
+      <ReasoningExplorer />
+    </Suspense>
+  );
+}
+
+function ReasoningExplorer() {
   const { t } = useI18n();
 
   const loadStrategies = useCallback(() => fetchStrategies(), []);
   const strategies = usePoll(loadStrategies);
-  const [strategyId, setStrategyId] = useState<string | null>(null);
+  // The query param seeds the selection only — a manual pick wins from then
+  // on, and an id absent from page 1 falls back to the first strategy.
+  const preselected = useSearchParams().get("strategy");
+  const [strategyId, setStrategyId] = useState<string | null>(preselected);
 
   const items = strategies.data?.items ?? [];
   // Default to the first strategy of page 1 until the operator picks one; a

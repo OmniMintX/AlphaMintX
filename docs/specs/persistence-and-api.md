@@ -122,8 +122,10 @@ Phase 2 billing DDL — `metering_records`, `billing_periods`, `invoices`,
 `invoice_lines`, `reconciliation_runs`, `discrepancies`, plus the
 `model_costs` `request_id`/`is_estimated` columns — is normative in
 `docs/specs/billing-and-metering.md`, not here. The additive
-`strategies.created_by` column (audit-only, never exposed by reads) is
-normative in `docs/specs/strategy-provisioning.md` (SP-4a).
+`strategies.created_by` column (audit-only, never exposed by reads) and
+the additive `strategies.role_models` column (per-pipeline-role model
+overrides, echoed by reads) are normative in
+`docs/specs/strategy-provisioning.md` (SP-4a, SP-2).
 
 ### Row rules (normative)
 
@@ -210,7 +212,7 @@ Trace envelope (request body; published as `contracts/agent_trace.schema.json`
 | `GET /api/v1/alerts?kind&page&limit` | Global `safety_alerts` feed incl. NULL-strategy rows (read + env-admin classes ONLY; every DB principal 403). Normative in operator-surface.md (OS-19..OS-21). |
 | `POST /api/v1/strategies/{id}/kill/clear`, `POST /api/v1/tenants/{tenant_id}/kill/clear`, `POST /api/v1/platform/kill/clear` | SW-2 kill-clear tiers (admin/owner own tenant; env-admin; the platform tier env-admin ONLY, body additionally `{"ack": "CLEAR-PLATFORM"}`). Body `{reason, observed_epoch}`, strictly decoded. 200 ⇒ `{clear_id, scope, cleared_epoch, recorded_at, superseded_event_ids}`; 400 `SCHEMA_INVALID` / `PLATFORM_CLEAR_ACK_REQUIRED`; 409 `CLEAR_CONFLICT` (stale `observed_epoch`, nothing written); 422 `NO_ACTIVE_KILL`. Normative in lifecycle-api.md (LC-25..LC-38). |
 | `POST/GET /api/v1/billing/*` | Phase 2 billing surface (metering import, period close, reconcile, invoice/reconciliation reads) — normative in `docs/specs/billing-and-metering.md`. Error codes: 400 `INVALID_METERING_RECORD` / `INVALID_PERIOD`; 404 `UNKNOWN_TENANT` / `UNKNOWN_INVOICE` / `UNKNOWN_RECONCILIATION`; 409 `METERING_CONFLICT` / `PERIOD_CLOSED` / `PERIOD_OPEN`. |
-| `POST /api/v1/strategies` | Strategy provisioning (admin/owner own tenant; env-admin any existing body `tenant_id`). Body `{tenant_id?, name, lifecycle_state?}`, strictly decoded; initial state `draft` (default) or `paper` ONLY. 200 ⇒ the strategies row; 400 `SCHEMA_INVALID` / `INVALID_TENANT_ID`; 403; 404 `UNKNOWN_TENANT`; 409 `STRATEGY_NAME_TAKEN` / `STRATEGY_LIMIT_REACHED`. Normative in `docs/specs/strategy-provisioning.md`. |
+| `POST /api/v1/strategies` | Strategy provisioning (admin/owner own tenant; env-admin any existing body `tenant_id`). Body `{tenant_id?, name, lifecycle_state?, role_models?}`, strictly decoded; initial state `draft` (default) or `paper` ONLY. 200 ⇒ the strategies row; 400 `SCHEMA_INVALID` / `INVALID_TENANT_ID`; 403; 404 `UNKNOWN_TENANT`; 409 `STRATEGY_NAME_TAKEN` / `STRATEGY_LIMIT_REACHED`. Normative in `docs/specs/strategy-provisioning.md`. |
 | `POST /api/v1/ops/backups/run`, `GET /api/v1/ops/backups` | Online `control.db` backup trigger and artifact list (env-admin ONLY; registered iff `CONTROLPLANE_BACKUP_DIR` is configured, else 404) — normative in `docs/specs/ops-backup.md` (OB-6/OB-7); operator procedures in `docs/RUNBOOK.md`. |
 | `GET /health` | Unauthenticated liveness. |
 

@@ -19,8 +19,8 @@ error envelope), `docs/specs/deploy-and-survive.md` (restore gate).
   route is registered FROM the matrix (no matrix entry ⇒ no route).
   It is always on (no `Requires:` feature key).
 - **SP-2 (body)** Strict-decoded body
-  `{tenant_id?, name, lifecycle_state?}` (`decodeStrict`: unknown
-  fields, trailing data, malformed JSON ⇒ 400 `SCHEMA_INVALID`;
+  `{tenant_id?, name, lifecycle_state?, role_models?}` (`decodeStrict`:
+  unknown fields, trailing data, malformed JSON ⇒ 400 `SCHEMA_INVALID`;
   oversize ⇒ 413 as everywhere). `name` is required, 1–128 bytes
   after `strings.TrimSpace`; whitespace-only or longer is 400. It
   MUST be valid UTF-8 and MUST NOT contain code points < U+0020,
@@ -37,6 +37,15 @@ error envelope), `docs/specs/deploy-and-survive.md` (restore gate).
   unwaivable) cannot be bypassed at birth via provisioning. The
   LC-16a bootstrap transition row for `paper` comes from the existing
   `store.CreateStrategy` transaction semantics, unchanged.
+  `role_models` is an optional role→model override map: every key
+  MUST be one of the seven pipeline roles
+  (`llm-routing-and-budget.md` §2) and every value 1..128 chars
+  (else 400 `SCHEMA_INVALID`, no row); a subset of roles is valid.
+  It persists in the additive guarded `strategies.role_models` TEXT
+  column (raw JSON; `''` for legacy/no-override rows) and echoes
+  back in strategy reads (`role_models` omitted when unset). Per-role
+  resolution for agents happens in `GET /api/v1/agent/llm-config`
+  (`platform-secrets.md` §API).
 - **SP-3 (tenant resolution)** Identical semantics to
   `resolveMintTenant`: a tenant-bound user token creates in its OWN
   tenant only (a body `tenant_id` naming another tenant is 403

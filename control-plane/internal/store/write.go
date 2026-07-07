@@ -26,10 +26,14 @@ func (s *Store) CreateStrategy(st Strategy) error {
 		return err
 	}
 	defer rollback(tx)
+	roleModels, err := marshalRoleModels(st.RoleModels)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`INSERT INTO strategies
-		(strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		st.StrategyID, st.TenantID, st.Name, st.LifecycleState, st.CreatedAt, st.UpdatedAt); err != nil {
+		(strategy_id, tenant_id, name, lifecycle_state, created_at, updated_at, role_models)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		st.StrategyID, st.TenantID, st.Name, st.LifecycleState, st.CreatedAt, st.UpdatedAt, roleModels); err != nil {
 		return err
 	}
 	if st.LifecycleState == "paper" || strings.HasPrefix(st.LifecycleState, "live_") {

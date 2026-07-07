@@ -147,6 +147,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("strategy provisioning migration %s: %w", path, err)
 	}
+	if err := migrateStrategyRoleModels(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("strategy role models migration %s: %w", path, err)
+	}
 	// DS-2: user_version is read AFTER migrations (they never touch it);
 	// a value >= 1 is the DS-1 artifact stamp — this DB is a restored
 	// artifact and the restore gate engages.

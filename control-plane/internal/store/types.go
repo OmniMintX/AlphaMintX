@@ -9,14 +9,39 @@ import (
 // Timestamps in row structs are pre-formatted RFC 3339 UTC "Z" strings and
 // money/size fields are decimal strings (ADR-0003), exactly as stored.
 
-// Strategy mirrors the strategies table.
+// Strategy mirrors the strategies table. RoleModels is the per-pipeline-role
+// model override map, stored in the role_models TEXT column as raw JSON
+// (” ⇒ nil map, rendered by omitempty as an absent field).
 type Strategy struct {
-	StrategyID     string `json:"strategy_id"`
-	TenantID       string `json:"tenant_id"`
-	Name           string `json:"name"`
-	LifecycleState string `json:"lifecycle_state"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	StrategyID     string            `json:"strategy_id"`
+	TenantID       string            `json:"tenant_id"`
+	Name           string            `json:"name"`
+	LifecycleState string            `json:"lifecycle_state"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
+	RoleModels     map[string]string `json:"role_models,omitempty"`
+}
+
+// marshalRoleModels renders the role_models column value: an empty map
+// stores ” (legacy rows and no-override rows are indistinguishable).
+func marshalRoleModels(m map[string]string) (string, error) {
+	if len(m) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(m)
+	return string(b), err
+}
+
+// unmarshalRoleModels parses the role_models column value: ” ⇒ nil map.
+func unmarshalRoleModels(raw string) (map[string]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // LifecycleTransition mirrors the append-only lifecycle_transitions table.

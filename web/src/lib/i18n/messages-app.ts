@@ -54,6 +54,14 @@ export const messagesApp = {
     en: "Any model your provider supports; models outside the price table are metered as estimated $0.",
     vi: "Bất kỳ model nào nhà cung cấp hỗ trợ; model ngoài bảng giá sẽ được ghi nhận chi phí ước tính $0.",
   },
+  "settings.llm.rolemodels": {
+    en: "Per-role models (optional)",
+    vi: "Model theo từng vai (tùy chọn)",
+  },
+  "settings.llm.rolemodels.hint": {
+    en: "Override the model per pipeline role; blank roles use the trader / analyst models above.",
+    vi: "Ghi đè model cho từng vai trong pipeline; vai bỏ trống dùng model trader / phân tích phía trên.",
+  },
 
   // ---- admin ----
   "admin.sub": {

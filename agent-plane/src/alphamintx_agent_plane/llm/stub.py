@@ -64,10 +64,14 @@ class StubLLM:
     """Deterministic canned responses keyed by ``(role, symbol)``; for CI, no network."""
 
     def __init__(
-        self, responses: Mapping[tuple[str, str], str], model_name: str = DEFAULT_STUB_MODEL_NAME
+        self,
+        responses: Mapping[tuple[str, str], str],
+        model_name: str = DEFAULT_STUB_MODEL_NAME,
+        role_models: Mapping[str, str] | None = None,
     ) -> None:
         self._responses = dict(responses)
         self._model_name = model_name
+        self._role_models = dict(role_models) if role_models is not None else {}
 
     def complete(self, *, role: str, symbol: str, prompt: str) -> LLMResponse:
         try:
@@ -79,7 +83,7 @@ class StubLLM:
         cost = input_tokens * _COST_PER_INPUT_TOKEN + output_tokens * _COST_PER_OUTPUT_TOKEN
         return LLMResponse(
             text=text,
-            model=self._model_name,
+            model=self._role_models.get(role, self._model_name),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_usd=cost,
@@ -95,11 +99,13 @@ def bullish_scenario(
     *,
     model_name: str = DEFAULT_STUB_MODEL_NAME,
     trader_overrides: Mapping[str, object] | None = None,
+    role_models: Mapping[str, str] | None = None,
 ) -> StubLLM:
     """Canned scenario whose trader output is a confident open_long.
 
     ``trader_overrides`` shallow-merges into the trader-role response dict
     before JSON serialization (overrides replace existing keys and may add new ones).
+    ``role_models`` maps role→model name; roles absent from it report ``model_name``.
     """
     trader: dict[str, object] = {
         "action": "open_long",
@@ -141,7 +147,7 @@ def bullish_scenario(
         }),
         (ROLE_TRADER, symbol): _json({**trader, **(trader_overrides or {})}),
     }
-    return StubLLM(responses, model_name=model_name)
+    return StubLLM(responses, model_name=model_name, role_models=role_models)
 
 
 def low_confidence_scenario(
@@ -149,11 +155,13 @@ def low_confidence_scenario(
     *,
     model_name: str = DEFAULT_STUB_MODEL_NAME,
     trader_overrides: Mapping[str, object] | None = None,
+    role_models: Mapping[str, str] | None = None,
 ) -> StubLLM:
     """Canned scenario where the trader's conviction is below the 0.3 hold threshold.
 
     ``trader_overrides`` shallow-merges into the trader-role response dict
     before JSON serialization (overrides replace existing keys and may add new ones).
+    ``role_models`` maps role→model name; roles absent from it report ``model_name``.
     """
     trader: dict[str, object] = {
         "action": "open_long",
@@ -193,4 +201,4 @@ def low_confidence_scenario(
         }),
         (ROLE_TRADER, symbol): _json({**trader, **(trader_overrides or {})}),
     }
-    return StubLLM(responses, model_name=model_name)
+    return StubLLM(responses, model_name=model_name, role_models=role_models)

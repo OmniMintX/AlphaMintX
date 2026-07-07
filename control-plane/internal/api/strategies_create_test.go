@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"maps"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -206,6 +207,51 @@ func TestCreateStrategyNameConflictAndQuota(t *testing.T) {
 	if rec := e.do(t, "POST", "/api/v1/strategies", ownerB,
 		createStrategyRequest{Name: "beta"}); rec.Code != http.StatusOK {
 		t.Fatalf("tenant-b under cap = %d (body %q)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateStrategyRoleModels pins the Phase-29 role_models field: a
+// valid subset persists and echoes back verbatim; keys outside the seven
+// pipeline roles and empty/oversized values are 400 SCHEMA_INVALID with no
+// row; an absent map is omitted from responses.
+func TestCreateStrategyRoleModels(t *testing.T) {
+	e := newEnv(t, nil)
+	createTenant(t, e.store, "tenant-a")
+	owner := seedUserToken(t, e.store, "tenant-a", RoleOwner, "db-a-owner")
+
+	overrides := map[string]string{"trader": "o3", "market_analyst": "gpt-4.1-mini"}
+	rec := e.do(t, "POST", "/api/v1/strategies", owner,
+		createStrategyRequest{Name: "with-lineup", RoleModels: overrides})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var st store.Strategy
+	decodeJSON(t, rec, &st)
+	if !maps.Equal(st.RoleModels, overrides) {
+		t.Fatalf("created role_models = %v, want %v", st.RoleModels, overrides)
+	}
+	if got, err := e.store.GetStrategy(st.StrategyID); err != nil || !maps.Equal(got.RoleModels, overrides) {
+		t.Fatalf("persisted role_models = %v (err %v), want %v", got.RoleModels, err, overrides)
+	}
+
+	rec = e.do(t, "POST", "/api/v1/strategies", owner, createStrategyRequest{Name: "no-lineup"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("plain create = %d (body %q)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "role_models") {
+		t.Fatal("absent role_models rendered instead of omitted")
+	}
+
+	for name, bad := range map[string]map[string]string{
+		"unknown role":   {"quant": "m"},
+		"empty model":    {"trader": ""},
+		"oversize model": {"trader": strings.Repeat("m", 129)},
+	} {
+		wantError(t, e.do(t, "POST", "/api/v1/strategies", owner,
+			createStrategyRequest{Name: "bad-" + name, RoleModels: bad}), 400, codeSchemaInvalid)
+	}
+	if _, total, err := e.store.ListStrategies(1, 50); err != nil || total != 2 {
+		t.Fatalf("rows after 400s = %d (err %v), want 2", total, err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -39,7 +40,29 @@ const (
 	// the expensive model for the trader role, the cheap one for analyst roles.
 	llmTraderModelDefault  = "gpt-4o"
 	llmDefaultModelDefault = "gpt-4o-mini"
+	pipelineRoleTrader     = "trader"
 )
+
+// pipelineRoles is the canonical agent-plane pipeline role list
+// (llm-routing-and-budget.md §2) — the only valid role_models keys.
+var pipelineRoles = [...]string{"market_analyst", "news_analyst", "fundamental_analyst",
+	"bull_researcher", "bear_researcher", "debate_judge", pipelineRoleTrader}
+
+// validateRoleModels checks a role→model override map: every key must be
+// one of the seven pipeline roles and every value 1..128 chars. A partial
+// map (subset of roles) is valid. Returns "" when valid, else the 400
+// message.
+func validateRoleModels(m map[string]string) string {
+	for role, model := range m {
+		if !slices.Contains(pipelineRoles[:], role) {
+			return "role_models keys must be pipeline roles (market_analyst, news_analyst, fundamental_analyst, bull_researcher, bear_researcher, debate_judge, trader)"
+		}
+		if model == "" || len(model) > llmModelMaxChars {
+			return "role_models values must be 1..128 characters"
+		}
+	}
+	return ""
+}
 
 // secretMetaView is the API view of one stored secret: kind, the decoded
 // non-secret metadata, and audit fields — NEVER the payload.
@@ -216,33 +239,40 @@ func (s *Server) handleSetBinanceSecret(w http.ResponseWriter, r *http.Request) 
 
 // llmSecretRequest is the POST /api/v1/platform/secrets/llm body:
 // timeout_seconds is optional (default 30, bounds 1..600); trader_model and
-// default_model are optional (defaults gpt-4o / gpt-4o-mini, 1..128 chars).
+// default_model are optional (defaults gpt-4o / gpt-4o-mini, 1..128 chars);
+// role_models is an optional per-pipeline-role override map (config, not
+// secret — it applies even when an empty api_key keeps the stored key).
 type llmSecretRequest struct {
-	BaseURL        string `json:"base_url"`
-	APIKey         string `json:"api_key"`
-	TimeoutSeconds *int   `json:"timeout_seconds"`
-	TraderModel    string `json:"trader_model"`
-	DefaultModel   string `json:"default_model"`
+	BaseURL        string            `json:"base_url"`
+	APIKey         string            `json:"api_key"`
+	TimeoutSeconds *int              `json:"timeout_seconds"`
+	TraderModel    string            `json:"trader_model"`
+	DefaultModel   string            `json:"default_model"`
+	RoleModels     map[string]string `json:"role_models,omitempty"`
 }
 
 // llmPayload is BOTH the sealed plaintext and the GET
 // /api/v1/agent/llm-config response shape — the one secret that crosses an
-// API boundary, to agent tokens only.
+// API boundary, to agent tokens only. In the sealed plaintext RoleModels
+// holds the platform-level overrides only; in the llm-config response it is
+// the fully resolved 7-role map (handleAgentLLMConfig).
 type llmPayload struct {
-	BaseURL        string `json:"base_url"`
-	APIKey         string `json:"api_key"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	TraderModel    string `json:"trader_model"`
-	DefaultModel   string `json:"default_model"`
+	BaseURL        string            `json:"base_url"`
+	APIKey         string            `json:"api_key"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
+	TraderModel    string            `json:"trader_model"`
+	DefaultModel   string            `json:"default_model"`
+	RoleModels     map[string]string `json:"role_models,omitempty"`
 }
 
 // llmMeta is the non-secret display metadata for kind llm.
 type llmMeta struct {
-	BaseURL        string `json:"base_url"`
-	APIKeyLast4    string `json:"api_key_last4"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	TraderModel    string `json:"trader_model"`
-	DefaultModel   string `json:"default_model"`
+	BaseURL        string            `json:"base_url"`
+	APIKeyLast4    string            `json:"api_key_last4"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
+	TraderModel    string            `json:"trader_model"`
+	DefaultModel   string            `json:"default_model"`
+	RoleModels     map[string]string `json:"role_models,omitempty"`
 }
 
 // handleSetLLMSecret is POST /api/v1/platform/secrets/llm (env-admin
@@ -300,11 +330,15 @@ func (s *Server) handleSetLLMSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeSchemaInvalid, "trader_model and default_model must be 1..128 characters")
 		return
 	}
+	if msg := validateRoleModels(req.RoleModels); msg != "" {
+		writeError(w, http.StatusBadRequest, codeSchemaInvalid, msg)
+		return
+	}
 	s.storeSealedSecret(w, r, secretKindLLM,
 		llmPayload{BaseURL: req.BaseURL, APIKey: req.APIKey, TimeoutSeconds: timeout,
-			TraderModel: traderModel, DefaultModel: defaultModel},
+			TraderModel: traderModel, DefaultModel: defaultModel, RoleModels: req.RoleModels},
 		llmMeta{BaseURL: req.BaseURL, APIKeyLast4: last4(req.APIKey), TimeoutSeconds: timeout,
-			TraderModel: traderModel, DefaultModel: defaultModel})
+			TraderModel: traderModel, DefaultModel: defaultModel, RoleModels: req.RoleModels})
 }
 
 // handleAgentLLMConfig is GET /api/v1/agent/llm-config (agent tokens ONLY,
@@ -341,6 +375,36 @@ func (s *Server) handleAgentLLMConfig(w http.ResponseWriter, r *http.Request) {
 	if payload.DefaultModel == "" {
 		payload.DefaultModel = llmDefaultModelDefault
 	}
+	// role_models is fully resolved over all seven pipeline roles: the
+	// trader_model/default_model defaults, then the platform secret's
+	// overrides, then the requesting token's strategy overrides.
+	resolved := make(map[string]string, len(pipelineRoles))
+	for _, role := range pipelineRoles {
+		if role == pipelineRoleTrader {
+			resolved[role] = payload.TraderModel
+		} else {
+			resolved[role] = payload.DefaultModel
+		}
+	}
+	for role, model := range payload.RoleModels {
+		resolved[role] = model
+	}
+	if pr := principalFrom(r); pr.strategyID != "" {
+		st, err := s.cfg.Store.GetStrategy(pr.strategyID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			// Agent tokens may be scoped to a strategy with no row (env
+			// AgentTokens): no overlay, never an error.
+		case err != nil:
+			s.writeInternal(w, r, err)
+			return
+		default:
+			for role, model := range st.RoleModels {
+				resolved[role] = model
+			}
+		}
+	}
+	payload.RoleModels = resolved
 	writeJSON(w, http.StatusOK, payload)
 }
 

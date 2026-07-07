@@ -61,7 +61,8 @@ answer `503 VAULT_UNAVAILABLE` when no vault is wired.
    sorted by kind; empty vault ⇒ `{"items":[]}`.
    `secretMetaView = {"kind","meta":{...decoded meta_json},"updated_at",
    "updated_by"}`; for `binance` meta = `{"env","api_key_last4"}`, for
-   `llm` meta = `{"base_url","api_key_last4","timeout_seconds"}`.
+   `llm` meta = `{"base_url","api_key_last4","timeout_seconds",
+   "trader_model","default_model","role_models"?}`.
 2. `POST /api/v1/platform/secrets/binance` — body
    `{"env":"testnet"|"prod","api_key","api_secret"}` (strict decode; env
    pinned; key/secret ≤ 256 chars). Leaving BOTH `api_key` and
@@ -71,18 +72,28 @@ answer `503 VAULT_UNAVAILABLE` when no vault is wired.
    `{"env","api_key_last4"}`. 200 `{"secret":secretMetaView}` — the
    plaintext is NEVER echoed.
 3. `POST /api/v1/platform/secrets/llm` — body
-   `{"base_url","api_key","timeout_seconds"?}` (`base_url` http(s) URL;
-   `api_key` ≤ 256; `timeout_seconds` optional integer 1..600, default
-   30). An empty `api_key` keeps the stored key (edit base_url / timeout
-   / models without re-entering it; 400 when nothing is stored). Seals
-   payload `{"base_url","api_key","timeout_seconds"}`; meta
-   `{"base_url","api_key_last4","timeout_seconds"}`. 200
-   `{"secret":secretMetaView}`.
+   `{"base_url","api_key","timeout_seconds"?,"trader_model"?,
+   "default_model"?,"role_models"?}` (`base_url` http(s) URL; `api_key`
+   ≤ 256; `timeout_seconds` optional integer 1..600, default 30; models
+   1..128 chars, defaults `gpt-4o` / `gpt-4o-mini`; `role_models` an
+   optional role→model map — keys pinned to the seven pipeline roles of
+   `llm-routing-and-budget.md` §2, values 1..128 chars, a subset of
+   roles is valid). An empty `api_key` keeps the stored key (edit
+   base_url / timeout / models without re-entering it; 400 when nothing
+   is stored). Seals payload `{"base_url","api_key","timeout_seconds",
+   "trader_model","default_model","role_models"?}`; meta the same minus
+   the key (last4 only). 200 `{"secret":secretMetaView}`.
 4. `GET /api/v1/agent/llm-config` — **agent tokens ONLY** (any agent: the
    route has no `{id}` segment, so the strategy-scope guard does not
-   apply). 200 `{"base_url","api_key","timeout_seconds"}`; vault empty ⇒
-   404 `NOT_CONFIGURED`. This is the ONE endpoint that returns a secret
-   value, and it returns ONLY the llm payload.
+   apply). 200 `{"base_url","api_key","timeout_seconds","trader_model",
+   "default_model","role_models"}`; vault empty ⇒ 404 `NOT_CONFIGURED`.
+   `role_models` is the fully resolved 7-role map: the
+   `trader_model`/`default_model` defaults, overlaid by the platform
+   secret's `role_models`, overlaid by the requesting token's strategy
+   `role_models` (`strategy-provisioning.md` SP-2; a token scoped to a
+   strategy with no row gets the platform view). This is the ONE
+   endpoint that returns a secret value, and it returns ONLY the llm
+   payload.
 
 Validation failures are 400 `SCHEMA_INVALID`. All routes register through
 the `api.Permissions()` matrix (multi-tenant-rbac.md §Permission matrix),

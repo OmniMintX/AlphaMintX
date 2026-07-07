@@ -8,6 +8,7 @@ import Link from "next/link";
 
 import type { LeaderboardItem } from "../../src/lib/api/schema";
 import { useI18n } from "../../src/lib/i18n";
+import type { EquityMarker } from "./equity-chart";
 
 // Distinct per-series line colors for the equity-curve overlay (hues that
 // read on both dark and light surfaces, like the candle-chart palettes).
@@ -21,6 +22,35 @@ export const SERIES_PALETTE = [
   "#c9a227",
   "#b07ff0",
 ] as const;
+
+// Trade-marker tones (the palette's green/red plus a neutral grey).
+const MARKER_UP = "#0ecb81";
+const MARKER_DOWN = "#f6465d";
+const MARKER_FLAT = "#646b76";
+
+// Trade markers for a single equity curve: every non-seed point IS a fill
+// event (the curve is fill-derived), so each one is marked by its equity
+// delta — up = green arrowUp below the bar, down = red arrowDown above it,
+// flat = neutral inBar circle. The performance wire carries no order side,
+// so the delta sign is the marker's whole meaning.
+export function deriveEquityMarkers(
+  points: { time: number; value: number }[],
+): EquityMarker[] {
+  const markers: EquityMarker[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const cur = points[i];
+    if (!prev || !cur) continue;
+    if (cur.value > prev.value) {
+      markers.push({ time: cur.time, position: "belowBar", shape: "arrowUp", color: MARKER_UP });
+    } else if (cur.value < prev.value) {
+      markers.push({ time: cur.time, position: "aboveBar", shape: "arrowDown", color: MARKER_DOWN });
+    } else {
+      markers.push({ time: cur.time, position: "inBar", shape: "circle", color: MARKER_FLAT });
+    }
+  }
+  return markers;
+}
 
 // "2026-07-04T12:00:00Z" -> "2026-07-04 12:00" (UTC, deterministic).
 export function fmtTime(iso: string): string {
@@ -41,7 +71,9 @@ export function profitFactorLabel(profitFactor: string | null, realizedPnl: stri
   return decimalSign(realizedPnl) > 0 ? "\u221E" : "\u2014";
 }
 
-function signClass(value: string): string {
+// Sign-toned class suffix for a decimal-string value (shared with the
+// strategy-detail performance panel).
+export function signClass(value: string): string {
   const sign = decimalSign(value);
   return sign > 0 ? " up" : sign < 0 ? " down" : "";
 }
@@ -72,6 +104,7 @@ export function LeaderboardTable({
             <th>{t("arena.tbl.winrate")}</th>
             <th>{t("arena.tbl.pf")}</th>
             <th>{t("arena.tbl.lastfill")}</th>
+            <th>{t("arena.tbl.links")}</th>
           </tr>
         </thead>
         <tbody>
@@ -104,6 +137,14 @@ export function LeaderboardTable({
               <td className="num">{profitFactorLabel(item.profit_factor, item.realized_pnl)}</td>
               <td className="mono-cell">
                 {item.last_fill_at === null ? "\u2014" : fmtTime(item.last_fill_at)}
+              </td>
+              <td>
+                <Link
+                  href={`/reasoning?strategy=${item.strategy_id}`}
+                  aria-label={t("arena.link.reasoning.label", { name: item.name })}
+                >
+                  {t("arena.link.reasoning")}
+                </Link>
               </td>
             </tr>
           ))}

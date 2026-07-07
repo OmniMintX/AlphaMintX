@@ -36,7 +36,39 @@ export const strategySchema = z.strictObject({
   lifecycle_state: lifecycleStateSchema,
   created_at: utcTimestamp,
   updated_at: utcTimestamp,
+  // Per-pipeline-role model overrides (strategy-provisioning.md SP-2);
+  // omitted when the strategy has none.
+  role_models: z.record(z.string(), z.string().min(1)).optional(),
 });
+
+// The seven pipeline roles a per-role model override can target, in
+// pipeline order (analysts → researchers → judge → trader).
+export const PIPELINE_ROLES = [
+  "market_analyst",
+  "news_analyst",
+  "fundamental_analyst",
+  "bull_researcher",
+  "bear_researcher",
+  "debate_judge",
+  "trader",
+] as const;
+
+export type PipelineRole = (typeof PIPELINE_ROLES)[number];
+
+// The optional role_models POST field from form state: trimmed non-empty
+// entries only (keys outside PIPELINE_ROLES are ignored); undefined when
+// every input is empty, so JSON.stringify drops the field entirely — never
+// sent as {} or null.
+export function buildRoleModels(
+  input: Record<string, string>,
+): Record<string, string> | undefined {
+  const models: Record<string, string> = {};
+  for (const role of PIPELINE_ROLES) {
+    const value = (input[role] ?? "").trim();
+    if (value !== "") models[role] = value;
+  }
+  return Object.keys(models).length > 0 ? models : undefined;
+}
 
 // ---- Pagination: {items, total, page, limit} (page 1-based) ----------------
 
@@ -59,6 +91,9 @@ export interface CreateStrategyRequest {
   tenant_id: string;
   name: string;
   lifecycle_state?: "draft" | "paper";
+  // Per-pipeline-role model overrides (a subset of PIPELINE_ROLES); omitted
+  // when the form has none — see buildRoleModels.
+  role_models?: Record<string, string>;
 }
 
 // ---- Runs -------------------------------------------------------------------
@@ -543,6 +578,8 @@ export const llmSecretItemSchema = z.strictObject({
     // Absent on secrets saved before the model fields existed.
     trader_model: z.string().min(1).optional(),
     default_model: z.string().min(1).optional(),
+    // Platform-level per-pipeline-role overrides; absent when none set.
+    role_models: z.record(z.string(), z.string().min(1)).optional(),
   }),
   updated_at: utcTimestamp,
   updated_by: z.string().min(1),

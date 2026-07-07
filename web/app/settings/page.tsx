@@ -13,9 +13,14 @@ import {
   setBinanceSecret,
   setLlmSecret,
 } from "../../src/lib/api/client";
-import type { BinanceEnv, PlatformSecret } from "../../src/lib/api/schema";
+import {
+  PIPELINE_ROLES,
+  buildRoleModels,
+  type BinanceEnv,
+  type PlatformSecret,
+} from "../../src/lib/api/schema";
 import { usePoll } from "../../src/lib/api/usePoll";
-import { useI18n } from "../../src/lib/i18n";
+import { useI18n, type MessageKey } from "../../src/lib/i18n";
 import { ErrorBanner } from "../strategies/ui";
 
 // Models the agent-plane can price (llm/prices.json), offered as datalist
@@ -202,6 +207,7 @@ function LlmCard({
   const [timeoutSecs, setTimeoutSecs] = useState("30");
   const [traderModel, setTraderModel] = useState(DEFAULT_TRADER_MODEL);
   const [defaultModel, setDefaultModel] = useState(DEFAULT_ANALYST_MODEL);
+  const [roleModels, setRoleModels] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -216,6 +222,7 @@ function LlmCard({
     setTimeoutSecs(String(current.meta.timeout_seconds));
     setTraderModel(current.meta.trader_model ?? DEFAULT_TRADER_MODEL);
     setDefaultModel(current.meta.default_model ?? DEFAULT_ANALYST_MODEL);
+    setRoleModels(current.meta.role_models ?? {});
   }, [current]);
 
   const timeoutNum = Number(timeoutSecs.trim());
@@ -232,13 +239,23 @@ function LlmCard({
     traderTrim.length <= MODEL_MAX_LEN &&
     defaultTrim !== "" &&
     defaultTrim.length <= MODEL_MAX_LEN;
+  const roleModelsValid = PIPELINE_ROLES.every(
+    (role) => (roleModels[role] ?? "").trim().length <= MODEL_MAX_LEN,
+  );
 
   const submit = async () => {
     setPending(true);
     setError(null);
     setSaved(false);
     try {
-      await setLlmSecret(baseTrim, apiKey, timeoutNum, traderTrim, defaultTrim);
+      await setLlmSecret(
+        baseTrim,
+        apiKey,
+        timeoutNum,
+        traderTrim,
+        defaultTrim,
+        buildRoleModels(roleModels),
+      );
       setApiKey("");
       setSaved(true);
       onSaved();
@@ -346,11 +363,36 @@ function LlmCard({
         </datalist>
       </div>
       <p className="faint small">{t("settings.llm.model_hint")}</p>
+      <details style={{ marginTop: 10 }}>
+        <summary className="faint small" style={{ cursor: "pointer" }}>
+          {t("settings.llm.rolemodels")}
+        </summary>
+        <p className="faint small">{t("settings.llm.rolemodels.hint")}</p>
+        <div className="grid grid-2" style={{ marginTop: 6 }}>
+          {PIPELINE_ROLES.map((role) => (
+            <label className="field" htmlFor={`llm-role-${role}`} key={role}>
+              <span className="field-label">{t(`role.${role}` as MessageKey)}</span>
+              <input
+                id={`llm-role-${role}`}
+                className="input"
+                list="llm-model-suggestions"
+                placeholder={role === "trader" ? traderModel : defaultModel}
+                value={roleModels[role] ?? ""}
+                onChange={(e) =>
+                  setRoleModels((prev) => ({ ...prev, [role]: e.target.value }))
+                }
+              />
+            </label>
+          ))}
+        </div>
+      </details>
       <div className="row" style={{ marginTop: 10 }}>
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pending || !baseUrlValid || !keyOk || !timeoutValid || !modelsValid}
+          disabled={
+            pending || !baseUrlValid || !keyOk || !timeoutValid || !modelsValid || !roleModelsValid
+          }
           onClick={() => void submit()}
         >
           {t("settings.save")}

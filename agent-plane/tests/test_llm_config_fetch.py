@@ -115,6 +115,100 @@ def test_config_without_models_falls_back_to_defaults() -> None:
     assert client._role_models["market_analyst"] == "gpt-4o-mini"
 
 
+def _config_with_role_models(role_models: object) -> httpx.MockTransport:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "base_url": FETCHED_BASE_URL,
+                "api_key": FETCHED_API_KEY,
+                "timeout_seconds": 42,
+                "role_models": role_models,
+            },
+        )
+
+    return httpx.MockTransport(handler)
+
+
+def test_fetched_role_models_resolve_per_role() -> None:
+    role_models = {
+        "market_analyst": "gpt-4o-mini",
+        "news_analyst": "gpt-4o-mini",
+        "fundamental_analyst": "gpt-4o-mini",
+        "bull_researcher": "gpt-4o",
+        "bear_researcher": "gpt-4o",
+        "debate_judge": "gpt-4o",
+        "trader": "gpt-4o",
+    }
+    client = create_llm_client(
+        environ=dict(LIVE_ENV),
+        transport=_MINTROUTER_TRANSPORT,
+        config_transport=_config_with_role_models(role_models),
+    )
+    assert isinstance(client, MintRouterLLM)
+    assert client._role_models == role_models
+
+
+def test_fetched_role_models_win_over_trader_and_default_models() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "base_url": FETCHED_BASE_URL,
+                "api_key": FETCHED_API_KEY,
+                "timeout_seconds": 42,
+                "trader_model": "gpt-4o-mini",
+                "default_model": "gpt-4o-mini",
+                "role_models": {"trader": "gpt-4o"},
+            },
+        )
+
+    client = create_llm_client(
+        environ=dict(LIVE_ENV),
+        transport=_MINTROUTER_TRANSPORT,
+        config_transport=httpx.MockTransport(handler),
+    )
+    assert isinstance(client, MintRouterLLM)
+    # role_models wins for its keys; the derived map fills the other 6 roles.
+    assert client._role_models["trader"] == "gpt-4o"
+    assert client._role_models["market_analyst"] == "gpt-4o-mini"
+
+
+def test_fetched_partial_role_models_yield_a_complete_map() -> None:
+    client = create_llm_client(
+        environ=dict(LIVE_ENV),
+        transport=_MINTROUTER_TRANSPORT,
+        config_transport=_config_with_role_models({"trader": "gpt-4o-mini"}),
+    )
+    assert isinstance(client, MintRouterLLM)
+    assert client._role_models["trader"] == "gpt-4o-mini"
+    # Roles missing from the partial map fall back to the defaults.
+    assert client._role_models["market_analyst"] == "gpt-4o-mini"
+    assert client._role_models["debate_judge"] == "gpt-4o-mini"
+
+
+@pytest.mark.parametrize(
+    "role_models",
+    [
+        ["gpt-4o"],
+        "gpt-4o",
+        42,
+        {"unknown_role": "gpt-4o"},
+        {"trader": ""},
+        {"trader": 42},
+    ],
+)
+def test_fetched_malformed_role_models_raises_config_error(role_models: object) -> None:
+    with pytest.raises(LLMConfigError, match="role_models") as excinfo:
+        create_llm_client(
+            environ=dict(LIVE_ENV),
+            transport=_MINTROUTER_TRANSPORT,
+            config_transport=_config_with_role_models(role_models),
+        )
+    assert FETCHED_API_KEY not in str(excinfo.value)
+    assert "unknown_role" not in str(excinfo.value)
+
+
 def test_fetched_unpriced_model_starts_with_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
