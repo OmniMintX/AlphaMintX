@@ -45,7 +45,7 @@ func (o *OMS) SubmitEntry(req EntryRequest) (Order, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	if req.KillEpoch < o.killEpoch {
+	if req.KillEpoch < o.killEpochs[req.StrategyID] {
 		return Order{}, ErrKillEpochStale
 	}
 	// Zero guards: qty sizing divides by the entry price; a non-positive
@@ -209,17 +209,19 @@ func (o *OMS) placeProtectivesLocked(entry *Order, stopPrice, takeProfit decimal
 	return nil
 }
 
-// Kill records the new kill epoch and cancels ENTRY orders ONLY: protective
-// stops are never canceled while a position remains open unless the action
-// flattens it (risk-limits.md, order classes).
-func (o *OMS) Kill(epoch int64) {
+// Kill records the strategy's new kill epoch and cancels ITS ENTRY orders
+// ONLY: other strategies' epochs and resting entries are untouched (kill
+// epochs are per-strategy), and protective stops are never canceled while a
+// position remains open unless the action flattens it (risk-limits.md,
+// order classes).
+func (o *OMS) Kill(strategyID string, epoch int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if epoch > o.killEpoch {
-		o.killEpoch = epoch
+	if epoch > o.killEpochs[strategyID] {
+		o.killEpochs[strategyID] = epoch
 	}
 	for _, ord := range o.orders {
-		if ord.Class == ClassEntry && ord.Status == StatusOpen {
+		if ord.StrategyID == strategyID && ord.Class == ClassEntry && ord.Status == StatusOpen {
 			ord.Status = StatusCanceled
 		}
 	}

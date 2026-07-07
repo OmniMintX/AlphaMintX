@@ -302,6 +302,32 @@ export const messagesOps = {
   },
   "reason.open.run": { en: "Open full run page →", vi: "Mở trang run đầy đủ →" },
 
+  // ---- arena: model battle (arena/page.tsx) ----
+  "arena.title": { en: "Arena — Model Battle", vi: "Đấu trường — Trận chiến mô hình" },
+  "arena.sub": {
+    en: "Paper-window model battle — strategies ranked by return, with their equity curves overlaid.",
+    vi: "Trận chiến mô hình trong cửa sổ paper — chiến lược xếp hạng theo lợi nhuận, kèm đường equity chồng lớp.",
+  },
+  "arena.evaluated": { en: "Evaluated at {at}", vi: "Đánh giá lúc {at}" },
+  "arena.empty": { en: "No strategies on the leaderboard yet.", vi: "Chưa có chiến lược nào trên bảng xếp hạng." },
+  "arena.tbl.chart": { en: "Chart", vi: "Biểu đồ" },
+  "arena.tbl.rank": { en: "Rank", vi: "Hạng" },
+  "arena.tbl.strategy": { en: "Strategy", vi: "Chiến lược" },
+  "arena.tbl.model": { en: "Model", vi: "Mô hình" },
+  "arena.tbl.return": { en: "Return %", vi: "Lợi nhuận %" },
+  "arena.tbl.pnl": { en: "Realized PnL", vi: "PnL đã chốt" },
+  "arena.tbl.maxdd": { en: "Max DD %", vi: "DD tối đa %" },
+  "arena.tbl.trades": { en: "Trades", vi: "Lệnh" },
+  "arena.tbl.winrate": { en: "Win rate %", vi: "Tỷ lệ thắng %" },
+  "arena.tbl.pf": { en: "Profit factor", vi: "Hệ số lợi nhuận" },
+  "arena.tbl.lastfill": { en: "Last fill", vi: "Khớp gần nhất" },
+  "arena.select.label": { en: "Chart {name}", vi: "Vẽ {name}" },
+  "arena.chart.title": { en: "Equity curves", vi: "Đường equity" },
+  "arena.chart.empty": {
+    en: "No fills in the paper window yet",
+    vi: "Chưa có khớp lệnh nào trong cửa sổ paper",
+  },
+
   // ---- admin platform ops (admin/page.tsx) ----
   // Shared kill/clear form pieces (tenant rows + platform card).
   "admin.kill.flatten": { en: "flatten positions", vi: "flatten vị thế" },

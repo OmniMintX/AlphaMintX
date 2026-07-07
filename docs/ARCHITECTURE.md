@@ -44,6 +44,10 @@ AlphaMintX/
   kill-clear/unlock — append-only `kill_clear_events` at all 3 tiers,
   the active-kill predicate, audited `killed → paper/paused` human
   unlock (`docs/specs/lifecycle-api.md`).
+- Arena read surface (`GET /api/v1/strategies/{id}/performance`,
+  `GET /api/v1/arena/leaderboard`): paper-window equity curve + stats
+  and the return-ranked leaderboard, replaying the paper-gate's own
+  book walk (`docs/specs/lifecycle-api.md` §Arena read surface).
 - Multi-tenant RBAC (`docs/specs/multi-tenant-rbac.md`): fixed roles
   viewer/trader/admin/owner on DB-issued hashed tokens, tenant isolation
   (foreign = 404, no existence oracle), runtime limit changes behind a
@@ -73,7 +77,7 @@ AlphaMintX/
 ### web/ (Next.js App Router, strict TS)
 - Dashboard, reasoning viewer (proposal + analyst summaries + debate + verdict),
   L1 approve/reject copilot UI, immutable track record, risk settings (Admin),
-  kill-switch controls.
+  kill-switch controls, arena leaderboard with equity-curve overlay (`/arena`).
 
 ### contracts/
 - `proposal.schema.json`, `riskverdict.schema.json`, `fixtures/`. Both planes MUST

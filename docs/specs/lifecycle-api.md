@@ -320,6 +320,72 @@ THIS handler charges it itself on every GET — the same bucket, the same
 429 `RATE_LIMITED`: burst-reads exhaust long before the replay hurts
 SQLite.
 
+### Arena read surface (Phase 28)
+
+Two READ-ONLY endpoints over the paper-gate replay. LC-25+ are taken by
+the kill-clear section below, so rules here are **AR-n**.
+
+**AR-1.** `GET /api/v1/strategies/{id}/performance?max_points=N` returns
+`{"strategy_id", "window_started_at": string|null, "evaluated_at",
+"seed", "model": string|null, "equity_curve": [{"ts", "equity"}, …],
+"stats": {"realized_pnl", "return_pct", "max_drawdown_pct",
+"closed_trades", "wins", "losses", "win_rate_pct",
+"profit_factor": string|null, "fees_paid",
+"last_fill_at": string|null}}`. Every money/percent field is an ADR-0003
+decimal string; `equity_curve` is `[]`, never null.
+
+**AR-2.** `GET /api/v1/arena/leaderboard` returns `{"evaluated_at",
+"items": [{"rank", "strategy_id", "name", "tenant_id",
+"lifecycle_state", "model": string|null, "seed", "equity",
+"realized_pnl", "return_pct", "max_drawdown_pct", "closed_trades",
+"win_rate_pct", "profit_factor": string|null,
+"last_fill_at": string|null}, …]}`, ranked `return_pct` desc, ties
+`realized_pnl` desc, then `strategy_id` asc; `rank` is the 1-based
+position after that sort. `items` is `[]`, never null. `equity` =
+seed + `realized_pnl`.
+
+**AR-3.** Shared walk (normative): both endpoints replay
+`papergate.ReplayCurve`, which runs the IDENTICAL LC-18 book walk as
+the gate's own replay — ONE walk implementation, no arena math of its
+own. Arena numbers (closed trades, max drawdown, fees) are
+byte-identical to the LC-23 report's by construction.
+
+**AR-4.** Window: the LC-16 paper window verbatim — the SAME store read
+as the gate (window start + the LC-18 fill join), persisted rows only.
+A fail-closed window (LC-16) ⇒ `window_started_at` null, `equity_curve`
+`[]`, zero stats — never an error.
+
+**AR-5.** Curve: anchored at (`window_started_at`, seed), then one
+post-fill equity sample per fill in replay order. `?max_points`
+(default 500, clamped to ≥ 2) downsamples to evenly-spaced samples,
+ALWAYS keeping the anchor (first) and the newest sample (last).
+
+**AR-6.** Stats semantics: `realized_pnl` = final equity − seed (every
+fee debit realized where paid, open-position fees included);
+`return_pct` = `realized_pnl / seed × 100`, `"0"` when seed ≤ 0 (the
+LC-21 fail-closed edge, no division); wins = closed trades with
+PnL > 0, losses = PnL < 0, zero-PnL trades are neither; `win_rate_pct`
+= wins / closed trades × 100, `"0"` with no closed trades;
+`profit_factor` is null iff `gross_loss = 0` (unbounded or undefined —
+never a division, never `"∞"`); `last_fill_at` is null with no window
+fills.
+
+**AR-7.** Model attribution: `model` is the strategy's NEWEST
+`node='trader'` `model_costs` row's `model` (newest =
+`ORDER BY recorded_at DESC, rowid DESC`, §Store surface); null when no
+trader row exists.
+
+**AR-8.** Matrix rows, both endpoints: Roles
+[viewer, trader, admin, owner], Classes [read, env-admin]; agent tokens
+never. The performance read is tenant-scoped per LC-3 (foreign ⇒ 404);
+the leaderboard shows a tenant principal its OWN tenant's strategies
+only (§Lists: no foreign rows), env classes the whole platform.
+
+**AR-9.** Cost pin: both replays are O(window fills) per request, so
+each handler charges the per-token 60/min bucket itself, exactly as
+LC-24 — the same bucket, the same 429 `RATE_LIMITED`, no cache, no
+separate limiter.
+
 ## Kill-clear events (SW-2 standing-condition clearing)
 
 **LC-25.** New append-only table (additive DDL, normative):

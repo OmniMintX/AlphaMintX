@@ -3,8 +3,8 @@
 // trigger-sweep driver, and the persistence writer that keeps orders,
 // fills, positions, and the strategy_state realized-equity snapshot in sync
 // with every OMS action. On startup it re-hydrates the OMS from the store
-// (open orders re-armed, books restored with realized PnL, kill epoch
-// restored) so restarts are lossless.
+// (open orders re-armed, books restored with realized PnL, per-strategy
+// kill epochs restored) so restarts are lossless.
 package omsbridge
 
 import (
@@ -92,13 +92,13 @@ func New(cfg Config) (*Bridge, error) {
 	return b, nil
 }
 
-// hydrate restores every strategy's books and open orders plus the highest
-// persisted kill epoch into the fresh OMS.
+// hydrate restores every strategy's books and open orders plus its own
+// highest persisted kill epoch into the fresh OMS.
+// GlobalMaxKillEpoch(strategyID) is the same per-strategy binding max
+// SubmitApproved stamps (the strategy's own, its tenant's, and platform
+// kills — multi-tenant-rbac.md normative predicate, platform-scope rows
+// included), so a restart never couples one strategy's epoch to another's.
 func (b *Bridge) hydrate() error {
-	maxEpoch, err := b.st.GlobalMaxKillEpoch("")
-	if err != nil {
-		return err
-	}
 	for page := 1; ; page++ {
 		strategies, total, err := b.st.ListStrategies(page, store.MaxPageLimit)
 		if err != nil {
@@ -112,13 +112,12 @@ func (b *Bridge) hydrate() error {
 			if err != nil {
 				return err
 			}
-			maxEpoch = max(maxEpoch, epoch)
+			b.oms.RestoreKillEpoch(s.StrategyID, epoch)
 		}
 		if page*store.MaxPageLimit >= total || len(strategies) == 0 {
 			break
 		}
 	}
-	b.oms.RestoreKillEpoch(maxEpoch)
 	return nil
 }
 

@@ -17,6 +17,7 @@ The API key — from env or fetched — is never logged and never echoed in erro
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -34,19 +35,29 @@ from alphamintx_agent_plane.llm.mintrouter import (
 )
 from alphamintx_agent_plane.llm.pricing import PriceTable
 from alphamintx_agent_plane.llm.stub import (
+    DEFAULT_STUB_MODEL_NAME,
     PIPELINE_ROLES,
     ROLE_TRADER,
     LLMClient,
+    StubLLM,
     bullish_scenario,
+    low_confidence_scenario,
 )
+from alphamintx_agent_plane.scheduler.loop import ENV_SYMBOL
 
 ENV_LLM_MODE = "ALPHAMINTX_LLM_MODE"
 ENV_BASE_URL = "MINTROUTER_BASE_URL"
 ENV_API_KEY = "MINTROUTER_API_KEY"  # env var NAME only; the value is read from env
 ENV_TIMEOUT_SECONDS = "MINTROUTER_TIMEOUT_SECONDS"
+ENV_STUB_SCENARIO = "ALPHAMINTX_STUB_SCENARIO"
+ENV_STUB_MODEL_NAME = "ALPHAMINTX_STUB_MODEL_NAME"
+ENV_STUB_TRADER_JSON = "ALPHAMINTX_STUB_TRADER_JSON"
 
 MODE_STUB = "stub"
 MODE_LIVE = "live"
+
+STUB_SCENARIO_BULLISH = "bullish"
+STUB_SCENARIO_LOW_CONFIDENCE = "low_confidence"
 
 LLM_CONFIG_PATH = "/api/v1/agent/llm-config"
 CONFIG_FETCH_TIMEOUT_SECONDS = 10.0
@@ -157,6 +168,45 @@ def _error_code(response: httpx.Response) -> str:
     return "UNKNOWN"
 
 
+def _stub_from_env(env: Mapping[str, str]) -> StubLLM:
+    """Build the stub scenario from the ALPHAMINTX_STUB_* env vars (fail-fast)."""
+    scenario = env.get(ENV_STUB_SCENARIO, STUB_SCENARIO_BULLISH)
+    if scenario == STUB_SCENARIO_BULLISH:
+        scenario_fn = bullish_scenario
+    elif scenario == STUB_SCENARIO_LOW_CONFIDENCE:
+        scenario_fn = low_confidence_scenario
+    else:
+        raise LLMConfigError(
+            f"invalid {ENV_STUB_SCENARIO}={scenario!r}: must be "
+            f"{STUB_SCENARIO_BULLISH!r} or {STUB_SCENARIO_LOW_CONFIDENCE!r}"
+        )
+    model_name = env.get(ENV_STUB_MODEL_NAME)
+    if model_name is None:
+        model_name = DEFAULT_STUB_MODEL_NAME
+    elif not model_name:
+        raise LLMConfigError(f"{ENV_STUB_MODEL_NAME} is set but empty")
+    trader_overrides: Mapping[str, object] | None = None
+    raw_trader = env.get(ENV_STUB_TRADER_JSON)
+    if raw_trader is not None:
+        snippet = raw_trader if len(raw_trader) <= 64 else raw_trader[:61] + "..."
+        try:
+            parsed: Any = json.loads(raw_trader)
+        except ValueError as exc:
+            raise LLMConfigError(
+                f"invalid {ENV_STUB_TRADER_JSON}: not valid JSON ({snippet!r})"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise LLMConfigError(
+                f"invalid {ENV_STUB_TRADER_JSON}: must be a JSON object, "
+                f"got {type(parsed).__name__} ({snippet!r})"
+            )
+        trader_overrides = parsed
+    symbol = env.get(ENV_SYMBOL)
+    if symbol:
+        return scenario_fn(symbol, model_name=model_name, trader_overrides=trader_overrides)
+    return scenario_fn(model_name=model_name, trader_overrides=trader_overrides)
+
+
 def create_llm_client(
     *,
     environ: Mapping[str, str] | None = None,
@@ -168,12 +218,21 @@ def create_llm_client(
 ) -> LLMClient:
     """Build the LLM client selected by ``ALPHAMINTX_LLM_MODE`` (fail-fast on defects).
 
+    Stub mode: when any of ``ALPHAMINTX_STUB_SCENARIO``, ``ALPHAMINTX_STUB_MODEL_NAME``
+    or ``ALPHAMINTX_STUB_TRADER_JSON`` is set, the scenario is built from env
+    (keyed by ``ALPHAMINTX_SYMBOL`` when set) and takes precedence over
+    ``stub_factory``; with none of them set, ``stub_factory()`` is called
+    unchanged (back-compat).
+
     ``transport`` stubs the mintrouter client itself; ``config_transport`` stubs
     the control-plane LLM-config fetch (tests only).
     """
     env = os.environ if environ is None else environ
     mode = env.get(ENV_LLM_MODE, MODE_STUB)
     if mode == MODE_STUB:
+        stub_env_vars = (ENV_STUB_SCENARIO, ENV_STUB_MODEL_NAME, ENV_STUB_TRADER_JSON)
+        if any(name in env for name in stub_env_vars):
+            return _stub_from_env(env)
         return stub_factory()
     if mode != MODE_LIVE:
         raise LLMConfigError(

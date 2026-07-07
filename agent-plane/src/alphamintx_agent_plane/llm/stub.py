@@ -36,6 +36,8 @@ PIPELINE_ROLES: tuple[str, ...] = (
 _COST_PER_INPUT_TOKEN = Decimal("0.000001")
 _COST_PER_OUTPUT_TOKEN = Decimal("0.000002")
 
+DEFAULT_STUB_MODEL_NAME = "stub-model"
+
 
 @dataclass(frozen=True)
 class LLMResponse:
@@ -62,7 +64,7 @@ class StubLLM:
     """Deterministic canned responses keyed by ``(role, symbol)``; for CI, no network."""
 
     def __init__(
-        self, responses: Mapping[tuple[str, str], str], model_name: str = "stub-model"
+        self, responses: Mapping[tuple[str, str], str], model_name: str = DEFAULT_STUB_MODEL_NAME
     ) -> None:
         self._responses = dict(responses)
         self._model_name = model_name
@@ -88,8 +90,28 @@ def _json(payload: Mapping[str, object]) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
-def bullish_scenario(symbol: str = "BTC/USDT") -> StubLLM:
-    """Canned scenario whose trader output is a confident open_long."""
+def bullish_scenario(
+    symbol: str = "BTC/USDT",
+    *,
+    model_name: str = DEFAULT_STUB_MODEL_NAME,
+    trader_overrides: Mapping[str, object] | None = None,
+) -> StubLLM:
+    """Canned scenario whose trader output is a confident open_long.
+
+    ``trader_overrides`` shallow-merges into the trader-role response dict
+    before JSON serialization (overrides replace existing keys and may add new ones).
+    """
+    trader: dict[str, object] = {
+        "action": "open_long",
+        "size_quote": "1500.00",
+        "entry_type": "limit",
+        "limit_price": "64250.50",
+        "stop_loss": "62965.49",
+        "take_profit": "66820.52",
+        "time_in_force": "gtc",
+        "confidence": 0.72,
+        "reasoning": "Momentum breakout long with a 2% stop below the breakout level.",
+    }
     responses = {
         (ROLE_MARKET_ANALYST, symbol): _json({
             "signal": "bullish",
@@ -117,23 +139,31 @@ def bullish_scenario(symbol: str = "BTC/USDT") -> StubLLM:
         (ROLE_DEBATE_JUDGE, symbol): _json({
             "summary": "Bull case stronger for a short-horizon long with a tight stop.",
         }),
-        (ROLE_TRADER, symbol): _json({
-            "action": "open_long",
-            "size_quote": "1500.00",
-            "entry_type": "limit",
-            "limit_price": "64250.50",
-            "stop_loss": "62965.49",
-            "take_profit": "66820.52",
-            "time_in_force": "gtc",
-            "confidence": 0.72,
-            "reasoning": "Momentum breakout long with a 2% stop below the breakout level.",
-        }),
+        (ROLE_TRADER, symbol): _json({**trader, **(trader_overrides or {})}),
     }
-    return StubLLM(responses)
+    return StubLLM(responses, model_name=model_name)
 
 
-def low_confidence_scenario(symbol: str = "BTC/USDT") -> StubLLM:
-    """Canned scenario where the trader's conviction is below the 0.3 hold threshold."""
+def low_confidence_scenario(
+    symbol: str = "BTC/USDT",
+    *,
+    model_name: str = DEFAULT_STUB_MODEL_NAME,
+    trader_overrides: Mapping[str, object] | None = None,
+) -> StubLLM:
+    """Canned scenario where the trader's conviction is below the 0.3 hold threshold.
+
+    ``trader_overrides`` shallow-merges into the trader-role response dict
+    before JSON serialization (overrides replace existing keys and may add new ones).
+    """
+    trader: dict[str, object] = {
+        "action": "open_long",
+        "size_quote": "500.00",
+        "entry_type": "market",
+        "stop_loss": "61000.00",
+        "time_in_force": "gtc",
+        "confidence": 0.22,
+        "reasoning": "Weak long idea in a rangebound market; conviction is low.",
+    }
     responses = {
         (ROLE_MARKET_ANALYST, symbol): _json({
             "signal": "neutral",
@@ -161,14 +191,6 @@ def low_confidence_scenario(symbol: str = "BTC/USDT") -> StubLLM:
         (ROLE_DEBATE_JUDGE, symbol): _json({
             "summary": "Neither side established an edge; wait for range resolution.",
         }),
-        (ROLE_TRADER, symbol): _json({
-            "action": "open_long",
-            "size_quote": "500.00",
-            "entry_type": "market",
-            "stop_loss": "61000.00",
-            "time_in_force": "gtc",
-            "confidence": 0.22,
-            "reasoning": "Weak long idea in a rangebound market; conviction is low.",
-        }),
+        (ROLE_TRADER, symbol): _json({**trader, **(trader_overrides or {})}),
     }
-    return StubLLM(responses)
+    return StubLLM(responses, model_name=model_name)

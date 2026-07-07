@@ -35,6 +35,9 @@ type Fill struct {
 	QtyBase    decimal.Decimal
 	FillPrice  decimal.Decimal
 	FeeQuote   decimal.Decimal
+	// FillTS is the fill's RFC 3339 UTC timestamp string. The gate replay
+	// ignores it; ReplayCurve stamps it on the equity curve points.
+	FillTS string
 }
 
 // Input carries everything one evaluation needs; nothing is read from

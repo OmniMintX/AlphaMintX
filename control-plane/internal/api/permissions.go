@@ -100,6 +100,12 @@ func Permissions() []RoutePermission {
 		// every reader (LC-24). Always registered, both modes (LC-1).
 		{Method: "POST", Path: "/api/v1/strategies/{id}/lifecycle", Roles: approvers, Classes: []string{classEnvAdmin}},
 		{Method: "GET", Path: "/api/v1/strategies/{id}/paper-gate", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
+		// Arena (Phase 28): both reads are the standard strategy-data
+		// reader tier — the GET /api/v1/strategies row. The leaderboard is
+		// tenant-scoped for tenant principals (handler-enforced, §Lists);
+		// agent tokens never read either. Always registered.
+		{Method: "GET", Path: "/api/v1/strategies/{id}/performance", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
+		{Method: "GET", Path: "/api/v1/arena/leaderboard", Roles: readers, Classes: []string{classRead, classEnvAdmin}},
 		// Operator surface (operator-surface.md OS-5/OS-15/OS-19): the
 		// two strategy-scoped safety reads are standard reader rows; the
 		// global alert feed is env-class only — no DB role, so every

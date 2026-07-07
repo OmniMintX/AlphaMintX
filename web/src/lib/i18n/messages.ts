@@ -12,6 +12,7 @@ export const messages = {
   "nav.strategies": { en: "Strategies", vi: "Chiến lược" },
   "nav.group.audit": { en: "Audit", vi: "Kiểm toán" },
   "nav.reasoning": { en: "Reasoning viewer", vi: "Trình xem suy luận" },
+  "nav.arena": { en: "Arena", vi: "Đấu trường" },
   "nav.group.platform": { en: "Platform", vi: "Nền tảng" },
   "nav.settings": { en: "Settings", vi: "Cài đặt" },
   "nav.admin": { en: "Admin", vi: "Quản trị" },

@@ -42,14 +42,14 @@ func (o *OMS) RestorePosition(strategyID string, pos Position) {
 	o.positions[positionKey{strategyID, pos.Symbol}] = &copied
 }
 
-// RestoreKillEpoch restores the persisted kill epoch WITHOUT the ENTRY
-// cancel sweep of Kill (the cancels were persisted when the kill fired;
-// hydration must not re-mutate restored state).
-func (o *OMS) RestoreKillEpoch(epoch int64) {
+// RestoreKillEpoch restores one strategy's persisted kill epoch WITHOUT the
+// ENTRY cancel sweep of Kill (the cancels were persisted when the kill
+// fired; hydration must not re-mutate restored state).
+func (o *OMS) RestoreKillEpoch(strategyID string, epoch int64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if epoch > o.killEpoch {
-		o.killEpoch = epoch
+	if epoch > o.killEpochs[strategyID] {
+		o.killEpochs[strategyID] = epoch
 	}
 }
 

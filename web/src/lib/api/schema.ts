@@ -10,6 +10,7 @@ import {
   decimal,
   maxCodePoints,
   riskVerdictSchema,
+  signedDecimal,
   symbol,
   tradeProposalSchema,
   utcTimestamp,
@@ -310,6 +311,65 @@ export const paperGateReportSchema = z.strictObject({
   window_started_at: utcTimestamp.nullable(),
   evaluated_at: utcTimestamp,
   conditions: z.array(paperGateConditionSchema),
+});
+
+// ---- Arena: model battle (Phase 28) ----------------------------------------
+
+// One paper-window equity sample. Decimals stay strings end-to-end
+// (ADR-0003); Number() conversion happens at chart-render time only.
+export const equityPointSchema = z.strictObject({
+  ts: utcTimestamp,
+  equity: signedDecimal,
+});
+
+export const performanceStatsSchema = z.strictObject({
+  realized_pnl: signedDecimal,
+  return_pct: signedDecimal,
+  max_drawdown_pct: decimal,
+  closed_trades: z.number().int().min(0),
+  wins: z.number().int().min(0),
+  losses: z.number().int().min(0),
+  win_rate_pct: decimal,
+  // null when there are no losing trades to divide by.
+  profit_factor: decimal.nullable(),
+  fees_paid: decimal,
+  last_fill_at: utcTimestamp.nullable(),
+});
+
+// GET /strategies/{id}/performance: equity_curve is [] never null; model is
+// null when the strategy has no model assignment.
+export const strategyPerformanceSchema = z.strictObject({
+  strategy_id: uuid,
+  window_started_at: utcTimestamp.nullable(),
+  evaluated_at: utcTimestamp,
+  seed: decimal,
+  model: z.string().min(1).nullable(),
+  equity_curve: z.array(equityPointSchema),
+  stats: performanceStatsSchema,
+});
+
+// GET /arena/leaderboard row: ranked by return_pct desc server-side.
+export const leaderboardItemSchema = z.strictObject({
+  rank: z.number().int().min(1),
+  strategy_id: uuid,
+  name: z.string().min(1),
+  tenant_id: z.string().min(1),
+  lifecycle_state: lifecycleStateSchema,
+  model: z.string().min(1).nullable(),
+  seed: decimal,
+  equity: signedDecimal,
+  realized_pnl: signedDecimal,
+  return_pct: signedDecimal,
+  max_drawdown_pct: decimal,
+  closed_trades: z.number().int().min(0),
+  win_rate_pct: decimal,
+  profit_factor: decimal.nullable(),
+  last_fill_at: utcTimestamp.nullable(),
+});
+
+export const leaderboardSchema = z.strictObject({
+  evaluated_at: utcTimestamp,
+  items: z.array(leaderboardItemSchema),
 });
 
 // ---- Risk limits (Settings) ------------------------------------------------------
@@ -870,6 +930,11 @@ export type SafetyAlert = z.infer<typeof safetyAlertSchema>;
 export type AlertsPage = z.infer<typeof alertsPageSchema>;
 export type PaperGateCondition = z.infer<typeof paperGateConditionSchema>;
 export type PaperGateReport = z.infer<typeof paperGateReportSchema>;
+export type EquityPoint = z.infer<typeof equityPointSchema>;
+export type PerformanceStats = z.infer<typeof performanceStatsSchema>;
+export type StrategyPerformance = z.infer<typeof strategyPerformanceSchema>;
+export type LeaderboardItem = z.infer<typeof leaderboardItemSchema>;
+export type Leaderboard = z.infer<typeof leaderboardSchema>;
 export type L2Envelope = z.infer<typeof l2EnvelopeSchema>;
 export type RiskLimits = z.infer<typeof riskLimitsSchema>;
 export type LimitChangeRow = z.infer<typeof limitChangeRowSchema>;

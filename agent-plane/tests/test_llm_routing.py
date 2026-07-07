@@ -34,10 +34,23 @@ from alphamintx_agent_plane.llm.errors import (
     LLMUnavailableError,
     RateLimitedError,
 )
-from alphamintx_agent_plane.llm.factory import create_llm_client
+from alphamintx_agent_plane.llm.factory import (
+    ENV_STUB_MODEL_NAME,
+    ENV_STUB_SCENARIO,
+    ENV_STUB_TRADER_JSON,
+    create_llm_client,
+)
 from alphamintx_agent_plane.llm.mintrouter import MintRouterLLM, validate_role_models
 from alphamintx_agent_plane.llm.pricing import STALENESS_DAYS, PriceTable
-from alphamintx_agent_plane.llm.stub import PIPELINE_ROLES, ROLE_MARKET_ANALYST, StubLLM
+from alphamintx_agent_plane.llm.stub import (
+    PIPELINE_ROLES,
+    ROLE_MARKET_ANALYST,
+    ROLE_TRADER,
+    StubLLM,
+    bullish_scenario,
+    low_confidence_scenario,
+)
+from alphamintx_agent_plane.scheduler.loop import ENV_SYMBOL
 
 TEST_API_KEY = "sk-test-key-that-must-never-leak"
 BASE_URL = "https://mintrouter.test"
@@ -624,3 +637,78 @@ def test_factory_live_mode_builds_mintrouter_client() -> None:
     )
     assert isinstance(client, MintRouterLLM)
     assert TEST_API_KEY not in repr(client)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_factory"),
+    [("bullish", bullish_scenario), ("low_confidence", low_confidence_scenario)],
+)
+def test_factory_stub_scenario_env_selects_scenario(
+    scenario: str, expected_factory: Callable[[], StubLLM]
+) -> None:
+    client = create_llm_client(environ={ENV_STUB_SCENARIO: scenario})
+    assert isinstance(client, StubLLM)
+    assert client._responses == expected_factory()._responses
+
+
+def test_factory_stub_invalid_scenario_raises() -> None:
+    with pytest.raises(LLMConfigError, match="'bullish' or 'low_confidence'"):
+        create_llm_client(environ={ENV_STUB_SCENARIO: "sideways"})
+
+
+def test_factory_stub_model_name_env_lands_in_response_model() -> None:
+    client = create_llm_client(environ={ENV_STUB_MODEL_NAME: "arena-alpha"})
+    response = client.complete(role=ROLE_TRADER, symbol="BTC/USDT", prompt="p")
+    assert response.model == "arena-alpha"
+
+
+def test_factory_stub_empty_model_name_raises() -> None:
+    with pytest.raises(LLMConfigError, match=ENV_STUB_MODEL_NAME):
+        create_llm_client(environ={ENV_STUB_MODEL_NAME: ""})
+
+
+def test_factory_stub_trader_json_overrides_only_trader_response() -> None:
+    client = create_llm_client(
+        environ={ENV_STUB_TRADER_JSON: '{"size_quote": "250.00", "note": "arena"}'}
+    )
+    assert isinstance(client, StubLLM)
+    baseline = bullish_scenario()
+    trader = json.loads(client._responses[(ROLE_TRADER, "BTC/USDT")])
+    assert trader["size_quote"] == "250.00"
+    assert trader["note"] == "arena"
+    assert trader["action"] == "open_long"
+    for role in PIPELINE_ROLES:
+        if role == ROLE_TRADER:
+            continue
+        assert client._responses[(role, "BTC/USDT")] == baseline._responses[(role, "BTC/USDT")]
+
+
+@pytest.mark.parametrize("raw", ["{not json", "[1, 2]", '"text"', "42", "null", ""])
+def test_factory_stub_invalid_trader_json_raises(raw: str) -> None:
+    with pytest.raises(LLMConfigError, match=ENV_STUB_TRADER_JSON):
+        create_llm_client(environ={ENV_STUB_TRADER_JSON: raw})
+
+
+def test_factory_explicit_stub_factory_unchanged_without_stub_env() -> None:
+    sentinel = StubLLM({})
+    client = create_llm_client(environ={}, stub_factory=lambda: sentinel)
+    assert client is sentinel
+
+
+def test_factory_stub_env_beats_explicit_stub_factory() -> None:
+    def fail_factory() -> StubLLM:
+        pytest.fail("env-driven stub config must take precedence over stub_factory")
+
+    client = create_llm_client(
+        environ={ENV_STUB_SCENARIO: "low_confidence"}, stub_factory=fail_factory
+    )
+    assert isinstance(client, StubLLM)
+    assert client._responses == low_confidence_scenario()._responses
+
+
+def test_factory_stub_symbol_env_keys_responses() -> None:
+    client = create_llm_client(environ={ENV_STUB_SCENARIO: "bullish", ENV_SYMBOL: "ETH/USDT"})
+    response = client.complete(role=ROLE_TRADER, symbol="ETH/USDT", prompt="p")
+    assert json.loads(response.text)["action"] == "open_long"
+    with pytest.raises(KeyError):
+        client.complete(role=ROLE_TRADER, symbol="BTC/USDT", prompt="p")

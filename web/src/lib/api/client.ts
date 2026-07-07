@@ -20,6 +20,7 @@ import {
   invoicesPageSchema,
   killClearResponseSchema,
   killResponseSchema,
+  leaderboardSchema,
   lifecycleResponseSchema,
   limitChangeResponseSchema,
   limitsStatusSchema,
@@ -44,6 +45,7 @@ import {
   meResponseSchema,
   signupResponseSchema,
   strategiesPageSchema,
+  strategyPerformanceSchema,
   strategySchema,
   tenantKillEventSchema,
   tenantsResponseSchema,
@@ -69,6 +71,7 @@ import {
   type KillClearResponse,
   type KillRequest,
   type KillResponse,
+  type Leaderboard,
   type LifecycleRequest,
   type LifecycleResponse,
   type LifecycleState,
@@ -98,6 +101,7 @@ import {
   type SignupResponse,
   type StrategiesPage,
   type Strategy,
+  type StrategyPerformance,
   type TenantKillEvent,
   type TenantsResponse,
   type TokensPage,
@@ -224,6 +228,23 @@ export function fetchPaperGate(strategyId: string): Promise<PaperGateReport> {
 // change audit trail.
 export function fetchLimits(strategyId: string): Promise<LimitsStatus> {
   return apiGet(`/strategies/${strategyId}/limits`, limitsStatusSchema);
+}
+
+// Arena leaderboard (Phase 28), ranked by return_pct desc. Shares the
+// paper-gate 60/min rate bucket — poll at PAPER_GATE_POLL_INTERVAL_MS only.
+export function fetchLeaderboard(): Promise<Leaderboard> {
+  return apiGet("/arena/leaderboard", leaderboardSchema);
+}
+
+// Per-strategy paper-window performance: equity curve + stats. Same rate
+// bucket as the leaderboard — fetched on the leaderboard's poll tick only.
+export function fetchPerformance(
+  strategyId: string,
+  maxPoints?: number,
+): Promise<StrategyPerformance> {
+  return apiGet(`/strategies/${strategyId}/performance`, strategyPerformanceSchema, {
+    max_points: maxPoints,
+  });
 }
 
 // POSTs to a same-origin Next route (the session proxy attaches the cookie's

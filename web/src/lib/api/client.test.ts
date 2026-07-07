@@ -30,10 +30,12 @@ import {
   fetchGlobalAlerts,
   fetchInvoiceDetail,
   fetchInvoices,
+  fetchLeaderboard,
   fetchLimits,
   fetchMe,
   fetchOmsReconStatus,
   fetchPaperGate,
+  fetchPerformance,
   fetchPlatformSecrets,
   fetchReconciliationDetail,
   fetchReconciliations,
@@ -211,6 +213,50 @@ const gateBody = {
   conditions: [{ name: "min_days", passed: true, measured: "15", required: "14" }],
 };
 
+const performanceBody = {
+  strategy_id: STRATEGY_ID,
+  window_started_at: "2026-06-20T00:00:00Z",
+  evaluated_at: "2026-07-04T12:00:00Z",
+  seed: "10000",
+  model: "gpt-4o",
+  equity_curve: [{ ts: "2026-07-04T12:00:00Z", equity: "10012.3" }],
+  stats: {
+    realized_pnl: "12.3",
+    return_pct: "0.123",
+    max_drawdown_pct: "1.2",
+    closed_trades: 3,
+    wins: 2,
+    losses: 1,
+    win_rate_pct: "66.67",
+    profit_factor: "2.5",
+    fees_paid: "0.4",
+    last_fill_at: "2026-07-04T12:00:00Z",
+  },
+};
+
+const leaderboardBody = {
+  evaluated_at: "2026-07-04T12:00:00Z",
+  items: [
+    {
+      rank: 1,
+      strategy_id: STRATEGY_ID,
+      name: "BTC momentum",
+      tenant_id: "tenant-1",
+      lifecycle_state: "paper",
+      model: "gpt-4o",
+      seed: "10000",
+      equity: "10012.3",
+      realized_pnl: "12.3",
+      return_pct: "0.123",
+      max_drawdown_pct: "1.2",
+      closed_trades: 3,
+      win_rate_pct: "66.67",
+      profit_factor: "2.5",
+      last_fill_at: "2026-07-04T12:00:00Z",
+    },
+  ],
+};
+
 function stubFetch(...responses: Response[]) {
   const mock = vi.fn<typeof fetch>();
   for (const res of responses) mock.mockResolvedValueOnce(res);
@@ -242,6 +288,30 @@ describe("ops fetchers and proxy POSTs", () => {
     expect(mock.mock.calls[2]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/paper-gate`);
     for (const call of mock.mock.calls) {
       // The session cookie rides along automatically; no token in the bundle.
+      expect(call[1]).toEqual({ cache: "no-store" });
+    }
+  });
+
+  it("GETs arena leaderboard/performance same-origin through /api/cp", async () => {
+    const mock = stubFetch(
+      jsonResponse(200, leaderboardBody),
+      jsonResponse(200, performanceBody),
+      jsonResponse(200, performanceBody),
+    );
+
+    const board = await fetchLeaderboard();
+    const perf = await fetchPerformance(STRATEGY_ID, 500);
+    await fetchPerformance(STRATEGY_ID);
+
+    expect(board.items[0]?.return_pct).toBe("0.123");
+    expect(perf.equity_curve[0]?.equity).toBe("10012.3");
+    expect(mock.mock.calls[0]?.[0]).toBe("/api/cp/arena/leaderboard");
+    expect(mock.mock.calls[1]?.[0]).toBe(
+      `/api/cp/strategies/${STRATEGY_ID}/performance?max_points=500`,
+    );
+    // max_points omitted -> no query string, never "undefined".
+    expect(mock.mock.calls[2]?.[0]).toBe(`/api/cp/strategies/${STRATEGY_ID}/performance`);
+    for (const call of mock.mock.calls) {
       expect(call[1]).toEqual({ cache: "no-store" });
     }
   });

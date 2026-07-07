@@ -166,3 +166,15 @@ startup `LLMConfigError` that never echoes the token or the response body. When
 neither the full env pair nor a reachable control-plane config exists, live
 mode MUST fail fast naming both options. Stub mode requires none of these and
 never fetches.
+
+Stub-mode overrides (`llm/factory.py`). Three OPTIONAL env vars shape the
+stub: `ALPHAMINTX_STUB_SCENARIO` (`bullish` | `low_confidence`; any other
+value is a startup `LLMConfigError`), `ALPHAMINTX_STUB_MODEL_NAME` (the
+model name the stub reports; set-but-empty is a startup error), and
+`ALPHAMINTX_STUB_TRADER_JSON` (a JSON OBJECT shallow-merged into the
+trader response; non-JSON or a non-object value is a startup error — all
+three validations fail fast at client construction). When ANY of the
+three is set, the scenario is built from env (symbol keyed by
+`ALPHAMINTX_SYMBOL` when set) and takes precedence over an explicit
+`stub_factory` argument; with none set, `stub_factory()` is called
+unchanged — CI and e2e behavior is identical to before.

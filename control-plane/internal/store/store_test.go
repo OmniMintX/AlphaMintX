@@ -411,6 +411,10 @@ func TestStoreSurfaceIsAppendOnly(t *testing.T) {
 		// admin-console listings are read-only.
 		"UpsertPlatformSecret": true, "GetPlatformSecret": true, "ListPlatformSecretMeta": true,
 		"ListTenants": true, "ListUsers": true,
+		// Arena (Phase 28): read-only model attribution over the
+		// append-only model_costs table for the leaderboard/performance
+		// endpoints — nothing is mutated.
+		"LatestTraderModel": true, "LatestTraderModels": true,
 	}
 	tp := reflect.TypeOf(&Store{})
 	for i := 0; i < tp.NumMethod(); i++ {

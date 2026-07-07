@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 )
 
 func ledgerRow(t *testing.T, s *Store, strategyID, utcDate string) (tokens int, cost string, exists bool) {
@@ -215,5 +217,61 @@ func TestInsertTraceSameEnvelopeDuplicateRequestID(t *testing.T) {
 	// The ledger increments by the FULL sum (100+20 + 50+10; 0.001+0.0005).
 	if tokens, cost, ok := ledgerRow(t, s, uid(1), "2026-07-04"); !ok || tokens != 180 || cost != "0.0015" {
 		t.Fatalf("ledger = (%d, %q, %v), want (180, \"0.0015\", true)", tokens, cost, ok)
+	}
+}
+
+// TestLatestTraderModel pins the arena model attribution: the NEWEST
+// node='trader' model_costs row's model per strategy (recorded_at DESC,
+// rowid DESC), ok=false / map-absent when no trader row exists —
+// non-trader nodes never attribute.
+func TestLatestTraderModel(t *testing.T) {
+	s := openStore(t)
+	createStrategy(t, s, uid(1))
+	createStrategy(t, s, uid(2))
+	createStrategy(t, s, uid(3))
+
+	if _, ok, err := s.LatestTraderModel(uid(1)); err != nil || ok {
+		t.Fatalf("no rows: ok=%v err=%v, want false, nil", ok, err)
+	}
+
+	// Strategy 1: an older trader row ("stub") then a newer one ("gpt-4o").
+	proposalA, _, runA := insertChain(t, s, 10, uid(1), 0)
+	if _, err := s.InsertTrace(testTrace(t, uid(1), runA, &proposalA), testNow); err != nil {
+		t.Fatalf("trace A: %v", err)
+	}
+	proposalB, _, runB := insertChain(t, s, 20, uid(1), 1)
+	envB := testTrace(t, uid(1), runB, &proposalB)
+	envB.TickNumber = 1
+	envB.ModelCosts = []TraceModelCost{
+		{Node: "trader", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5, CostUSD: mustDec(t, "0.002")},
+	}
+	if _, err := s.InsertTrace(envB, testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("trace B: %v", err)
+	}
+
+	// Strategy 2: analyst rows only — never attributed.
+	proposalC, _, runC := insertChain(t, s, 30, uid(2), 0)
+	envC := testTrace(t, uid(2), runC, &proposalC)
+	envC.ModelCosts = []TraceModelCost{
+		{Node: "market_analyst", Model: "stub", InputTokens: 50, OutputTokens: 10, CostUSD: mustDec(t, "0.0005")},
+	}
+	if _, err := s.InsertTrace(envC, testNow); err != nil {
+		t.Fatalf("trace C: %v", err)
+	}
+
+	if model, ok, err := s.LatestTraderModel(uid(1)); err != nil || !ok || model != "gpt-4o" {
+		t.Errorf("LatestTraderModel(1) = (%q, %v, %v), want (\"gpt-4o\", true, nil)", model, ok, err)
+	}
+	if _, ok, err := s.LatestTraderModel(uid(2)); err != nil || ok {
+		t.Errorf("LatestTraderModel(2): ok=%v err=%v, want false (analyst rows only)", ok, err)
+	}
+
+	models, err := s.LatestTraderModels()
+	if err != nil {
+		t.Fatalf("LatestTraderModels: %v", err)
+	}
+	want := map[string]string{uid(1): "gpt-4o"}
+	if !reflect.DeepEqual(models, want) {
+		t.Errorf("LatestTraderModels = %v, want %v", models, want)
 	}
 }

@@ -185,3 +185,49 @@ func insertModelCost(tx *sql.Tx, env *TraceEnvelope, mc TraceModelCost, recorded
 	}
 	return err
 }
+
+// LatestTraderModel returns the model of the strategy's NEWEST node='trader'
+// model_costs row (ORDER BY recorded_at DESC, rowid DESC — the standard
+// second-precision tiebreak); ok=false when the strategy has no trader row.
+// It is the arena's model attribution: the model that last produced a
+// trading decision for the strategy.
+func (s *Store) LatestTraderModel(strategyID string) (string, bool, error) {
+	var model string
+	err := s.db.QueryRow(`SELECT model FROM model_costs
+		WHERE strategy_id = ? AND node = 'trader'
+		ORDER BY recorded_at DESC, rowid DESC LIMIT 1`, strategyID).Scan(&model)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return model, true, nil
+}
+
+// LatestTraderModels is LatestTraderModel over every strategy in ONE query
+// (the leaderboard read): strategy_id -> newest trader model; strategies
+// with no trader row are absent from the map. A window function keeps the
+// read a single scan — a correlated NOT EXISTS is O(rows²) over the
+// unindexed model_costs table (11s at 24k rows in the soak DB).
+func (s *Store) LatestTraderModels() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT strategy_id, model FROM (
+			SELECT strategy_id, model, ROW_NUMBER() OVER (
+				PARTITION BY strategy_id
+				ORDER BY recorded_at DESC, rowid DESC) AS rn
+			FROM model_costs WHERE node = 'trader')
+		WHERE rn = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var strategyID, model string
+		if err := rows.Scan(&strategyID, &model); err != nil {
+			return nil, err
+		}
+		out[strategyID] = model
+	}
+	return out, rows.Err()
+}

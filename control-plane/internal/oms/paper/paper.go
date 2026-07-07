@@ -134,18 +134,21 @@ func parseFillModel(fm FillModel) (fillModel, error) {
 }
 
 // ErrKillEpochStale is returned when a submission's kill-epoch predates the
-// current one (KILL_SWITCH_ACTIVE at the OMS boundary).
+// strategy's current one (KILL_SWITCH_ACTIVE at the OMS boundary).
 var ErrKillEpochStale = errors.New("KILL_SWITCH_ACTIVE: kill-epoch stale at submission")
 
 type positionKey struct{ strategyID, symbol string }
 
 // OMS is the in-memory paper order manager.
 type OMS struct {
-	mu        sync.Mutex
-	killEpoch int64
-	fill      fillModel
-	orders    map[string]*Order
-	positions map[positionKey]*Position
+	mu sync.Mutex
+	// killEpochs is the per-strategy kill epoch: kills bind ONLY the
+	// strategies whose binding max they raise (own + tenant + platform
+	// kills, multi-tenant-rbac.md predicate), never other strategies.
+	killEpochs map[string]int64
+	fill       fillModel
+	orders     map[string]*Order
+	positions  map[positionKey]*Position
 
 	// placeProtective is the protective-placement seam; tests inject
 	// failures to exercise the SL placement contingency.
@@ -161,9 +164,10 @@ func New(fm FillModel) (*OMS, error) {
 		return nil, err
 	}
 	o := &OMS{
-		fill:      parsed,
-		orders:    make(map[string]*Order),
-		positions: make(map[positionKey]*Position),
+		killEpochs: make(map[string]int64),
+		fill:       parsed,
+		orders:     make(map[string]*Order),
+		positions:  make(map[positionKey]*Position),
 	}
 	o.placeProtective = func(*Order) error { return nil }
 	return o, nil
@@ -176,11 +180,11 @@ func (o *OMS) SetProtectivePlacementHook(f func(*Order) error) {
 	o.placeProtective = f
 }
 
-// KillEpoch returns the current kill epoch.
-func (o *OMS) KillEpoch() int64 {
+// KillEpoch returns the strategy's current kill epoch.
+func (o *OMS) KillEpoch(strategyID string) int64 {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return o.killEpoch
+	return o.killEpochs[strategyID]
 }
 
 // Orders returns a snapshot copy of all orders.

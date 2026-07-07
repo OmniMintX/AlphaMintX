@@ -23,6 +23,7 @@ const ICONS = {
   dashboard: "M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z",
   strategies: "M2 12l3.5-4 3 2.5L14 4M14 4h-4M14 4v4",
   reasoning: "M3 3h10v8H8l-3 3v-3H3z",
+  arena: "M4 2h8v3.5a4 4 0 0 1-8 0zM4 3H2v1a2 2 0 0 0 2 2M12 3h2v1a2 2 0 0 1-2 2M8 9.5V12M5.5 14h5",
   settings: "M2 4h12M10 2v4M2 8h12M5 6v4M2 12h12M9 10v4",
   admin: "M8 2l5 1.5V8c0 3-2 4.8-5 6-3-1.2-5-3-5-6V3.5z",
   alerts: "M8 2a4 4 0 0 0-4 4v3l-1.5 2.5h11L12 9V6a4 4 0 0 0-4-4zM6.5 13.5a1.5 1.5 0 0 0 3 0",
@@ -95,6 +96,9 @@ export function SidebarNav() {
         <div className="nav-label">{t("nav.group.audit")}</div>
         <NavItem href="/reasoning" icon="reasoning">
           {t("nav.reasoning")}
+        </NavItem>
+        <NavItem href="/arena" icon="arena">
+          {t("nav.arena")}
         </NavItem>
         {user !== null && user.role !== "platform_admin" && BILLING_ROLES.has(user.role) && (
           <NavItem href="/billing" icon="billing">

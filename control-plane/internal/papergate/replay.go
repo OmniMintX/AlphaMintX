@@ -31,10 +31,18 @@ func round8(d decimal.Decimal) decimal.Decimal { return d.Round(8) }
 // the maximum drawdown percentage over the curve (zero when seed <= 0:
 // the caller fails the condition instead of dividing by a zero peak).
 func replay(fills []Fill, seed decimal.Decimal) ([]trade, decimal.Decimal) {
+	return walk(fills, seed, nil)
+}
+
+// walk is the single book-walk behind replay and ReplayCurve: the identical
+// statement sequence either way, so the arena curve can never diverge from
+// the gate's math. step (optional) observes the post-fill equity per fill
+// in replay order.
+func walk(fills []Fill, seed decimal.Decimal, step func(i int, equity decimal.Decimal)) ([]trade, decimal.Decimal) {
 	books := make(map[string]*book)
 	var trades []trade
 	equity, peak, maxDD := seed, seed, decimal.Zero
-	for _, f := range fills {
+	for i, f := range fills {
 		b, ok := books[f.Symbol]
 		if !ok {
 			b = &book{qty: decimal.Zero, avg: decimal.Zero, pnl: decimal.Zero, notional: decimal.Zero}
@@ -99,6 +107,9 @@ func replay(fills []Fill, seed decimal.Decimal) ([]trade, decimal.Decimal) {
 			if dd := peak.Sub(equity).Div(peak).Mul(hundred); dd.GreaterThan(maxDD) {
 				maxDD = dd
 			}
+		}
+		if step != nil {
+			step(i, equity)
 		}
 	}
 	return trades, maxDD

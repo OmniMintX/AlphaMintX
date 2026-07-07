@@ -1,6 +1,7 @@
 package omsbridge
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/contract"
+	"github.com/OmniMintX/AlphaMintX/control-plane/internal/oms/paper"
 	"github.com/OmniMintX/AlphaMintX/control-plane/internal/store"
 )
 
@@ -90,6 +92,68 @@ func TestRestartRehydration(t *testing.T) {
 	}
 	if tp := byType["take_profit"]; tp.Status != "open" || tp.LimitPrice == nil || *tp.LimitPrice != "70000" {
 		t.Errorf("take_profit = %+v, want re-armed TP at 70000", tp)
+	}
+}
+
+// TestRestartRestoresPerStrategyKillEpochs: hydration restores each
+// strategy's OWN binding kill epoch (GlobalMaxKillEpoch per strategy) — a
+// tenant-scoped kill binding strategy A never blocks strategy B in another
+// tenant after a restart: B's epoch-0 submission creates its order while a
+// submission for A stamped below A's restored epoch stays rejected.
+func TestRestartRestoresPerStrategyKillEpochs(t *testing.T) {
+	st := openStore(t, filepath.Join(t.TempDir(), "cp.db"))
+	createStrategy(t, st, uid(1))            // strategy A, tenant-1
+	err := st.CreateStrategy(store.Strategy{ // strategy B, tenant-2
+		StrategyID: uid(2), TenantID: "tenant-2", Name: "strategy-" + uid(2),
+		LifecycleState: "paper", CreatedAt: formatTime(testNow), UpdatedAt: formatTime(testNow),
+	})
+	if err != nil {
+		t.Fatalf("CreateStrategy(%s): %v", uid(2), err)
+	}
+	// Two tenant-scoped kills on A's tenant: A's binding max is 2, B's 0.
+	for i, id := range []string{uid(80), uid(81)} {
+		epoch, err := st.AppendTenantKill(id, "tenant-1", "admin-1", formatTime(testNow), false)
+		if err != nil || epoch != int64(i+1) {
+			t.Fatalf("AppendTenantKill #%d: epoch=%d err=%v, want %d, nil", i+1, epoch, err, i+1)
+		}
+	}
+	marks := newMarks(t)
+	putMark(marks, "BTC/USDT", "64000", testNow)
+	clock := testNow
+	b := newBridge(t, st, marks, &clock)
+
+	if got := b.oms.KillEpoch(uid(1)); got != 2 {
+		t.Errorf("hydrated A kill epoch = %d, want 2", got)
+	}
+	if got := b.oms.KillEpoch(uid(2)); got != 0 {
+		t.Errorf("hydrated B kill epoch = %d, want 0 (unaffected by tenant-1 kills)", got)
+	}
+
+	// B submits at its own (zero) binding epoch: the order is created.
+	sl := mustDec(t, "62000")
+	pB := testProposal(t, uid(30), uid(2), uid(32), contract.ActionOpenLong, func(p *contract.Proposal) {
+		p.SizeQuote = mustDec(t, "1000")
+		p.StopLoss = &sl
+	})
+	if err := b.SubmitApproved(insertChain(t, st, 31, 0, pB)); err != nil {
+		t.Fatalf("SubmitApproved for B after A's tenant kill: %v", err)
+	}
+	d, err := st.GetRunDetail(uid(2), uid(32))
+	if err != nil {
+		t.Fatalf("GetRunDetail: %v", err)
+	}
+	if len(d.Orders) == 0 {
+		t.Error("B's approved submission must create its order")
+	}
+
+	// A stamped below its restored epoch stays rejected.
+	_, err = b.oms.SubmitEntry(paper.EntryRequest{
+		StrategyID: uid(1), Symbol: "BTC/USDT", Side: paper.SideBuy, Type: "market",
+		SizeQuote: decimal.NewFromInt(1000), MarkPrice: decimal.NewFromInt(64000),
+		KillEpoch: 1,
+	})
+	if !errors.Is(err, paper.ErrKillEpochStale) {
+		t.Fatalf("A stale-stamp err = %v, want ErrKillEpochStale", err)
 	}
 }
 

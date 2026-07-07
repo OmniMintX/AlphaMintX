@@ -198,6 +198,7 @@ DB principals:
 | `POST /api/v1/tenants/{tenant_id}/kill` | ✗ | ✗ | ✓ own | ✓ own | ✗ |
 | `POST /api/v1/strategies/{id}/lifecycle` (lifecycle transition, lifecycle-api.md LC-2) | ✗ | ✓ | ✓ | ✓ | ✗ |
 | `GET /api/v1/strategies/{id}/paper-gate` (promotion visibility, LC-24) | ✓ | ✓ | ✓ | ✓ | ✗ |
+| `GET /api/v1/strategies/{id}/performance`, `GET /api/v1/arena/leaderboard` (arena reads, lifecycle-api.md AR-1/AR-2; leaderboard scoped to own tenant) | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `GET /api/v1/strategies/{id}/safety`, `GET .../alerts` (operator-surface.md OS-5/OS-15) | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `GET /api/v1/alerts` (global feed, env classes only — OS-19/OS-20) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `POST /api/v1/strategies/{id}/kill/clear` (unlock is Admin+, LC-29) | ✗ | ✗ | ✓ own | ✓ own | ✗ |
@@ -214,7 +215,10 @@ DB principals:
 | `GET /health` | unauthenticated | | | | |
 
 Env classes (platform-scoped, §Principals): read ⇒ all strategy-data GETs,
-any tenant, incl. `GET .../paper-gate` and the operator-surface reads
+any tenant, incl. `GET .../paper-gate`, the arena reads
+(`GET .../performance` and `GET /api/v1/arena/leaderboard` — for env
+classes the leaderboard is PLATFORM-WIDE, every tenant's strategies)
+and the operator-surface reads
 (`GET .../safety`, `GET .../alerts`, `GET /api/v1/alerts` —
 operator-surface.md) (NOT the token-metadata routes — the
 most-exposed credential gets the least surface); operator ⇒

@@ -24,6 +24,8 @@ import {
   invoiceSchema,
   invoicesPageSchema,
   killClearResponseSchema,
+  leaderboardItemSchema,
+  leaderboardSchema,
   limitChangeResponseSchema,
   limitsStatusSchema,
   mintedTokenSchema,
@@ -45,6 +47,7 @@ import {
   safetyStatusSchema,
   secretWriteResponseSchema,
   strategiesPageSchema,
+  strategyPerformanceSchema,
   TENANT_ID_PATTERN,
   tenantKillEventSchema,
   tenantSchema,
@@ -475,6 +478,155 @@ describe("paperGateReportSchema (LC-23)", () => {
         ...report,
         conditions: [{ name: "x", passed: true, measured: "not-a-number", required: "1" }],
       }).success,
+    ).toBe(false);
+  });
+});
+
+// ---- Arena: model battle (Phase 28) ----------------------------------------
+
+const performanceStats = {
+  realized_pnl: "12.3",
+  return_pct: "0.123",
+  max_drawdown_pct: "1.2",
+  closed_trades: 3,
+  wins: 2,
+  losses: 1,
+  win_rate_pct: "66.67",
+  profit_factor: "2.5",
+  fees_paid: "0.4",
+  last_fill_at: "2026-07-04T12:00:00Z",
+};
+
+const performance = {
+  strategy_id: STRATEGY_ID,
+  window_started_at: "2026-06-20T00:00:00Z",
+  evaluated_at: "2026-07-04T12:00:00Z",
+  seed: "10000",
+  model: "gpt-4o",
+  equity_curve: [
+    { ts: "2026-07-04T11:00:00Z", equity: "10000.5" },
+    { ts: "2026-07-04T12:00:00Z", equity: "10012.3" },
+  ],
+  stats: performanceStats,
+};
+
+describe("strategyPerformanceSchema", () => {
+  it("accepts the performance envelope with decimal-string equity points", () => {
+    const parsed = strategyPerformanceSchema.parse(performance);
+    expect(parsed.equity_curve[1]?.equity).toBe("10012.3");
+    expect(parsed.stats.profit_factor).toBe("2.5");
+  });
+
+  it("accepts null window_started_at/model/profit_factor/last_fill_at and an empty curve", () => {
+    const parsed = strategyPerformanceSchema.parse({
+      ...performance,
+      window_started_at: null,
+      model: null,
+      equity_curve: [],
+      stats: { ...performanceStats, profit_factor: null, last_fill_at: null },
+    });
+    expect(parsed.model).toBeNull();
+    expect(parsed.equity_curve).toEqual([]);
+  });
+
+  it("rejects a missing (vs null) nullable field and unknown keys", () => {
+    const { model: _model, ...withoutModel } = performance;
+    expect(strategyPerformanceSchema.safeParse(withoutModel).success).toBe(false);
+    expect(strategyPerformanceSchema.safeParse({ ...performance, extra: 1 }).success).toBe(false);
+    expect(
+      strategyPerformanceSchema.safeParse({
+        ...performance,
+        equity_curve: [{ ts: "2026-07-04T11:00:00Z", equity: "10000.5", extra: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects numeric (non-string) decimals — ADR-0003 strings only", () => {
+    expect(
+      strategyPerformanceSchema.safeParse({
+        ...performance,
+        equity_curve: [{ ts: "2026-07-04T11:00:00Z", equity: 10000.5 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      strategyPerformanceSchema.safeParse({
+        ...performance,
+        stats: { ...performanceStats, realized_pnl: 12.3 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts negative realized_pnl/return_pct (signed decimals)", () => {
+    expect(
+      strategyPerformanceSchema.safeParse({
+        ...performance,
+        stats: { ...performanceStats, realized_pnl: "-3.5", return_pct: "-0.035" },
+      }).success,
+    ).toBe(true);
+  });
+});
+
+const leaderboardItem = {
+  rank: 1,
+  strategy_id: STRATEGY_ID,
+  name: "BTC momentum",
+  tenant_id: "tenant-1",
+  lifecycle_state: "paper",
+  model: "gpt-4o",
+  seed: "10000",
+  equity: "10012.3",
+  realized_pnl: "12.3",
+  return_pct: "0.123",
+  max_drawdown_pct: "1.2",
+  closed_trades: 3,
+  win_rate_pct: "66.67",
+  profit_factor: "2.5",
+  last_fill_at: "2026-07-04T12:00:00Z",
+};
+
+describe("leaderboardSchema", () => {
+  it("parses the leaderboard envelope", () => {
+    const parsed = leaderboardSchema.parse({
+      evaluated_at: "2026-07-04T12:00:00Z",
+      items: [leaderboardItem],
+    });
+    expect(parsed.items[0]?.return_pct).toBe("0.123");
+  });
+
+  it("accepts empty items and null model/profit_factor/last_fill_at", () => {
+    expect(
+      leaderboardSchema.safeParse({ evaluated_at: "2026-07-04T12:00:00Z", items: [] }).success,
+    ).toBe(true);
+    expect(
+      leaderboardItemSchema.safeParse({
+        ...leaderboardItem,
+        model: null,
+        profit_factor: null,
+        last_fill_at: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unknown keys, missing nullable fields, and numeric decimals", () => {
+    expect(leaderboardItemSchema.safeParse({ ...leaderboardItem, extra: 1 }).success).toBe(false);
+    const { model: _model, ...withoutModel } = leaderboardItem;
+    expect(leaderboardItemSchema.safeParse(withoutModel).success).toBe(false);
+    expect(
+      leaderboardItemSchema.safeParse({ ...leaderboardItem, equity: 10012.3 }).success,
+    ).toBe(false);
+    expect(
+      leaderboardSchema.safeParse({
+        evaluated_at: "2026-07-04T12:00:00Z",
+        items: [leaderboardItem],
+        extra: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a 0 rank and a non-lifecycle state", () => {
+    expect(leaderboardItemSchema.safeParse({ ...leaderboardItem, rank: 0 }).success).toBe(false);
+    expect(
+      leaderboardItemSchema.safeParse({ ...leaderboardItem, lifecycle_state: "arena" }).success,
     ).toBe(false);
   });
 });

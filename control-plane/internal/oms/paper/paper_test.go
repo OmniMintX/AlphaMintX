@@ -96,7 +96,7 @@ func TestKillCancelsEntriesOnlyStopSurvives(t *testing.T) {
 		t.Fatalf("limit entry: %v", err)
 	}
 
-	o.Kill(1)
+	o.Kill(stratID, 1)
 
 	for _, ord := range o.Orders() {
 		switch {
@@ -109,16 +109,16 @@ func TestKillCancelsEntriesOnlyStopSurvives(t *testing.T) {
 	if _, ok := o.Position(stratID, sym); !ok {
 		t.Error("kill must not touch the open position itself")
 	}
-	if o.KillEpoch() != 1 {
-		t.Errorf("kill epoch = %d, want 1", o.KillEpoch())
+	if o.KillEpoch(stratID) != 1 {
+		t.Errorf("kill epoch = %d, want 1", o.KillEpoch(stratID))
 	}
 }
 
-// Submissions carrying a kill-epoch older than the current one are rejected
-// (the OMS-boundary kill re-check).
+// Submissions carrying a kill-epoch older than the strategy's current one
+// are rejected (the OMS-boundary kill re-check).
 func TestStaleKillEpochRejected(t *testing.T) {
 	o := newTestOMS(t, zeroFillModel())
-	o.Kill(2)
+	o.Kill(stratID, 2)
 	req := marketEntry()
 	req.KillEpoch = 1
 	if _, err := o.SubmitEntry(req); !errors.Is(err, ErrKillEpochStale) {
@@ -126,6 +126,52 @@ func TestStaleKillEpochRejected(t *testing.T) {
 	}
 	if len(o.Orders()) != 0 {
 		t.Error("rejected submission must not create orders")
+	}
+}
+
+// Kill epochs are PER-STRATEGY: killing strategy A raises only A's epoch
+// and cancels only A's resting entries — strategy B keeps epoch 0, its
+// resting entry survives, and its epoch-0 submissions still pass the
+// kill re-check while A's stale-stamped ones are rejected.
+func TestKillIsPerStrategy(t *testing.T) {
+	const stratB = "c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f"
+	o := newTestOMS(t, zeroFillModel())
+	restingA, err := o.SubmitEntry(limitEntry())
+	if err != nil {
+		t.Fatalf("limit entry A: %v", err)
+	}
+	reqB := limitEntry()
+	reqB.StrategyID = stratB
+	restingB, err := o.SubmitEntry(reqB)
+	if err != nil {
+		t.Fatalf("limit entry B: %v", err)
+	}
+
+	o.Kill(stratID, 2)
+
+	if got := o.KillEpoch(stratID); got != 2 {
+		t.Errorf("A kill epoch = %d, want 2", got)
+	}
+	if got := o.KillEpoch(stratB); got != 0 {
+		t.Errorf("B kill epoch = %d, want 0 (unaffected by A's kill)", got)
+	}
+	for _, ord := range o.Orders() {
+		switch {
+		case ord.ID == restingA.ID && ord.Status != StatusCanceled:
+			t.Errorf("A's resting ENTRY not canceled by A's kill: %+v", ord)
+		case ord.ID == restingB.ID && ord.Status != StatusOpen:
+			t.Errorf("B's resting ENTRY must survive A's kill: %+v", ord)
+		}
+	}
+	staleA := marketEntry()
+	staleA.KillEpoch = 1
+	if _, err := o.SubmitEntry(staleA); !errors.Is(err, ErrKillEpochStale) {
+		t.Fatalf("A err = %v, want ErrKillEpochStale", err)
+	}
+	freshB := marketEntry()
+	freshB.StrategyID = stratB
+	if _, err := o.SubmitEntry(freshB); err != nil {
+		t.Fatalf("B epoch-0 submission must succeed after A's kill: %v", err)
 	}
 }
 
